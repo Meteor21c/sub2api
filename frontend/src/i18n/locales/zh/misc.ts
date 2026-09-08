@@ -318,6 +318,7 @@ export default {
     enterAmount: '输入金额',
     paymentMethod: '支付方式',
     fee: '手续费',
+    discount: '优惠',
     actualPay: '实付金额',
     createOrder: '确认支付',
     methods: {
@@ -380,6 +381,7 @@ export default {
       payAmount: '实付',
       creditedAmount: '到账金额',
       fee: '手续费',
+      discount: '优惠',
       baseAmount: '充值金额',
       includedInPayAmount: '已含在实付金额中',
       status: '状态',

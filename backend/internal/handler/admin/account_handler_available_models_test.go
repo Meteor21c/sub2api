@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -147,6 +148,81 @@ func TestAccountHandlerGetAvailableModels_GrokDefaultsToXAIModelsWithoutMapping(
 	}
 	require.Contains(t, ids, "grok-4.3")
 	require.Contains(t, ids, "grok-build-0.1")
+}
+
+func availableModelIDs(t *testing.T, router *gin.Engine, accountID int64) []string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/"+strconv.FormatInt(accountID, 10)+"/models", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	ids := make([]string, 0, len(resp.Data))
+	for _, model := range resp.Data {
+		ids = append(ids, model.ID)
+	}
+	return ids
+}
+
+func TestAccountHandlerGetAvailableModels_CNDefaultsToProviderCatalog(t *testing.T) {
+	tests := []struct {
+		name     string
+		id       int64
+		platform string
+		protocol string
+		want     []string
+	}{
+		{name: "kimi chat", id: 51, platform: service.PlatformKimi, want: []string{"kimi-k2.5"}},
+		{name: "kimi responses", id: 52, platform: service.PlatformKimi, protocol: service.APIProtocolResponses, want: []string{"kimi-k2.5", "kimi-k2.6"}},
+		{name: "zhipu anthropic", id: 53, platform: service.PlatformZhipu, protocol: service.APIProtocolAnthropic, want: []string{"glm-4.7"}},
+		{name: "deepseek chat", id: 54, platform: service.PlatformDeepseek, want: []string{"deepseek-v4-flash"}},
+		{name: "deepseek responses", id: 55, platform: service.PlatformDeepseek, protocol: service.APIProtocolResponses, want: []string{"deepseek-v4-pro", "deepseek-v4-flash"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			credentials := map[string]any{}
+			if tt.protocol != "" {
+				credentials["api_protocol"] = tt.protocol
+			}
+			svc := &availableModelsAdminService{
+				stubAdminService: newStubAdminService(),
+				account: service.Account{
+					ID: tt.id, Platform: tt.platform, Type: service.AccountTypeAPIKey,
+					Status: service.StatusActive, Credentials: credentials,
+				},
+			}
+			ids := availableModelIDs(t, setupAvailableModelsRouter(svc), tt.id)
+			require.ElementsMatch(t, tt.want, ids)
+			for _, id := range ids {
+				require.NotContains(t, strings.ToLower(id), "claude")
+			}
+		})
+	}
+}
+
+func TestAccountHandlerGetAvailableModels_CNMappingUsesMappingKeys(t *testing.T) {
+	svc := &availableModelsAdminService{
+		stubAdminService: newStubAdminService(),
+		account: service.Account{
+			ID: 56, Platform: service.PlatformZhipu, Type: service.AccountTypeAPIKey,
+			Status: service.StatusActive,
+			Credentials: map[string]any{
+				"model_mapping": map[string]any{
+					"public-glm": "glm-5.2",
+					"glm-fast":   "glm-4.7-flash",
+				},
+			},
+		},
+	}
+	ids := availableModelIDs(t, setupAvailableModelsRouter(svc), 56)
+	require.ElementsMatch(t, []string{"public-glm", "glm-fast"}, ids)
 }
 
 func TestAccountHandlerGetAvailableModels_OpenAIOAuthUsesExplicitModelMapping(t *testing.T) {

@@ -26,8 +26,9 @@ func TestSanitizeAdminPaymentOrderForResponseAddsCurrency(t *testing.T) {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		ProviderSnapshot: map[string]any{
-			"schema_version": 2,
-			"currency":       "USD",
+			"schema_version":  2,
+			"currency":        "USD",
+			"recharge_amount": 100.0,
 		},
 	}
 
@@ -38,6 +39,9 @@ func TestSanitizeAdminPaymentOrderForResponseAddsCurrency(t *testing.T) {
 	if got.Currency != "USD" {
 		t.Fatalf("expected currency USD, got %q", got.Currency)
 	}
+	if got.RechargeAmount != 0 {
+		t.Fatalf("subscription order should not expose a recharge amount, got %v", got.RechargeAmount)
+	}
 
 	body, err := json.Marshal(got)
 	if err != nil {
@@ -45,6 +49,36 @@ func TestSanitizeAdminPaymentOrderForResponseAddsCurrency(t *testing.T) {
 	}
 	if strings.Contains(string(body), "provider_snapshot") {
 		t.Fatalf("expected provider_snapshot to be omitted, got %s", string(body))
+	}
+}
+
+func TestSanitizeAdminPaymentOrderForResponseIncludesRechargeAmount(t *testing.T) {
+	now := time.Now()
+	order := &dbent.PaymentOrder{
+		ID:          2,
+		UserID:      3,
+		Amount:      110,
+		PayAmount:   99,
+		FeeRate:     -1,
+		OutTradeNo:  "sub2_202606250002",
+		PaymentType: "alipay",
+		OrderType:   "balance",
+		Status:      "COMPLETED",
+		ExpiresAt:   now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		ProviderSnapshot: map[string]any{
+			"schema_version":  2,
+			"recharge_amount": 100.0,
+		},
+	}
+
+	got := sanitizeAdminPaymentOrderForResponse(order)
+	if got == nil {
+		t.Fatal("expected sanitized order")
+	}
+	if got.RechargeAmount != 100 {
+		t.Fatalf("expected recharge amount 100, got %v", got.RechargeAmount)
 	}
 }
 

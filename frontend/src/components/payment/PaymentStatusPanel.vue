@@ -24,6 +24,14 @@
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.amount') }}</span>
                 <span class="font-medium text-gray-900 dark:text-white">{{ creditedAmountSymbol }}{{ paidOrder.amount.toFixed(2) }}</span>
               </div>
+              <div v-if="paidOrder.fee_rate > 0" class="flex justify-between">
+                <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.fee') }} ({{ paidOrder.fee_rate }}%)</span>
+                <span class="font-medium text-gray-900 dark:text-white">{{ formatGatewayAmount(paidOrderFeeAmount, paidOrder.currency) }}</span>
+              </div>
+              <div v-else-if="paidOrder.fee_rate < 0" class="flex justify-between">
+                <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.discount') }} ({{ Math.abs(paidOrder.fee_rate) }}%)</span>
+                <span class="font-medium text-green-600 dark:text-green-400">-{{ formatGatewayAmount(paidOrderDiscountAmount, paidOrder.currency) }}</span>
+              </div>
               <div class="flex justify-between">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
                 <span class="font-medium text-gray-900 dark:text-white">{{ formatGatewayAmount(paidOrder.pay_amount, paidOrder.currency) }}</span>
@@ -338,6 +346,31 @@ const displayOrderNumber = computed(() => props.outTradeNo || `#${props.orderId}
 function formatGatewayAmount(value: number, currency?: string | null): string {
   return formatPaymentAmount(value, currency || paymentCurrency.value, localeCode.value)
 }
+
+function baseGatewayAmount(order: PaymentOrder): number {
+  if (
+    order.order_type === 'balance' &&
+    typeof order.recharge_amount === 'number' &&
+    Number.isFinite(order.recharge_amount) &&
+    order.recharge_amount > 0
+  ) {
+    return order.recharge_amount
+  }
+  const feeRate = Number(order.fee_rate) || 0
+  if (feeRate === 0) return order.pay_amount
+  const denominator = 1 + feeRate / 100
+  return denominator > 0 ? order.pay_amount / denominator : order.pay_amount
+}
+
+const paidOrderFeeAmount = computed(() => {
+  if (!paidOrder.value || paidOrder.value.fee_rate <= 0) return 0
+  return Math.max(0, paidOrder.value.pay_amount - baseGatewayAmount(paidOrder.value))
+})
+
+const paidOrderDiscountAmount = computed(() => {
+  if (!paidOrder.value || paidOrder.value.fee_rate >= 0) return 0
+  return Math.max(0, baseGatewayAmount(paidOrder.value) - paidOrder.value.pay_amount)
+})
 
 function isSuccessStatus(status: string | null | undefined): boolean {
   return status === 'COMPLETED' || status === 'PAID' || status === 'RECHARGING'

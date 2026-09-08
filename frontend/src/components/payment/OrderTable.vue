@@ -18,6 +18,9 @@
         <span v-if="row.fee_rate > 0" class="ml-1 text-xs text-gray-400" :title="t('payment.orders.fee') + ': ' + row.fee_rate + '%'">
           ({{ t('payment.orders.fee') }} {{ row.fee_rate }}%)
         </span>
+        <span v-else-if="row.fee_rate < 0" class="ml-1 text-xs text-green-600 dark:text-green-400" :title="t('payment.orders.discount') + ': ' + Math.abs(row.fee_rate) + '%'">
+          ({{ t('payment.orders.discount') }} {{ Math.abs(row.fee_rate) }}%)
+        </span>
         <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
           {{ t('payment.orders.creditedAmount') }}: {{ creditedAmountSymbol }}{{ row.amount.toFixed(2) }}
         </div>

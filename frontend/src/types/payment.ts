@@ -23,6 +23,14 @@ export type PaymentType = 'alipay' | 'wxpay' | 'alipay_direct' | 'wxpay_direct' 
 
 export type OrderType = 'balance' | 'subscription'
 
+/** A recharge fee/discount tier keyed by the requested recharge amount. */
+export interface RechargeFeeTier {
+  /** Minimum recharge amount at which this tier applies. */
+  min_amount: number
+  /** Percentage; positive values are a fee, negative values are a discount. */
+  fee_rate: number
+}
+
 // ==================== Configuration ====================
 
 export interface PaymentConfig {
@@ -35,6 +43,8 @@ export interface PaymentConfig {
   balance_disabled: boolean
   balance_recharge_multiplier: number
   subscription_usd_to_cny_rate: number
+  recharge_fee_rate: number
+  recharge_fee_tiers: RechargeFeeTier[]
   enabled_payment_types: PaymentType[]
   help_image_url: string
   help_text: string
@@ -71,6 +81,7 @@ export interface CheckoutInfoResponse {
   /** Subscription CNY conversion rate (1 USD = X CNY); 0 = disabled, plan price is charged as-is */
   subscription_usd_to_cny_rate: number
   recharge_fee_rate: number
+  recharge_fee_tiers: RechargeFeeTier[]
   help_text: string
   help_image_url: string
   stripe_publishable_key: string
@@ -86,6 +97,8 @@ export interface PaymentOrder {
   id: number
   user_id: number
   amount: number
+  /** Original user-entered balance recharge amount (when available). */
+  recharge_amount?: number
   pay_amount: number
   currency?: string
   fee_rate: number

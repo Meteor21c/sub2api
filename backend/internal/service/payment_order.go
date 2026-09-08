@@ -61,7 +61,13 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	} else if req.OrderType == payment.OrderTypeBalance {
 		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
 	}
+	// Tiered fees/discounts intentionally apply only to balance recharges. A
+	// subscription price is a product price and keeps the legacy flat fee
+	// behavior, even when recharge tiers are configured.
 	feeRate := cfg.RechargeFeeRate
+	if req.OrderType == payment.OrderTypeBalance {
+		feeRate = cfg.FeeRateForBalanceAmount(limitAmount)
+	}
 	methodCurrency := payment.DefaultPaymentCurrency
 	if s.configService != nil {
 		methodCurrency, err = s.configService.ValidateMethodCurrencyConsistency(ctx, req.PaymentType)
@@ -171,6 +177,16 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		return nil, err
 	}
 	providerSnapshot := buildPaymentOrderProviderSnapshot(sel, req)
+	// Keep the original user-entered recharge amount with the order. The
+	// amount column stores credited balance (which may include a multiplier),
+	// while pay_amount includes fees/discounts; neither is sufficient to apply
+	// the daily recharge limit exactly after a tiered rate is introduced.
+	if req.OrderType == payment.OrderTypeBalance && limitAmount > 0 {
+		if providerSnapshot == nil {
+			providerSnapshot = map[string]any{"schema_version": 2}
+		}
+		providerSnapshot["recharge_amount"] = limitAmount
+	}
 	selectedInstanceID := ""
 	selectedProviderKey := ""
 	if sel != nil {
@@ -334,7 +350,7 @@ func (s *PaymentService) checkDailyLimit(ctx context.Context, tx *dbent.Tx, user
 	var used float64
 	for _, o := range orders {
 		if o.OrderType == payment.OrderTypeBalance {
-			used += o.PayAmount
+			used += paymentOrderDailyLimitAmount(o)
 			continue
 		}
 		used += o.Amount
@@ -344,6 +360,38 @@ func (s *PaymentService) checkDailyLimit(ctx context.Context, tx *dbent.Tx, user
 			WithMetadata(map[string]string{"remaining": fmt.Sprintf("%.2f", math.Max(0, limit-used))})
 	}
 	return nil
+}
+
+// paymentOrderDailyLimitAmount returns the amount that should count toward a
+// user's daily recharge limit. New orders persist the original requested
+// amount in provider_snapshot. For legacy orders, use the historical paid
+// amount when no fee was applied and otherwise derive the pre-fee amount as a
+// best-effort compatibility fallback.
+func paymentOrderDailyLimitAmount(order *dbent.PaymentOrder) float64 {
+	if order == nil {
+		return 0
+	}
+	if rechargeAmount := paymentOrderSnapshotRechargeAmount(order); rechargeAmount > 0 {
+		return rechargeAmount
+	}
+	if order.FeeRate == 0 {
+		return order.PayAmount
+	}
+	denominator := 1 + order.FeeRate/100
+	if denominator > 0 && order.PayAmount > 0 {
+		return decimal.NewFromFloat(order.PayAmount).Div(decimal.NewFromFloat(denominator)).Round(2).InexactFloat64()
+	}
+	return order.PayAmount
+}
+
+// PaymentOrderRechargeAmount exposes the original balance recharge amount for
+// response DTOs. Subscription orders intentionally return zero because their
+// amount is already a product price rather than a balance recharge.
+func PaymentOrderRechargeAmount(order *dbent.PaymentOrder) float64 {
+	if order == nil || order.OrderType != payment.OrderTypeBalance {
+		return 0
+	}
+	return paymentOrderDailyLimitAmount(order)
 }
 
 func (s *PaymentService) selectCreateOrderInstance(ctx context.Context, req CreateOrderRequest, cfg *PaymentConfig, payAmount float64) (*payment.InstanceSelection, error) {
@@ -638,6 +686,10 @@ func calculateCreateOrderPayAmount(limitAmount, feeRate float64, currency string
 	payAmount, err := strconv.ParseFloat(payAmountStr, 64)
 	if err != nil {
 		return "", 0, infraerrors.BadRequest("INVALID_AMOUNT", "invalid payment amount").
+			WithMetadata(map[string]string{"currency": currency})
+	}
+	if payAmount <= 0 {
+		return "", 0, infraerrors.BadRequest("INVALID_AMOUNT", "calculated payment amount must be positive").
 			WithMetadata(map[string]string{"currency": currency})
 	}
 	return payAmountStr, payAmount, nil

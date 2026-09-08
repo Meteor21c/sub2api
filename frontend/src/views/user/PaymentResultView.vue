@@ -51,6 +51,10 @@
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.fee') }} ({{ order.fee_rate }}%)</span>
               <span class="font-medium text-gray-900 dark:text-white">{{ formatGatewayAmount(feeAmount) }}</span>
             </div>
+            <div v-if="hasAmountFields(order) && order.fee_rate < 0" class="flex justify-between">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.discount') }} ({{ Math.abs(order.fee_rate) }}%)</span>
+              <span class="font-medium text-green-600 dark:text-green-400">-{{ formatGatewayAmount(discountAmount) }}</span>
+            </div>
             <div v-if="hasAmountFields(order)" class="flex justify-between">
               <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
               <span class="font-bold text-primary-600 dark:text-primary-400">{{ formatGatewayAmount(order.pay_amount) }}</span>
@@ -109,7 +113,7 @@ import {
 import { usePaymentStore } from '@/stores/payment'
 import { useAuthStore } from '@/stores/auth'
 import { paymentAPI } from '@/api/payment'
-import type { PublicOrderVerifyResult } from '@/api/payment'
+import type { PublicOrderResult, PublicOrderVerifyResult } from '@/api/payment'
 import type { OrderStatus, PaymentOrder } from '@/types/payment'
 import { formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
 import { normalizePaymentMethodForDisplay, paymentMethodI18nKey } from './paymentUx'
@@ -121,7 +125,8 @@ const router = useRouter()
 const paymentStore = usePaymentStore()
 const authStore = useAuthStore()
 
-type ResolvedOrder = PaymentOrder | PublicOrderVerifyResult
+type DetailedOrder = PaymentOrder | PublicOrderResult
+type ResolvedOrder = DetailedOrder | PublicOrderVerifyResult
 
 const order = ref<ResolvedOrder | null>(null)
 const loading = ref(true)
@@ -144,11 +149,22 @@ let statusRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let userBalanceRefreshStarted = false
 const refreshAttempts = ref(0)
 
-/** 充值金额 = pay_amount / (1 + fee_rate/100)，fee_rate=0 时等于 pay_amount */
+/**
+ * Balance recharge amount. New orders expose the exact user-entered amount;
+ * older orders fall back to reconstructing it from pay_amount and fee_rate.
+ */
 const baseAmount = computed(() => {
   if (!hasAmountFields(order.value)) return 0
+  if (
+    order.value.order_type === 'balance' &&
+    typeof order.value.recharge_amount === 'number' &&
+    Number.isFinite(order.value.recharge_amount) &&
+    order.value.recharge_amount > 0
+  ) {
+    return order.value.recharge_amount
+  }
   const feeRate = Number(order.value.fee_rate) || 0
-  if (feeRate <= 0) return order.value.pay_amount ?? 0
+  if (feeRate === 0) return order.value.pay_amount ?? 0
   return Math.round((order.value.pay_amount / (1 + feeRate / 100)) * 100) / 100
 })
 
@@ -158,6 +174,14 @@ const feeAmount = computed(() => {
   const feeRate = Number(order.value.fee_rate) || 0
   if (feeRate <= 0) return 0
   return Math.round((order.value.pay_amount - baseAmount.value) * 100) / 100
+})
+
+/** Discount = base recharge amount - actual gateway payment. */
+const discountAmount = computed(() => {
+  if (!hasAmountFields(order.value)) return 0
+  const feeRate = Number(order.value.fee_rate) || 0
+  if (feeRate >= 0) return 0
+  return Math.max(0, Math.round((baseAmount.value - order.value.pay_amount) * 100) / 100)
 })
 
 const localeCode = computed(() => {
@@ -217,15 +241,15 @@ function refreshUserBalanceForSuccessfulOrder(nextOrder: ResolvedOrder | null): 
   })
 }
 
-function hasOrderId(nextOrder: ResolvedOrder | null): nextOrder is PaymentOrder {
+function hasOrderId(nextOrder: ResolvedOrder | null): nextOrder is DetailedOrder {
   return !!nextOrder && 'id' in nextOrder && typeof nextOrder.id === 'number'
 }
 
-function hasAmountFields(nextOrder: ResolvedOrder | null): nextOrder is PaymentOrder {
+function hasAmountFields(nextOrder: ResolvedOrder | null): nextOrder is DetailedOrder {
   return !!nextOrder && 'pay_amount' in nextOrder && typeof nextOrder.pay_amount === 'number' && 'amount' in nextOrder && typeof nextOrder.amount === 'number'
 }
 
-function hasPaymentType(nextOrder: ResolvedOrder | null): nextOrder is PaymentOrder {
+function hasPaymentType(nextOrder: ResolvedOrder | null): nextOrder is DetailedOrder {
   return !!nextOrder && 'payment_type' in nextOrder && typeof nextOrder.payment_type === 'string' && nextOrder.payment_type.trim() !== ''
 }
 

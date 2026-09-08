@@ -7987,6 +7987,63 @@
                     </p>
                   </div>
                 </div>
+                <!-- Tiered recharge fee/discount -->
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <label class="input-label">{{ t("admin.settings.payment.rechargeFeeTiers") }}</label>
+                      <p class="mt-0.5 text-xs text-gray-400">
+                        {{ t("admin.settings.payment.rechargeFeeTiersHint") }}
+                      </p>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm" @click="addPaymentRechargeFeeTier">
+                      {{ t("admin.settings.payment.addRechargeFeeTier") }}
+                    </button>
+                  </div>
+                  <div v-if="form.payment_recharge_fee_tiers.length > 0" class="mt-3 space-y-2">
+                    <div
+                      v-for="(tier, index) in form.payment_recharge_fee_tiers"
+                      :key="`recharge-fee-tier-${index}`"
+                      class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2"
+                    >
+                      <div>
+                        <label class="text-xs text-gray-500 dark:text-gray-400">
+                          {{ t("admin.settings.payment.rechargeFeeTierMin") }}
+                        </label>
+                        <input
+                          :value="paymentRechargeFeeTierInputValue(index, 'min_amount', tier.min_amount)"
+                          @input="updatePaymentRechargeFeeTier(index, 'min_amount', ($event.target as HTMLInputElement).value)"
+                          @blur="commitPaymentRechargeFeeTier(index, 'min_amount')"
+                          type="text"
+                          inputmode="decimal"
+                          class="input mt-1"
+                        />
+                      </div>
+                      <div>
+                        <label class="text-xs text-gray-500 dark:text-gray-400">
+                          {{ t("admin.settings.payment.rechargeFeeTierRate") }}
+                        </label>
+                        <div class="relative mt-1">
+                          <input
+                            :value="paymentRechargeFeeTierInputValue(index, 'fee_rate', tier.fee_rate)"
+                            @input="updatePaymentRechargeFeeTier(index, 'fee_rate', ($event.target as HTMLInputElement).value)"
+                            @blur="commitPaymentRechargeFeeTier(index, 'fee_rate')"
+                            type="text"
+                            inputmode="decimal"
+                            class="input pr-8"
+                          />
+                          <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400">%</span>
+                        </div>
+                      </div>
+                      <button type="button" class="btn btn-secondary btn-sm" @click="removePaymentRechargeFeeTier(index)">
+                        {{ t("admin.settings.payment.removeRechargeFeeTier") }}
+                      </button>
+                    </div>
+                  </div>
+                  <p v-else class="mt-3 text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.payment.rechargeFeeTiersEmpty") }}
+                  </p>
+                </div>
                 <!-- Row 3: Pending orders + load balance + cancel rate limit (all in one row) -->
                 <div class="flex flex-wrap items-end gap-4">
                   <div class="w-28">
@@ -8798,7 +8855,7 @@ import type {
   NotifyEmailEntry,
   Proxy,
 } from "@/types";
-import type { ProviderInstance } from "@/types/payment";
+import type { ProviderInstance, RechargeFeeTier } from "@/types/payment";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import Icon from "@/components/icons/Icon.vue";
 import Select from "@/components/common/Select.vue";
@@ -9581,6 +9638,7 @@ const form = reactive<SettingsForm>({
   payment_balance_recharge_multiplier: 1,
   payment_subscription_usd_to_cny_rate: 0,
   payment_recharge_fee_rate: 0,
+  payment_recharge_fee_tiers: [] as RechargeFeeTier[],
   payment_enabled_types: [],
   payment_help_image_url: "",
   payment_help_text: "",
@@ -10761,9 +10819,109 @@ const codexSyncedVersionLabel = computed(() => {
   });
 });
 
+type RechargeFeeTierField = "min_amount" | "fee_rate";
+
+// Keep the raw text while an administrator is editing a tier. In particular,
+// a numeric input cannot represent the intermediate "-" value needed to enter
+// a discount, so parsing on every keypress would make negative rates hard to
+// type. The backend remains the source of truth for final validation.
+const paymentRechargeFeeTierDrafts = ref<Record<string, string>>({});
+const paymentRechargeFeeTiersLoaded = ref(false);
+
+function paymentRechargeFeeTierDraftKey(index: number, field: RechargeFeeTierField): string {
+  return `${index}:${field}`;
+}
+
+function paymentRechargeFeeTierInputValue(
+  index: number,
+  field: RechargeFeeTierField,
+  value: number,
+): string {
+  const draft = paymentRechargeFeeTierDrafts.value[paymentRechargeFeeTierDraftKey(index, field)];
+  if (draft !== undefined) return draft;
+  return field === "min_amount" && value === 0 ? "" : String(value);
+}
+
+function normalizePaymentRechargeFeeTiers(input: unknown): RechargeFeeTier[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((item): RechargeFeeTier | null => {
+      if (!item || typeof item !== "object") return null;
+      const raw = item as Record<string, unknown>;
+      const minAmount = Number(raw.min_amount);
+      const feeRate = Number(raw.fee_rate);
+      if (!Number.isFinite(minAmount) || !Number.isFinite(feeRate)) return null;
+      return {
+        min_amount: Math.round(minAmount * 100) / 100,
+        fee_rate: Math.round(feeRate * 100) / 100,
+      };
+    })
+    .filter((tier): tier is RechargeFeeTier => tier !== null)
+    .sort((a, b) => a.min_amount - b.min_amount);
+}
+
+function updatePaymentRechargeFeeTier(
+  index: number,
+  field: RechargeFeeTierField,
+  rawValue: string | number,
+): void {
+  const tier = form.payment_recharge_fee_tiers[index];
+  if (!tier) return;
+  const raw = String(rawValue);
+  paymentRechargeFeeTierDrafts.value[paymentRechargeFeeTierDraftKey(index, field)] = raw;
+  // Preserve incomplete values such as "-" while the user is typing. They
+  // are committed on blur (and rejected by the backend when appropriate).
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed === "-" || trimmed === "." || trimmed === "-.") return;
+  const value = Number(raw);
+  tier[field] = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+}
+
+function commitPaymentRechargeFeeTier(index: number, field: RechargeFeeTierField): void {
+  const tier = form.payment_recharge_fee_tiers[index];
+  if (!tier) return;
+  const key = paymentRechargeFeeTierDraftKey(index, field);
+  const raw = paymentRechargeFeeTierDrafts.value[key];
+  const value = Number(raw ?? tier[field]);
+  tier[field] = Number.isFinite(value) ? Math.round(value * 100) / 100 : 0;
+  paymentRechargeFeeTierDrafts.value[key] = field === "min_amount" && tier[field] === 0
+    ? ""
+    : String(tier[field]);
+}
+
+function commitAllPaymentRechargeFeeTierDrafts(): void {
+  form.payment_recharge_fee_tiers.forEach((_tier, index) => {
+    commitPaymentRechargeFeeTier(index, "min_amount");
+    commitPaymentRechargeFeeTier(index, "fee_rate");
+  });
+}
+
+function resetPaymentRechargeFeeTierDrafts(): void {
+  paymentRechargeFeeTierDrafts.value = {};
+  form.payment_recharge_fee_tiers.forEach((tier, index) => {
+    paymentRechargeFeeTierDrafts.value[paymentRechargeFeeTierDraftKey(index, "min_amount")] =
+      tier.min_amount === 0 ? "" : String(tier.min_amount);
+    paymentRechargeFeeTierDrafts.value[paymentRechargeFeeTierDraftKey(index, "fee_rate")] =
+      String(tier.fee_rate);
+  });
+}
+
+function addPaymentRechargeFeeTier(): void {
+  const last = form.payment_recharge_fee_tiers[form.payment_recharge_fee_tiers.length - 1];
+  const nextMin = last ? Math.max(1, Math.round((last.min_amount + 10) * 100) / 100) : 10;
+  form.payment_recharge_fee_tiers.push({ min_amount: nextMin, fee_rate: 0 });
+  resetPaymentRechargeFeeTierDrafts();
+}
+
+function removePaymentRechargeFeeTier(index: number): void {
+  form.payment_recharge_fee_tiers.splice(index, 1);
+  resetPaymentRechargeFeeTierDrafts();
+}
+
 async function loadSettings() {
   loading.value = true;
   loadFailed.value = false;
+  paymentRechargeFeeTiersLoaded.value = false;
   try {
     const settings = await adminAPI.settings.getSettings();
     settings.payment_load_balance_strategy =
@@ -10774,6 +10932,9 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    paymentRechargeFeeTiersLoaded.value = Array.isArray(settings.payment_recharge_fee_tiers);
+    form.payment_recharge_fee_tiers = normalizePaymentRechargeFeeTiers(settings.payment_recharge_fee_tiers);
+    resetPaymentRechargeFeeTierDrafts();
     syncCaptchaProviderSelection();
     if (!form.claude_oauth_system_prompt_blocks?.trim()) {
       form.claude_oauth_system_prompt_blocks =
@@ -11152,6 +11313,8 @@ async function saveSettings() {
     form.claude_oauth_system_prompt_blocks =
       claudeOAuthSystemPromptBlocksJSON;
 
+    commitAllPaymentRechargeFeeTierDrafts();
+
     const payload: UpdateSettingsRequest = {
       registration_enabled: form.registration_enabled,
       email_verify_enabled: form.email_verify_enabled,
@@ -11469,6 +11632,14 @@ async function saveSettings() {
       allow_user_view_error_requests: form.allow_user_view_error_requests,
     };
 
+    // Older backends may not return the tier field. Omit it in that case so
+    // saving an unrelated setting cannot accidentally clear stored tiers.
+    if (paymentRechargeFeeTiersLoaded.value) {
+      payload.payment_recharge_fee_tiers = normalizePaymentRechargeFeeTiers(
+        form.payment_recharge_fee_tiers,
+      );
+    }
+
     // 仅当 openai_fast_policy_settings 已成功从后端加载时才回写，
     // 否则省略整个字段，让后端保留既有规则（含默认值）。
     if (openaiFastPolicyLoaded.value) {
@@ -11515,6 +11686,13 @@ async function saveSettings() {
       if (value !== null && value !== undefined) {
         (form as Record<string, unknown>)[key] = value;
       }
+    }
+    if (Array.isArray(updated.payment_recharge_fee_tiers)) {
+      paymentRechargeFeeTiersLoaded.value = true;
+      form.payment_recharge_fee_tiers = normalizePaymentRechargeFeeTiers(
+        updated.payment_recharge_fee_tiers,
+      );
+      resetPaymentRechargeFeeTierDrafts();
     }
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     form.default_platform_quotas = normalizePlatformQuotasMap(updated.default_platform_quotas);

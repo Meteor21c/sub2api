@@ -73,6 +73,26 @@ describe('admin order currency display', () => {
     expect(text).toContain('$25.00')
   })
 
+  it('shows a negative tier as a discount and reconstructs its base amount', () => {
+    const wrapper = mount(AdminOrderDetail, {
+      props: {
+        show: true,
+        order: orderFactory({ amount: 100, pay_amount: 99, fee_rate: -1 }),
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+        },
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('payment.orders.discount')
+    expect(text).toContain('-$1.00')
+    expect(text).toContain('$99.00')
+    expect(text).toContain('$100.00')
+  })
+
   it('uses order currency for pay_amount and USD for refundable balance amounts', () => {
     const wrapper = mount(AdminRefundDialog, {
       props: {

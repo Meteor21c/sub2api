@@ -112,6 +112,7 @@ function checkoutInfoFixture(overrides: Partial<CheckoutInfoResponse> = {}) {
     balance_recharge_multiplier: 1,
     subscription_usd_to_cny_rate: 0,
     recharge_fee_rate: 0,
+    recharge_fee_tiers: [],
     help_text: '',
     help_image_url: '',
     stripe_publishable_key: '',
@@ -330,6 +331,43 @@ describe('PaymentView recharge rate preview', () => {
     })
     expect(en.payment.rechargeRatePreview).toBe('Current rate: 1 {currency} = {usd} USD')
     expect(zh.payment.rechargeRatePreview).toBe('当前倍率：1 {currency} = {usd} USD')
+  })
+
+  it('uses the matching tier and previews a discount on the recharge amount', async () => {
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      recharge_fee_rate: 3,
+      recharge_fee_tiers: [
+        { min_amount: 10, fee_rate: 3 },
+        { min_amount: 50, fee_rate: 1 },
+        { min_amount: 100, fee_rate: -1 },
+        { min_amount: 500, fee_rate: -10 },
+      ],
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+
+    const amountInput = wrapper.getComponent(AmountInput)
+    amountInput.vm.$emit('update:modelValue', 100)
+    await flushPromises()
+    expect(wrapper.text()).toContain(formatPaymentAmount(99, 'CNY'))
+    expect(wrapper.text()).toContain(formatPaymentAmount(1, 'CNY'))
+    expect(wrapper.text()).toContain('payment.discount')
+
+    amountInput.vm.$emit('update:modelValue', 500)
+    await flushPromises()
+    expect(wrapper.text()).toContain(formatPaymentAmount(450, 'CNY'))
+    expect(wrapper.text()).toContain(formatPaymentAmount(50, 'CNY'))
   })
 })
 

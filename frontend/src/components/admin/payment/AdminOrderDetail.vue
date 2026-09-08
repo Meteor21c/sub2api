@@ -25,6 +25,10 @@
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.fee') }} ({{ order.fee_rate }}%)</p>
           <p class="text-sm font-medium text-gray-900 dark:text-white">{{ paymentAmountSymbol }}{{ feeAmount.toFixed(2) }}</p>
         </div>
+        <div v-if="order.fee_rate < 0">
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.discount') }} ({{ Math.abs(order.fee_rate) }}%)</p>
+          <p class="text-sm font-medium text-green-600 dark:text-green-400">-{{ paymentAmountSymbol }}{{ discountAmount.toFixed(2) }}</p>
+        </div>
         <div>
           <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</p>
           <p class="text-sm font-medium text-gray-900 dark:text-white">{{ paymentAmountSymbol }}{{ order.pay_amount.toFixed(2) }}</p>
@@ -132,11 +136,22 @@ const creditedAmountSymbol = currencySymbol('USD')
 
 const paymentAmountSymbol = computed(() => currencySymbol(props.order?.currency))
 
-/** 充值金额 (base amount before fee) = pay_amount - fee = pay_amount / (1 + fee_rate/100) */
+/**
+ * 充值金额（不含手续费/优惠）。新订单直接返回原始充值金额；旧订单
+ * 没有该字段时再按费率反推，避免折扣取整造成明显误差。
+ */
 const baseAmount = computed(() => {
   if (!props.order) return 0
+  if (
+    props.order.order_type === 'balance' &&
+    typeof props.order.recharge_amount === 'number' &&
+    Number.isFinite(props.order.recharge_amount) &&
+    props.order.recharge_amount > 0
+  ) {
+    return props.order.recharge_amount
+  }
   const feeRate = Number(props.order.fee_rate) || 0
-  if (feeRate <= 0) return props.order.pay_amount
+  if (feeRate === 0) return props.order.pay_amount
   return props.order.pay_amount / (1 + feeRate / 100)
 })
 
@@ -146,6 +161,14 @@ const feeAmount = computed(() => {
   const feeRate = Number(props.order.fee_rate) || 0
   if (feeRate <= 0) return 0
   return props.order.pay_amount - baseAmount.value
+})
+
+/** 优惠金额 = 充值金额 - 实付金额。 */
+const discountAmount = computed(() => {
+  if (!props.order) return 0
+  const feeRate = Number(props.order.fee_rate) || 0
+  if (feeRate >= 0) return 0
+  return Math.max(0, baseAmount.value - props.order.pay_amount)
 })
 
 const emit = defineEmits<{

@@ -2639,6 +2639,50 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
+// buildCNAvailableModels returns the smallest useful test catalog for a
+// mainland-China OpenAI-compatible account. CN accounts are not Claude
+// accounts, so the generic fallback must never expose the Claude catalog.
+// Keep the catalog deliberately conservative: an administrator can still
+// configure an explicit model_mapping or sync the upstream model list when a
+// provider exposes a custom model name.
+func buildCNAvailableModels(account *service.Account) []openai.Model {
+	if account == nil || !account.IsCNProvider() {
+		return []openai.Model{}
+	}
+
+	modelIDs := make([]string, 0, 2)
+	switch account.Platform {
+	case service.PlatformKimi:
+		modelIDs = append(modelIDs, "kimi-k2.5")
+		// Kimi's native Responses endpoint also supports the current K2.6
+		// model. Keep it out of chat/Anthropic/adaptive probes because those
+		// paths should use one broadly compatible low-risk test model.
+		if account.GetAPIProtocol() == service.APIProtocolResponses {
+			modelIDs = append(modelIDs, "kimi-k2.6")
+		}
+	case service.PlatformZhipu:
+		modelIDs = append(modelIDs, "glm-4.7")
+	case service.PlatformDeepseek:
+		if account.GetAPIProtocol() == service.APIProtocolResponses {
+			modelIDs = append(modelIDs, "deepseek-v4-pro", "deepseek-v4-flash")
+		} else {
+			modelIDs = append(modelIDs, "deepseek-v4-flash")
+		}
+	}
+
+	models := make([]openai.Model, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		models = append(models, openai.Model{
+			ID:          modelID,
+			Object:      "model",
+			Type:        "model",
+			OwnedBy:     account.Platform,
+			DisplayName: modelID,
+		})
+	}
+	return models
+}
+
 // GetAvailableModels handles getting available models for an account
 // GET /api/v1/admin/accounts/:id/models
 func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
@@ -2786,6 +2830,34 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 				ID:          requestedModel,
 				Object:      "model",
 				OwnedBy:     "xai",
+				DisplayName: requestedModel,
+			})
+		}
+		response.Success(c, models)
+		return
+	}
+
+	// Handle mainland-China OpenAI-compatible accounts. These platforms use
+	// the OpenAI model envelope, but must not fall through to Claude defaults.
+	if account.IsCNProvider() {
+		mapping := account.GetModelMapping()
+		if len(mapping) == 0 {
+			response.Success(c, buildCNAvailableModels(account))
+			return
+		}
+
+		requestedModels := make([]string, 0, len(mapping))
+		for requestedModel := range mapping {
+			requestedModels = append(requestedModels, requestedModel)
+		}
+		sort.Strings(requestedModels)
+		models := make([]openai.Model, 0, len(requestedModels))
+		for _, requestedModel := range requestedModels {
+			models = append(models, openai.Model{
+				ID:          requestedModel,
+				Object:      "model",
+				Type:        "model",
+				OwnedBy:     account.Platform,
 				DisplayName: requestedModel,
 			})
 		}

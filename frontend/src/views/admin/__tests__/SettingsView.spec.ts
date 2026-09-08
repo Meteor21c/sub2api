@@ -487,6 +487,7 @@ const baseSettingsResponse = {
   payment_balance_recharge_multiplier: 1,
   payment_subscription_usd_to_cny_rate: 0,
   payment_recharge_fee_rate: 0,
+  payment_recharge_fee_tiers: [],
   payment_load_balance_strategy: "round-robin",
   payment_product_name_prefix: "",
   payment_product_name_suffix: "",
@@ -1073,6 +1074,28 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(payload).not.toHaveProperty("payment_visible_method_wxpay_source");
     expect(payload).not.toHaveProperty("payment_visible_method_alipay_enabled");
     expect(payload).not.toHaveProperty("payment_visible_method_wxpay_enabled");
+  });
+
+  it("persists tiered recharge fee and discount settings", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      payment_recharge_fee_tiers: [
+        { min_amount: 10, fee_rate: 3 },
+        { min_amount: 100, fee_rate: -1 },
+      ],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openPaymentTab(wrapper);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload.payment_recharge_fee_tiers).toEqual([
+      { min_amount: 10, fee_rate: 3 },
+      { min_amount: 100, fee_rate: -1 },
+    ]);
   });
 
   it("submits the admin recharge affiliate rebate setting", async () => {

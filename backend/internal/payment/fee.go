@@ -12,10 +12,18 @@ func CalculatePayAmount(rechargeAmount float64, feeRate float64) string {
 func CalculatePayAmountForCurrency(rechargeAmount float64, feeRate float64, currency string) string {
 	fractionDigits := int32(CurrencyMaxFractionDigits(currency))
 	amount := decimal.NewFromFloat(rechargeAmount)
-	if feeRate <= 0 {
+	if feeRate == 0 {
 		return amount.StringFixed(fractionDigits)
 	}
 	rate := decimal.NewFromFloat(feeRate)
-	fee := amount.Mul(rate).Div(decimal.NewFromInt(100)).RoundUp(fractionDigits)
-	return amount.Add(fee).StringFixed(fractionDigits)
+	fee := amount.Mul(rate).Div(decimal.NewFromInt(100))
+	if feeRate > 0 {
+		// Preserve the existing surcharge behavior: the fee itself is rounded
+		// upward before it is added to the credited amount.
+		return amount.Add(fee.RoundUp(fractionDigits)).StringFixed(fractionDigits)
+	}
+	// Discounts are represented by negative rates. Round the final amount
+	// upward to the currency's smallest unit so a discount never makes the
+	// gateway charge less than the configured percentage after rounding.
+	return amount.Add(fee).RoundUp(fractionDigits).StringFixed(fractionDigits)
 }

@@ -23,6 +23,9 @@ export interface PublicOrderVerifyResult {
   expires_at: string
 }
 
+/** Full order details returned by the signed resume-token endpoint. */
+export type PublicOrderResult = Omit<PaymentOrder, 'user_id'>
+
 export const paymentAPI = {
   /** Get payment configuration (enabled types, limits, etc.) */
   getConfig() {
@@ -76,7 +79,7 @@ export const paymentAPI = {
 
   /** Resolve an order from a signed resume token without auth */
   resolveOrderPublicByResumeToken(resumeToken: string) {
-    return apiClient.post<PublicOrderVerifyResult>('/payment/public/orders/resolve', { resume_token: resumeToken })
+    return apiClient.post<PublicOrderResult>('/payment/public/orders/resolve', { resume_token: resumeToken })
   },
 
   /** Request a refund for a completed order */

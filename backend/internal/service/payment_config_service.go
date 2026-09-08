@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -29,6 +31,7 @@ const (
 	// 0/未配置 = 关闭换算（订阅按 price 数值直付），显式配置后 CNY 通道订阅按 price × rate 收款。
 	SettingSubscriptionUSDToCNYRate      = "SUBSCRIPTION_USD_TO_CNY_RATE"
 	SettingRechargeFeeRate               = "RECHARGE_FEE_RATE"
+	SettingRechargeFeeTiers              = "RECHARGE_FEE_TIERS"
 	SettingProductNamePrefix             = "PRODUCT_NAME_PREFIX"
 	SettingProductNameSuffix             = "PRODUCT_NAME_SUFFIX"
 	SettingHelpImageURL                  = "PAYMENT_HELP_IMAGE_URL"
@@ -46,7 +49,22 @@ const (
 const (
 	defaultOrderTimeoutMin  = 30
 	defaultMaxPendingOrders = 3
+	// Keep tier configuration deliberately small. It is operator configuration,
+	// not a pricing rule engine, and a bounded list makes validation and review
+	// predictable.
+	maxRechargeFeeTiers = 32
+	minRechargeFeeRate  = -99.99
+	maxRechargeFeeRate  = 100.0
 )
+
+// RechargeFeeTier applies to a balance recharge whose requested amount is at
+// least MinAmount. FeeRate is a percentage: positive values are a surcharge,
+// negative values are a discount. Tiers are sorted by MinAmount before they
+// are stored/used; the highest matching threshold wins.
+type RechargeFeeTier struct {
+	MinAmount float64 `json:"min_amount"`
+	FeeRate   float64 `json:"fee_rate"`
+}
 
 // PaymentConfig holds the payment system configuration.
 type PaymentConfig struct {
@@ -60,14 +78,15 @@ type PaymentConfig struct {
 	BalanceDisabled           bool     `json:"balance_disabled"`
 	BalanceRechargeMultiplier float64  `json:"balance_recharge_multiplier"`
 	// SubscriptionUSDToCNYRate 为 0 时订阅换算关闭（兼容存量行为）。
-	SubscriptionUSDToCNYRate float64 `json:"subscription_usd_to_cny_rate"`
-	RechargeFeeRate          float64 `json:"recharge_fee_rate"`
-	LoadBalanceStrategy      string  `json:"load_balance_strategy"`
-	ProductNamePrefix        string  `json:"product_name_prefix"`
-	ProductNameSuffix        string  `json:"product_name_suffix"`
-	HelpImageURL             string  `json:"help_image_url"`
-	HelpText                 string  `json:"help_text"`
-	StripePublishableKey     string  `json:"stripe_publishable_key,omitempty"`
+	SubscriptionUSDToCNYRate float64           `json:"subscription_usd_to_cny_rate"`
+	RechargeFeeRate          float64           `json:"recharge_fee_rate"`
+	RechargeFeeTiers         []RechargeFeeTier `json:"recharge_fee_tiers"`
+	LoadBalanceStrategy      string            `json:"load_balance_strategy"`
+	ProductNamePrefix        string            `json:"product_name_prefix"`
+	ProductNameSuffix        string            `json:"product_name_suffix"`
+	HelpImageURL             string            `json:"help_image_url"`
+	HelpText                 string            `json:"help_text"`
+	StripePublishableKey     string            `json:"stripe_publishable_key,omitempty"`
 
 	// Cancel rate limit settings
 	CancelRateLimitEnabled bool   `json:"cancel_rate_limit_enabled"`
@@ -84,22 +103,23 @@ type PaymentConfig struct {
 
 // UpdatePaymentConfigRequest contains fields to update payment configuration.
 type UpdatePaymentConfigRequest struct {
-	Enabled                   *bool    `json:"enabled"`
-	MinAmount                 *float64 `json:"min_amount"`
-	MaxAmount                 *float64 `json:"max_amount"`
-	DailyLimit                *float64 `json:"daily_limit"`
-	OrderTimeoutMin           *int     `json:"order_timeout_minutes"`
-	MaxPendingOrders          *int     `json:"max_pending_orders"`
-	EnabledTypes              []string `json:"enabled_payment_types"`
-	BalanceDisabled           *bool    `json:"balance_disabled"`
-	BalanceRechargeMultiplier *float64 `json:"balance_recharge_multiplier"`
-	SubscriptionUSDToCNYRate  *float64 `json:"subscription_usd_to_cny_rate"`
-	RechargeFeeRate           *float64 `json:"recharge_fee_rate"`
-	LoadBalanceStrategy       *string  `json:"load_balance_strategy"`
-	ProductNamePrefix         *string  `json:"product_name_prefix"`
-	ProductNameSuffix         *string  `json:"product_name_suffix"`
-	HelpImageURL              *string  `json:"help_image_url"`
-	HelpText                  *string  `json:"help_text"`
+	Enabled                   *bool              `json:"enabled"`
+	MinAmount                 *float64           `json:"min_amount"`
+	MaxAmount                 *float64           `json:"max_amount"`
+	DailyLimit                *float64           `json:"daily_limit"`
+	OrderTimeoutMin           *int               `json:"order_timeout_minutes"`
+	MaxPendingOrders          *int               `json:"max_pending_orders"`
+	EnabledTypes              []string           `json:"enabled_payment_types"`
+	BalanceDisabled           *bool              `json:"balance_disabled"`
+	BalanceRechargeMultiplier *float64           `json:"balance_recharge_multiplier"`
+	SubscriptionUSDToCNYRate  *float64           `json:"subscription_usd_to_cny_rate"`
+	RechargeFeeRate           *float64           `json:"recharge_fee_rate"`
+	RechargeFeeTiers          *[]RechargeFeeTier `json:"recharge_fee_tiers"`
+	LoadBalanceStrategy       *string            `json:"load_balance_strategy"`
+	ProductNamePrefix         *string            `json:"product_name_prefix"`
+	ProductNameSuffix         *string            `json:"product_name_suffix"`
+	HelpImageURL              *string            `json:"help_image_url"`
+	HelpText                  *string            `json:"help_text"`
 
 	// Cancel rate limit settings
 	CancelRateLimitEnabled *bool   `json:"cancel_rate_limit_enabled"`
@@ -219,7 +239,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 	keys := []string{
 		SettingPaymentEnabled, SettingMinRechargeAmount, SettingMaxRechargeAmount,
 		SettingDailyRechargeLimit, SettingOrderTimeoutMinutes, SettingMaxPendingOrders,
-		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionUSDToCNYRate, SettingRechargeFeeRate, SettingLoadBalanceStrategy,
+		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionUSDToCNYRate, SettingRechargeFeeRate, SettingRechargeFeeTiers, SettingLoadBalanceStrategy,
 		SettingProductNamePrefix, SettingProductNameSuffix,
 		SettingHelpImageURL, SettingHelpText,
 		SettingCancelRateLimitOn, SettingCancelRateLimitMax,
@@ -239,6 +259,13 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 }
 
 func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *PaymentConfig {
+	rechargeFeeTiers := parseRechargeFeeTiers(vals[SettingRechargeFeeTiers])
+	// Keep the public/API shape stable: an unconfigured tier list is an empty
+	// array rather than JSON null. The parser itself still returns nil for an
+	// invalid/absent raw value so the flat-rate fallback remains explicit.
+	if rechargeFeeTiers == nil {
+		rechargeFeeTiers = []RechargeFeeTier{}
+	}
 	cfg := &PaymentConfig{
 		Enabled:                   vals[SettingPaymentEnabled] == "true",
 		MinAmount:                 pcParseFloat(vals[SettingMinRechargeAmount], 1),
@@ -249,7 +276,8 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		BalanceDisabled:           vals[SettingBalancePayDisabled] == "true",
 		BalanceRechargeMultiplier: normalizeBalanceRechargeMultiplier(pcParseFloat(vals[SettingBalanceRechargeMult], defaultBalanceRechargeMultiplier)),
 		SubscriptionUSDToCNYRate:  normalizeSubscriptionUSDToCNYRate(pcParseFloat(vals[SettingSubscriptionUSDToCNYRate], 0)),
-		RechargeFeeRate:           pcParseFloat(vals[SettingRechargeFeeRate], 0),
+		RechargeFeeRate:           normalizeRechargeFeeRate(pcParseFloat(vals[SettingRechargeFeeRate], 0)),
+		RechargeFeeTiers:          rechargeFeeTiers,
 		LoadBalanceStrategy:       vals[SettingLoadBalanceStrategy],
 		ProductNamePrefix:         vals[SettingProductNamePrefix],
 		ProductNameSuffix:         vals[SettingProductNameSuffix],
@@ -283,6 +311,113 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		cfg.EnabledTypes = NormalizeVisibleMethods(types)
 	}
 	return cfg
+}
+
+// FeeRateForBalanceAmount returns the effective fee/discount for a balance
+// recharge. An empty or invalid tier setting intentionally falls back to the
+// legacy flat RECHARGE_FEE_RATE behavior.
+func (cfg *PaymentConfig) FeeRateForBalanceAmount(amount float64) float64 {
+	if cfg == nil {
+		return 0
+	}
+	rate := cfg.RechargeFeeRate
+	matchedMin := -1.0
+	for _, tier := range cfg.RechargeFeeTiers {
+		if amount >= tier.MinAmount && tier.MinAmount >= matchedMin {
+			matchedMin = tier.MinAmount
+			rate = tier.FeeRate
+		}
+	}
+	return rate
+}
+
+func parseRechargeFeeTiers(raw string) []RechargeFeeTier {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var tiers []RechargeFeeTier
+	if err := json.Unmarshal([]byte(raw), &tiers); err != nil {
+		// Accept the old NewAPI amount_discount form, whose values are multipliers
+		// (1.03 means a 3% surcharge, 0.90 means a 10% discount). The public API
+		// and UI use the explicit percentage array form above.
+		var legacy map[string]float64
+		if mapErr := json.Unmarshal([]byte(raw), &legacy); mapErr != nil {
+			return nil
+		}
+		for minAmount, multiplier := range legacy {
+			amount, parseErr := strconv.ParseFloat(strings.TrimSpace(minAmount), 64)
+			if parseErr != nil {
+				return nil
+			}
+			// Round the converted percentage to cents to avoid binary floating point
+			// noise such as (1.03-1)*100 = 3.0000000000000027.
+			feeRate := math.Round((multiplier-1)*100*100) / 100
+			tiers = append(tiers, RechargeFeeTier{MinAmount: amount, FeeRate: feeRate})
+		}
+	}
+	normalized, err := normalizeRechargeFeeTiers(tiers)
+	if err != nil {
+		return nil
+	}
+	return normalized
+}
+
+func normalizeRechargeFeeTiers(tiers []RechargeFeeTier) ([]RechargeFeeTier, error) {
+	if len(tiers) > maxRechargeFeeTiers {
+		return nil, fmt.Errorf("at most %d recharge fee tiers are allowed", maxRechargeFeeTiers)
+	}
+	// Allocate an actual empty slice for an explicit clear operation so it is
+	// persisted as JSON [] (rather than null) and keeps the API shape stable.
+	normalized := make([]RechargeFeeTier, len(tiers))
+	copy(normalized, tiers)
+	for i := range normalized {
+		tier := &normalized[i]
+		if math.IsNaN(tier.MinAmount) || math.IsInf(tier.MinAmount, 0) || tier.MinAmount <= 0 {
+			return nil, fmt.Errorf("tier minimum amount must be a positive finite number")
+		}
+		if !hasAtMostTwoDecimalPlaces(tier.MinAmount) {
+			return nil, fmt.Errorf("tier minimum amount allows at most 2 decimal places")
+		}
+		if math.IsNaN(tier.FeeRate) || math.IsInf(tier.FeeRate, 0) || tier.FeeRate < minRechargeFeeRate || tier.FeeRate > maxRechargeFeeRate {
+			return nil, fmt.Errorf("tier fee rate must be between %.2f and %.2f", minRechargeFeeRate, maxRechargeFeeRate)
+		}
+		if !hasAtMostTwoDecimalPlaces(tier.FeeRate) {
+			return nil, fmt.Errorf("tier fee rate allows at most 2 decimal places")
+		}
+		tier.MinAmount = math.Round(tier.MinAmount*100) / 100
+		tier.FeeRate = math.Round(tier.FeeRate*100) / 100
+	}
+	sort.Slice(normalized, func(i, j int) bool {
+		return normalized[i].MinAmount < normalized[j].MinAmount
+	})
+	for i := 1; i < len(normalized); i++ {
+		if normalized[i].MinAmount == normalized[i-1].MinAmount {
+			return nil, fmt.Errorf("tier minimum amounts must be unique")
+		}
+	}
+	if len(normalized) == 0 {
+		return normalized, nil
+	}
+	return normalized, nil
+}
+
+func hasAtMostTwoDecimalPlaces(value float64) bool {
+	scaled := value * 100
+	if math.IsInf(scaled, 0) || math.IsNaN(scaled) {
+		return false
+	}
+	return math.Abs(math.Round(scaled)-scaled) <= 1e-9
+}
+
+// normalizeRechargeFeeRate keeps the legacy flat rate safe when settings were
+// written outside the validated admin endpoint (for example by an old
+// migration or a manual database edit). Invalid values must not silently turn
+// into a global discount or propagate NaN/Inf into payment calculations.
+func normalizeRechargeFeeRate(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > maxRechargeFeeRate || !hasAtMostTwoDecimalPlaces(value) {
+		return 0
+	}
+	return math.Round(value*100) / 100
 }
 
 func pcEnvBoolOverride(key string, fallback bool) bool {
@@ -343,6 +478,14 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 			return infraerrors.BadRequest("INVALID_RECHARGE_FEE_RATE", "recharge fee rate allows at most 2 decimal places")
 		}
 	}
+	var rechargeFeeTiers []RechargeFeeTier
+	if req.RechargeFeeTiers != nil {
+		var err error
+		rechargeFeeTiers, err = normalizeRechargeFeeTiers(*req.RechargeFeeTiers)
+		if err != nil {
+			return infraerrors.BadRequest("INVALID_RECHARGE_FEE_TIERS", err.Error())
+		}
+	}
 	m := make(map[string]string)
 	if req.Enabled != nil {
 		m[SettingPaymentEnabled] = formatBoolOrEmpty(req.Enabled)
@@ -376,6 +519,13 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	}
 	if req.RechargeFeeRate != nil {
 		m[SettingRechargeFeeRate] = formatNonNegativeFloat(req.RechargeFeeRate)
+	}
+	if req.RechargeFeeTiers != nil {
+		raw, err := json.Marshal(rechargeFeeTiers)
+		if err != nil {
+			return fmt.Errorf("marshal recharge fee tiers: %w", err)
+		}
+		m[SettingRechargeFeeTiers] = string(raw)
 	}
 	if req.LoadBalanceStrategy != nil {
 		m[SettingLoadBalanceStrategy] = derefStr(req.LoadBalanceStrategy)

@@ -67,15 +67,19 @@
                   <span class="text-gray-500 dark:text-gray-400">{{ t('payment.paymentAmount') }}</span>
                   <span class="text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(validAmount) }}</span>
                 </div>
-                <div v-if="feeRate > 0" class="flex justify-between">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.fee') }} ({{ feeRate }}%)</span>
-                  <span class="text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(feeAmount) }}</span>
+                <div v-if="rechargeFeeRate > 0" class="flex justify-between">
+                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.fee') }} ({{ rechargeFeeRate }}%)</span>
+                  <span class="text-gray-900 dark:text-white">{{ formatSelectedPaymentAmount(rechargeFeeAmount) }}</span>
                 </div>
-                <div v-if="feeRate > 0" class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
+                <div v-if="rechargeFeeRate < 0" class="flex justify-between">
+                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.discount') }} ({{ Math.abs(rechargeFeeRate) }}%)</span>
+                  <span class="text-green-600 dark:text-green-400">-{{ formatSelectedPaymentAmount(rechargeDiscountAmount) }}</span>
+                </div>
+                <div v-if="rechargeFeeRate !== 0" class="flex justify-between border-t border-gray-200 pt-2 dark:border-dark-600">
                   <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
-                  <span class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ formatSelectedPaymentAmount(totalAmount) }}</span>
+                  <span class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ formatSelectedPaymentAmount(rechargeTotalAmount) }}</span>
                 </div>
-                <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
+                <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': rechargeFeeRate === 0 }">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('payment.creditedBalance') }}</span>
                   <span class="text-gray-900 dark:text-white">${{ creditedAmount.toFixed(2) }}</span>
                 </div>
@@ -89,7 +93,7 @@
                 <span class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
                 {{ t('common.processing') }}
               </span>
-              <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(totalAmount) }}</span>
+              <span v-else>{{ t('payment.createOrder') }} {{ formatSelectedPaymentAmount(rechargeTotalAmount) }}</span>
             </button>
             </template>
           </template>
@@ -267,7 +271,7 @@ import { paymentAPI } from '@/api/payment'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { isMobileDevice } from '@/utils/device'
 import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel, type PeakRateFields } from '@/utils/peak-rate'
-import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType } from '@/types/payment'
+import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType, RechargeFeeTier } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import AmountInput from '@/components/payment/AmountInput.vue'
 import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
@@ -502,8 +506,23 @@ function onPaymentSettled() {
 // All checkout data from single API call
 const checkout = ref<CheckoutInfoResponse>({
   methods: {}, global_min: 0, global_max: 0,
-  plans: [], balance_disabled: false, balance_recharge_multiplier: 1, subscription_usd_to_cny_rate: 0, recharge_fee_rate: 0, help_text: '', help_image_url: '', stripe_publishable_key: '',
+  plans: [], balance_disabled: false, balance_recharge_multiplier: 1, subscription_usd_to_cny_rate: 0, recharge_fee_rate: 0, recharge_fee_tiers: [], help_text: '', help_image_url: '', stripe_publishable_key: '',
 })
+
+function normalizeCheckoutRechargeFeeTiers(input: unknown): RechargeFeeTier[] {
+  if (!Array.isArray(input)) return []
+  return input
+    .map((tier): RechargeFeeTier | null => {
+      if (!tier || typeof tier !== 'object') return null
+      const raw = tier as Record<string, unknown>
+      const minAmount = Number(raw.min_amount)
+      const feeRate = Number(raw.fee_rate)
+      if (!Number.isFinite(minAmount) || !Number.isFinite(feeRate) || minAmount <= 0) return null
+      return { min_amount: minAmount, fee_rate: feeRate }
+    })
+    .filter((tier): tier is RechargeFeeTier => tier !== null)
+    .sort((a, b) => a.min_amount - b.min_amount)
+}
 
 const tabs = computed(() => {
   const result: { key: 'recharge' | 'subscription'; label: string }[] = []
@@ -619,16 +638,35 @@ const methodOptions = computed<PaymentMethodOption[]>(() =>
 )
 
 const feeRate = computed(() => checkout.value?.recharge_fee_rate ?? 0)
-const feeAmount = computed(() =>
-  feeRate.value > 0 && validAmount.value > 0
-    ? Math.ceil(((validAmount.value * feeRate.value) / 100) * 100) / 100
-    : 0
-)
-const totalAmount = computed(() =>
-  feeRate.value > 0 && validAmount.value > 0
-    ? Math.round((validAmount.value + feeAmount.value) * 100) / 100
-    : validAmount.value
-)
+
+function rechargeFeeRateForAmount(rechargeAmount: number): number {
+  let rate = feeRate.value
+  for (const tier of checkout.value?.recharge_fee_tiers ?? []) {
+    if (rechargeAmount < tier.min_amount) break
+    rate = tier.fee_rate
+  }
+  return rate
+}
+
+const rechargeFeeRate = computed(() => rechargeFeeRateForAmount(validAmount.value))
+const rechargeTotalAmount = computed(() => {
+  const base = validAmount.value
+  const rate = rechargeFeeRate.value
+  if (base <= 0 || rate === 0) return base
+  if (rate > 0) {
+    const fee = ceilPaymentAmount((base * rate) / 100, selectedCurrency.value)
+    return roundPaymentAmount(base + fee, selectedCurrency.value)
+  }
+  return ceilPaymentAmount(base * (1 + rate / 100), selectedCurrency.value)
+})
+const rechargeFeeAmount = computed(() => {
+  if (rechargeFeeRate.value <= 0 || validAmount.value <= 0) return 0
+  return roundPaymentAmount(rechargeTotalAmount.value - validAmount.value, selectedCurrency.value)
+})
+const rechargeDiscountAmount = computed(() => {
+  if (rechargeFeeRate.value >= 0 || validAmount.value <= 0) return 0
+  return roundPaymentAmount(validAmount.value - rechargeTotalAmount.value, selectedCurrency.value)
+})
 
 const amountError = computed(() => {
   if (validAmount.value <= 0) return ''
@@ -1099,7 +1137,10 @@ async function resumeWechatPaymentFromQuery() {
 onMounted(async () => {
   try {
     const res = await paymentAPI.getCheckoutInfo()
-    checkout.value = res.data
+    checkout.value = {
+      ...res.data,
+      recharge_fee_tiers: normalizeCheckoutRechargeFeeTiers(res.data.recharge_fee_tiers),
+    }
     if (enabledMethods.value.length) {
       const order: readonly string[] = METHOD_ORDER
       const sorted = [...enabledMethods.value].sort((a, b) => {

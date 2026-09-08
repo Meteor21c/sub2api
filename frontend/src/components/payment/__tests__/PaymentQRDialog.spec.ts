@@ -102,4 +102,42 @@ describe('PaymentQRDialog currency display', () => {
     expect(wrapper.text()).toContain('$100.00')
     expect(wrapper.text()).toContain('¥108.00')
   })
+
+  it('shows the applied recharge discount in the success summary', async () => {
+    pollOrderStatus.mockResolvedValue({
+      ...paidOrder,
+      amount: 100,
+      recharge_amount: 100,
+      pay_amount: 99,
+      fee_rate: -1,
+      order_type: 'balance',
+    })
+
+    const wrapper = mount(PaymentQRDialog, {
+      props: {
+        show: false,
+        orderId: 42,
+        qrCode: '',
+        expiresAt: '2099-01-01T10:30:00Z',
+        paymentType: 'alipay',
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            props: ['show'],
+            template: '<div v-if="show"><slot /><slot name="footer" /></div>',
+          },
+          Icon: true,
+        },
+      },
+    })
+
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('payment.orders.discount')
+    expect(wrapper.text()).toContain('¥1.00')
+  })
 })

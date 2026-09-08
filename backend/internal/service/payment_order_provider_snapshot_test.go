@@ -7,9 +7,44 @@ import (
 	"strconv"
 	"testing"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPaymentOrderRechargeAmountUsesLegacySnapshotWithoutPinningProvider(t *testing.T) {
+	t.Parallel()
+
+	order := &dbent.PaymentOrder{
+		OrderType: payment.OrderTypeBalance,
+		PayAmount: 9.70,
+		ProviderSnapshot: map[string]any{
+			"legacy_amount": "10",
+			"legacy_money":  "9.70",
+		},
+	}
+
+	// An amount-only historical snapshot must remain eligible for the normal
+	// legacy provider fallback; it is not a pinned provider binding.
+	require.Nil(t, psOrderProviderSnapshot(order))
+	require.Equal(t, 10.0, PaymentOrderRechargeAmount(order))
+}
+
+func TestPaymentOrderRechargeAmountPrefersNativeSnapshotAmount(t *testing.T) {
+	t.Parallel()
+
+	order := &dbent.PaymentOrder{
+		OrderType: payment.OrderTypeBalance,
+		PayAmount: 9.70,
+		ProviderSnapshot: map[string]any{
+			"recharge_amount": 10.0,
+			"legacy_amount":   "11",
+		},
+	}
+
+	require.Nil(t, psOrderProviderSnapshot(order))
+	require.Equal(t, 10.0, PaymentOrderRechargeAmount(order))
+}
 
 func TestBuildPaymentOrderProviderSnapshot_ExcludesSensitiveConfig(t *testing.T) {
 	t.Parallel()
@@ -102,9 +137,11 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 	require.Equal(t, strconv.FormatInt(instance.ID, 10), valueOrEmpty(order.ProviderInstanceID))
 	require.Equal(t, payment.TypeAlipay, valueOrEmpty(order.ProviderKey))
 	require.Equal(t, float64(2), order.ProviderSnapshot["schema_version"])
+	require.Equal(t, 88.0, PaymentOrderRechargeAmount(order))
 	require.Equal(t, strconv.FormatInt(instance.ID, 10), order.ProviderSnapshot["provider_instance_id"])
 	require.Equal(t, payment.TypeAlipay, order.ProviderSnapshot["provider_key"])
 	require.Equal(t, "redirect", order.ProviderSnapshot["payment_mode"])
+	require.Equal(t, float64(88), order.ProviderSnapshot["recharge_amount"])
 	require.NotContains(t, order.ProviderSnapshot, "config")
 	require.NotContains(t, order.ProviderSnapshot, "secretKey")
 	require.NotContains(t, order.ProviderSnapshot, "supported_types")
