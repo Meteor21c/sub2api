@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,6 +9,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 )
 
@@ -44,10 +48,183 @@ type AccountTestDebugResult struct {
 	Content     string                  `json:"content"`
 	RawResponse string                  `json:"raw_response"`
 	Model       string                  `json:"model"`
+	AccountID   int64                   `json:"account_id,omitempty"`
+	AccountName string                  `json:"account_name,omitempty"`
 	Timing      AccountTestDebugTiming  `json:"timing"`
 	Usage       TestUsage               `json:"usage"`
 	Billing     AccountTestDebugBilling `json:"billing"`
 	Success     bool                    `json:"success"`
+}
+
+// TestGroupDebug selects one account through the normal group scheduler, then
+// runs the same non-billing upstream probe used by the account debugger. The
+// scheduler slot and synthetic session are always released after the probe.
+func (s *AccountTestService) TestGroupDebug(c *gin.Context, groupID int64, modelID, prompt string) (*AccountTestDebugResult, error) {
+	if s == nil || s.gatewayService == nil {
+		return nil, fmt.Errorf("group scheduler is unavailable")
+	}
+	if groupID <= 0 {
+		return nil, fmt.Errorf("invalid group ID")
+	}
+
+	ctx := c.Request.Context()
+	requestedModel := strings.TrimSpace(modelID)
+	group, resolvedGroupID, err := s.gatewayService.resolveGatewayGroup(ctx, &groupID)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil || resolvedGroupID == nil {
+		return nil, ErrGroupNotFound
+	}
+	probeModel := requestedModel
+	if probeModel == "" && group.Platform != PlatformComposite {
+		probeModel = defaultGroupDebugModel(group.Platform)
+		requestedModel = probeModel
+	}
+	if group.Platform == PlatformComposite {
+		if requestedModel == "" {
+			return nil, fmt.Errorf("a model is required when testing a composite group")
+		}
+		decision, ok, resolveErr := s.gatewayService.resolveCompositeRouteDecision(
+			ctx, group, requestedModel, CompositeRouteEndpointAny,
+		)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if !ok {
+			return nil, fmt.Errorf("no composite route supports model: %s", requestedModel)
+		}
+		probeModel = decision.UpstreamModel
+		ctx = WithCompositeRouteDecision(ctx, decision)
+		c.Request = c.Request.WithContext(ctx)
+		// The scheduler must filter on the concrete upstream model, while the
+		// request context retains the public model for billing/routing metadata.
+		requestedModel = probeModel
+	}
+
+	sessionHash := fmt.Sprintf("admin-group-test-%d", time.Now().UnixNano())
+	selection, err := s.selectGroupDebugAccount(ctx, resolvedGroupID, sessionHash, requestedModel, group.Platform)
+	if err != nil {
+		return nil, err
+	}
+	// Match normal gateway behavior for short-lived contention: a scheduler
+	// WaitPlan is a reservation opportunity, not an immediate failure. Retry
+	// selection at a bounded cadence so this diagnostic does not report a
+	// healthy group as unavailable while a slot is about to be released.
+	if selection != nil && !selection.Acquired && selection.WaitPlan != nil {
+		waitFor := selection.WaitPlan.Timeout
+		if waitFor <= 0 || waitFor > groupDebugMaxWait {
+			waitFor = groupDebugMaxWait
+		}
+		deadline := time.Now().Add(waitFor)
+		for !selection.Acquired {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				break
+			}
+			delay := groupDebugSelectionRetryInterval
+			if remaining < delay {
+				delay = remaining
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+			selection, err = s.selectGroupDebugAccount(ctx, resolvedGroupID, sessionHash, requestedModel, group.Platform)
+			if err != nil {
+				return nil, err
+			}
+			if selection == nil || selection.Account == nil {
+				return nil, ErrNoAvailableAccounts
+			}
+			if selection.WaitPlan == nil {
+				break
+			}
+		}
+	}
+	if selection == nil || selection.Account == nil {
+		return nil, ErrNoAvailableAccounts
+	}
+	account := selection.Account
+	defer s.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
+	if selection.ReleaseFunc != nil {
+		defer selection.ReleaseFunc()
+	}
+	if !selection.Acquired {
+		return nil, fmt.Errorf("no account in the group has an immediately available concurrency slot")
+	}
+
+	result, err := s.TestAccountDebug(c, account.ID, probeModel, prompt)
+	if err != nil {
+		return nil, err
+	}
+	result.AccountID = account.ID
+	result.AccountName = account.Name
+	return result, nil
+}
+
+const (
+	groupDebugSelectionRetryInterval = 250 * time.Millisecond
+	groupDebugMaxWait                = 10 * time.Second
+)
+
+func defaultGroupDebugModel(platform string) string {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case PlatformOpenAI:
+		return openai.DefaultTestModel
+	case PlatformGemini:
+		return geminicli.DefaultTestModel
+	case PlatformGrok:
+		return grokDefaultResponsesModel
+	default:
+		return claude.DefaultTestModel
+	}
+}
+
+// selectGroupDebugAccount mirrors production scheduler selection for the
+// OpenAI-compatible platforms, including endpoint capability checks and
+// composite target-platform overrides. Other providers use the shared
+// load-aware scheduler used by their gateway handlers.
+func (s *AccountTestService) selectGroupDebugAccount(
+	ctx context.Context,
+	groupID *int64,
+	sessionHash, requestedModel, groupPlatform string,
+) (*AccountSelectionResult, error) {
+	platform := strings.ToLower(strings.TrimSpace(groupPlatform))
+	if resolved, ok := ResolvedTargetPlatformFromContext(ctx); ok {
+		platform = strings.ToLower(strings.TrimSpace(resolved))
+	}
+	if (platform == PlatformOpenAI || platform == PlatformGrok) && s.openaiGatewayService != nil {
+		capability := OpenAIEndpointCapabilityChatCompletions
+		if isOpenAIImageModel(requestedModel) {
+			capability = OpenAIEndpointCapabilityResponses
+		} else if platform == PlatformGrok && (isGrokImageGenerationModel(requestedModel) || isGrokVideoGenerationModel(requestedModel)) {
+			capability = OpenAIEndpointCapabilityGrokMediaGeneration
+		}
+		returnSelection, _, err := s.openaiGatewayService.SelectAccountWithSchedulerForCapability(
+			ctx,
+			groupID,
+			"",
+			sessionHash,
+			requestedModel,
+			nil,
+			OpenAIUpstreamTransportAny,
+			capability,
+			false,
+			false,
+			true,
+			platform,
+		)
+		return returnSelection, err
+	}
+	return s.gatewayService.SelectAccountWithLoadAwareness(
+		ctx, groupID, sessionHash, requestedModel, nil, "", 0,
+	)
 }
 
 // AccountTestCapture collects the safe TestEvent stream without writing SSE

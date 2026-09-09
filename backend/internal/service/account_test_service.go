@@ -153,6 +153,7 @@ type AccountTestService struct {
 	modelMetadataRegistryAt   time.Time
 	pluginManager             *PluginManager
 	openaiGatewayService      *OpenAIGatewayService
+	gatewayService            *GatewayService
 	billingService            *BillingService
 	agentIdentityTaskMu       sync.Mutex
 	agentIdentityWS           agentIdentityWSConnectionInvalidator
@@ -176,6 +177,12 @@ func (s *AccountTestService) SetPluginManager(pluginManager *PluginManager) {
 func (s *AccountTestService) SetOpenAIGatewayService(gateway *OpenAIGatewayService) {
 	if s != nil {
 		s.openaiGatewayService = gateway
+	}
+}
+
+func (s *AccountTestService) SetGatewayService(gateway *GatewayService) {
+	if s != nil {
+		s.gatewayService = gateway
 	}
 }
 

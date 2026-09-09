@@ -253,6 +253,7 @@ func ProvideAccountTestService(
 	cfg *config.Config,
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
+	gatewayService *GatewayService,
 	settingService *SettingService,
 	pluginManager *PluginManager,
 	billingService *BillingService,
@@ -269,6 +270,7 @@ func ProvideAccountTestService(
 	)
 	service.agentIdentityWS = openAIGatewayService
 	service.SetOpenAIGatewayService(openAIGatewayService)
+	service.SetGatewayService(gatewayService)
 	service.SetSettingService(settingService)
 	service.SetPluginManager(pluginManager)
 	service.SetBillingService(billingService)

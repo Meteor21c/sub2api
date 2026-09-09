@@ -11,8 +11,8 @@
 - 页面加载只自动读取当前登录用户和有效媒体 Key、查询模型列表，不自动生成。
 - 图片档位取自当前密钥所属分组的 `image_price_1k/2k/4k` 配置，再由档位和画幅生成标准 `size` 参数；上游仍会最终校验模型是否支持该尺寸。
 - `account-keys.js` 使用现有同源 `auth_token` 登录态，通过官方用户接口读取本人 Key；Key 只存于内存，选项中仅放 ID 和名称。退出或切换账号后清空；缺少 Key 时由用户自行创建。
-- 媒体分组 ID 在 `account-keys.js` 中配置，当前图片为 23、视频为 24。
-- 侧边栏使用原生 Markdown 内容页嵌入：`meteor-image.md`、`meteor-video.md` 放入 Sub2API 的 `data/pages/`，菜单配置见 `../configure-media-sidebar.sql`。不要换成外链菜单：当前官方版本会给外链自动附加登录 token。
+- 默认按当前用户可见分组的图片能力或视频定价字段识别媒体分组，不依赖固定分组 ID；旧部署如需固定分组，可在 `MeteorAccountKeys.createClient` 传入 `groups.image` / `groups.video`。
+- 侧边栏使用原生 Markdown 内容页嵌入：将 `meteor-image.md`、`meteor-video.md` 放入 Sub2API 的 `data/pages/`，再在后台自定义菜单中分别创建 `md:meteor-image` 和 `md:meteor-video` 页面。不要换成外链菜单：当前官方版本会给外链自动附加登录 token。
 
 ## 部署
 
@@ -30,4 +30,4 @@ location ^~ /media/ {
 
 然后执行 `nginx -t && systemctl reload nginx`。该 location 与 Sub2API 容器解耦，后续更新官方容器不会覆盖页面。
 
-业务配置：分组倍率独立于公共价格目录；文本使用自动更新的公共目录，媒体价格与模型映射单独审核。纯文本上游开启池模式，媒体或混合上游关闭。站内用户和账号并发设为 0（无限制），新用户还需将 config.yaml 的 default.user_concurrency 设为 0；云端及上游资源限额仍存在。
+业务配置：分组倍率独立于公共价格目录；文本使用自动更新的公共目录，媒体价格与模型映射单独审核。除图片/视频外的纯文本上游开启池模式，媒体或混合上游关闭。账号并发设为 0 表示不限；站内新用户默认并发为 10，可在后台按需调整；云端及上游资源限额仍存在。

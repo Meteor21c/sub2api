@@ -1336,6 +1336,36 @@ func (h *AccountHandler) DebugTest(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// DebugTestGroup runs the administrator probe after selecting an account via
+// the group's normal scheduler. It does not debit a balance or write usage.
+// POST /api/v1/admin/groups/:id/debug-test
+func (h *AccountHandler) DebugTestGroup(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || groupID <= 0 {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+	if h.accountTestService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Account test service unavailable")
+		return
+	}
+
+	var req DebugTestAccountRequest
+	_ = c.ShouldBindJSON(&req)
+	result, err := h.accountTestService.TestGroupDebug(c, groupID, req.ModelID, req.Prompt)
+	if err != nil {
+		response.Error(c, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	if h.rateLimitService != nil && result.AccountID > 0 {
+		if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), result.AccountID); recoverErr != nil {
+			_ = c.Error(recoverErr)
+		}
+	}
+	response.Success(c, result)
+}
+
 // RecoverState handles unified recovery of recoverable account runtime state.
 // POST /api/v1/admin/accounts/:id/recover-state
 func (h *AccountHandler) RecoverState(c *gin.Context) {

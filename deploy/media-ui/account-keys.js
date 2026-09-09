@@ -6,10 +6,39 @@
     (!key.expires_at || Date.parse(key.expires_at) > now) &&
     (!(Number(key.quota) > 0) || Number(key.quota_used) < Number(key.quota));
 
-  function createClient({ readToken, fetchJSON, groups = { image: 23, video: 24 } }) {
+  function normalizedConfiguredGroupIds(groups, kind) {
+    const value = groups?.[kind];
+    if (value === undefined || value === null || value === '') return [];
+    const values = Array.isArray(value) ? value : [value];
+    return values
+      .map(id => Number(id))
+      .filter(id => Number.isInteger(id) && id > 0);
+  }
+
+  function hasConfiguredPrice(group, fields) {
+    return fields.some(field => group?.[field] !== null && group?.[field] !== undefined && group?.[field] !== '');
+  }
+
+  function supportsMediaKind(group, kind) {
+    if (!group || group.status === 'inactive') return false;
+    if (kind === 'image') return group.allow_image_generation === true;
+    return group.allow_video_generation === true || group.video_enabled === true || hasConfiguredPrice(group, [
+      'video_price_480p',
+      'video_price_720p',
+      'video_price_1080p',
+    ]);
+  }
+
+  function createClient({ readToken, fetchJSON, groups = {} }) {
     let session = '', rows = [], availableGroups = [], userId = null;
     const clear = () => { session = ''; rows = []; availableGroups = []; userId = null; };
     const current = () => session && readToken() === session;
+    const allowedGroupIds = kind => {
+      const configured = normalizedConfiguredGroupIds(groups, kind);
+      if (configured.length) return configured;
+      return availableGroups.filter(group => supportsMediaKind(group, kind)).map(group => Number(group.id));
+    };
+    const keyMatchesKind = (key, kind) => allowedGroupIds(kind).includes(Number(key.group_id));
     async function refresh() {
       clear();
       const token = readToken();
@@ -34,17 +63,17 @@
     }
     function list(kind) {
       if (!current()) { clear(); return []; }
-      return rows.filter(k => usable(k, userId, groups[kind]))
+      return rows.filter(k => keyMatchesKind(k, kind) && usable(k, userId, k.group_id))
         .map(k => ({ id: String(k.id), name: k.name || `密钥 ${k.id}` }));
     }
     function get(kind, id) {
       if (!current()) { clear(); return ''; }
-      const row = rows.find(k => String(k.id) === String(id) && usable(k, userId, groups[kind]));
+      const row = rows.find(k => String(k.id) === String(id) && keyMatchesKind(k, kind) && usable(k, userId, k.group_id));
       return row?.key || '';
     }
     function getInfo(kind, id) {
       if (!current()) { clear(); return null; }
-      const row = rows.find(k => String(k.id) === String(id) && usable(k, userId, groups[kind]));
+      const row = rows.find(k => String(k.id) === String(id) && keyMatchesKind(k, kind) && usable(k, userId, k.group_id));
       return row ? { id: String(row.id), name: row.name || `密钥 ${row.id}`, groupId: Number(row.group_id) } : null;
     }
     function getGroup(kind, id) {
@@ -64,7 +93,7 @@
     }
     function owns(kind, secret) {
       if (!current() || !secret) { clear(); return false; }
-      return rows.some(k => k.key === secret && usable(k, userId, groups[kind]));
+      return rows.some(k => k.key === secret && keyMatchesKind(k, kind) && usable(k, userId, k.group_id));
     }
     return { refresh, list, get, getInfo, getGroup, owns, clear };
   }

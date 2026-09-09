@@ -15,16 +15,25 @@
             <button
               type="button"
               class="btn btn-secondary px-3"
-              :disabled="loadingAccounts || running"
+              :disabled="loadingAccounts || loadingGroups || running"
               :title="t('common.refresh')"
               @click="refreshAll"
             >
-              <Icon name="refresh" size="sm" :class="loadingAccounts ? 'animate-spin' : ''" />
+              <Icon name="refresh" size="sm" :class="loadingAccounts || loadingGroups ? 'animate-spin' : ''" />
             </button>
           </div>
 
           <div class="space-y-4">
-            <label class="block">
+            <div class="grid grid-cols-2 gap-2" data-testid="availability-test-mode">
+              <button type="button" class="btn" :class="testMode === 'account' ? 'btn-primary' : 'btn-secondary'" :disabled="running" @click="testMode = 'account'">
+                {{ t('admin.channelTest.accountMode') }}
+              </button>
+              <button type="button" class="btn" :class="testMode === 'group' ? 'btn-primary' : 'btn-secondary'" :disabled="running" @click="testMode = 'group'">
+                {{ t('admin.channelTest.groupMode') }}
+              </button>
+            </div>
+
+            <label v-if="testMode === 'account'" class="block">
               <span class="input-label">{{ t('admin.channelTest.account') }}</span>
               <select v-model.number="selectedAccountId" data-testid="channel-test-account" class="input w-full" :disabled="loadingAccounts || running">
                 <option :value="null">{{ t('admin.channelTest.selectAccount') }}</option>
@@ -35,9 +44,19 @@
               </select>
             </label>
 
+            <label v-else class="block">
+              <span class="input-label">{{ t('admin.channelTest.group') }}</span>
+              <select v-model.number="selectedGroupId" data-testid="channel-test-group" class="input w-full" :disabled="loadingGroups || running">
+                <option :value="null">{{ t('admin.channelTest.selectGroup') }}</option>
+                <option v-for="group in groups" :key="group.id" :value="group.id">
+                  {{ group.name }} · {{ group.platform }}
+                </option>
+              </select>
+            </label>
+
             <label class="block">
               <span class="input-label">{{ t('admin.channelTest.model') }}</span>
-              <select v-model="selectedModelId" data-testid="channel-test-model" class="input w-full" :disabled="loadingModels || running || !selectedAccountId">
+              <select v-model="selectedModelId" data-testid="channel-test-model" class="input w-full" :disabled="loadingModels || running || !selectedTargetId">
                 <option value="">{{ t('admin.channelTest.autoModel') }}</option>
                 <option v-for="model in modelOptions" :key="model.id" :value="model.id">
                   {{ model.label }}
@@ -65,7 +84,7 @@
                 type="button"
                 data-testid="channel-test-start"
                 class="btn btn-primary"
-                :disabled="running || !selectedAccountId"
+                :disabled="running || !selectedTargetId"
                 @click="runTest"
               >
                 <Icon v-if="running" name="refresh" size="sm" class="mr-1 animate-spin" />
@@ -78,7 +97,7 @@
               <button
                 type="button"
                 class="btn btn-secondary"
-                :disabled="loadingModels || running || !selectedAccountId"
+                :disabled="loadingModels || running || !selectedTargetId"
                 @click="loadModels"
               >
                 {{ t('admin.channelTest.refreshModels') }}
@@ -125,6 +144,7 @@
             </div>
 
             <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+              <div v-if="result.account_name"><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.selectedAccount') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ result.account_name }}</span></div>
               <div><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.model') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ result.model || '—' }}</span></div>
               <div><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.inputTokens') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ formatTokens(result.usage.prompt_tokens) }}</span></div>
               <div><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.outputTokens') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ formatTokens(result.usage.completion_tokens) }}</span></div>
@@ -155,7 +175,7 @@
             <thead class="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-dark-800 dark:text-gray-400">
               <tr>
                 <th class="px-5 py-3">{{ t('admin.channelTest.time') }}</th>
-                <th class="px-5 py-3">{{ t('admin.channelTest.account') }}</th>
+                <th class="px-5 py-3">{{ t('admin.channelTest.target') }}</th>
                 <th class="px-5 py-3">{{ t('admin.channelTest.model') }}</th>
                 <th class="px-5 py-3">{{ t('admin.channelTest.totalTime') }}</th>
                 <th class="px-5 py-3">{{ t('common.status') }}</th>
@@ -164,7 +184,7 @@
             <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
               <tr v-for="entry in history" :key="entry.id" class="cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-800" @click="openHistory(entry)">
                 <td class="whitespace-nowrap px-5 py-3 text-gray-500 dark:text-gray-400">{{ formatDate(entry.createdAt) }}</td>
-                <td class="px-5 py-3 font-medium text-gray-900 dark:text-white">{{ entry.accountName }}</td>
+                <td class="px-5 py-3 font-medium text-gray-900 dark:text-white">{{ entry.targetName || entry.accountName }}</td>
                 <td class="px-5 py-3 text-gray-600 dark:text-gray-300">{{ entry.result?.model || entry.model || '—' }}</td>
                 <td class="px-5 py-3 text-gray-600 dark:text-gray-300">{{ entry.result ? formatMs(entry.result.timing.total_ms) : '—' }}</td>
                 <td class="px-5 py-3">
@@ -190,7 +210,7 @@ import type { AccountDebugTestResult } from '@/api/admin/accounts'
 import Icon from '@/components/icons/Icon.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAppStore } from '@/stores'
-import type { AccountListItem, ClaudeModel } from '@/types'
+import type { AccountListItem, AdminGroup, ClaudeModel } from '@/types'
 
 interface ModelOption {
   id: string
@@ -202,6 +222,8 @@ interface HistoryEntry {
   createdAt: string
   accountId: number
   accountName: string
+  targetName?: string
+  targetType?: 'account' | 'group'
   model: string
   result: AccountDebugTestResult | null
   error?: string
@@ -213,7 +235,10 @@ const MAX_HISTORY = 20
 const { t } = useI18n()
 const appStore = useAppStore()
 const accounts = ref<AccountListItem[]>([])
+const groups = ref<AdminGroup[]>([])
+const testMode = ref<'account' | 'group'>('account')
 const selectedAccountId = ref<number | null>(null)
+const selectedGroupId = ref<number | null>(null)
 const models = ref<ModelOption[]>([])
 const selectedModelId = ref('')
 const prompt = ref('hello')
@@ -221,12 +246,15 @@ const result = ref<AccountDebugTestResult | null>(null)
 const errorMessage = ref('')
 const history = ref<HistoryEntry[]>([])
 const loadingAccounts = ref(false)
+const loadingGroups = ref(false)
 const loadingModels = ref(false)
 const running = ref(false)
 const testController = ref<AbortController | null>(null)
 const modelLoadVersion = ref(0)
 
 const selectedAccount = computed(() => accounts.value.find(account => account.id === selectedAccountId.value) ?? null)
+const selectedGroup = computed(() => groups.value.find(group => group.id === selectedGroupId.value) ?? null)
+const selectedTargetId = computed(() => testMode.value === 'account' ? selectedAccountId.value : selectedGroupId.value)
 const modelOptions = computed(() => models.value)
 
 function errorText(error: unknown): string {
@@ -261,9 +289,24 @@ async function loadAccounts() {
   }
 }
 
+async function loadGroups() {
+  loadingGroups.value = true
+  try {
+    groups.value = await adminAPI.groups.getAll()
+    if (!selectedGroupId.value || !groups.value.some(group => group.id === selectedGroupId.value)) {
+      selectedGroupId.value = groups.value[0]?.id ?? null
+    }
+  } catch (error) {
+    errorMessage.value = errorText(error)
+    appStore.showError(errorMessage.value)
+  } finally {
+    loadingGroups.value = false
+  }
+}
+
 async function loadModels() {
-  const accountId = selectedAccountId.value
-  if (!accountId) {
+  const targetId = selectedTargetId.value
+  if (!targetId) {
     models.value = []
     selectedModelId.value = ''
     return
@@ -272,7 +315,9 @@ async function loadModels() {
   loadingModels.value = true
   selectedModelId.value = ''
   try {
-    const available = await adminAPI.accounts.getAvailableModels(accountId)
+    const available = testMode.value === 'account'
+      ? await adminAPI.accounts.getAvailableModels(targetId)
+      : (await adminAPI.groups.getModelAllowlistCandidates(targetId, selectedGroup.value?.platform)).map(id => ({ id, display_name: id }))
     if (version !== modelLoadVersion.value) return
     models.value = (available as Array<ClaudeModel & { id?: string; display_name?: string }>).reduce<ModelOption[]>((items, model) => {
       const id = String(model.id ?? '').trim()
@@ -280,6 +325,12 @@ async function loadModels() {
       items.push({ id, label: String(model.display_name || id) })
       return items
     }, [])
+    // Composite groups cannot resolve an empty public model. Start them on
+    // the first candidate while keeping the explicit “Automatic” option for
+    // operators who want to clear the selection manually.
+    if (testMode.value === 'group' && selectedGroup.value?.platform === 'composite' && models.value.length > 0) {
+      selectedModelId.value = models.value[0].id
+    }
   } catch (error) {
     if (version === modelLoadVersion.value) {
       models.value = []
@@ -291,7 +342,7 @@ async function loadModels() {
 }
 
 async function refreshAll() {
-  await loadAccounts()
+  await Promise.all([loadAccounts(), loadGroups()])
   await loadModels()
 }
 
@@ -320,8 +371,8 @@ function appendHistory(entry: HistoryEntry) {
 }
 
 async function runTest() {
-  const account = selectedAccount.value
-  if (!account || running.value) return
+  const target = testMode.value === 'account' ? selectedAccount.value : selectedGroup.value
+  if (!target || running.value) return
   const controller = new AbortController()
   testController.value = controller
   running.value = true
@@ -330,20 +381,22 @@ async function runTest() {
   const testPrompt = prompt.value.trim() || 'hello'
   prompt.value = testPrompt
   try {
-    const debugResult = await adminAPI.accounts.debugTestAccount(
-      account.id,
-      { model_id: selectedModelId.value || undefined, prompt: testPrompt },
-      { signal: controller.signal }
-    )
+    const payload = { model_id: selectedModelId.value || undefined, prompt: testPrompt }
+    const options = { signal: controller.signal }
+    const debugResult = testMode.value === 'account'
+      ? await adminAPI.accounts.debugTestAccount(target.id, payload, options)
+      : await adminAPI.accounts.debugTestGroup(target.id, payload, options)
     result.value = debugResult
     // History is kept in browser storage for convenience; do not persist the
     // raw event stream or a potentially large upstream payload.
     const historyResult: AccountDebugTestResult = { ...debugResult, raw_response: undefined }
     appendHistory({
-      id: `${Date.now()}-${account.id}`,
+      id: `${Date.now()}-${testMode.value}-${target.id}`,
       createdAt: new Date().toISOString(),
-      accountId: account.id,
-      accountName: account.name,
+      accountId: debugResult.account_id || (testMode.value === 'account' ? target.id : 0),
+      accountName: debugResult.account_name || (testMode.value === 'account' ? target.name : ''),
+      targetName: testMode.value === 'group' && debugResult.account_name ? `${target.name} → ${debugResult.account_name}` : target.name,
+      targetType: testMode.value,
       model: debugResult.model,
       result: historyResult
     })
@@ -354,10 +407,12 @@ async function runTest() {
     } else {
       errorMessage.value = errorText(error)
       appendHistory({
-        id: `${Date.now()}-${account.id}`,
+        id: `${Date.now()}-${testMode.value}-${target.id}`,
         createdAt: new Date().toISOString(),
-        accountId: account.id,
-        accountName: account.name,
+        accountId: testMode.value === 'account' ? target.id : 0,
+        accountName: testMode.value === 'account' ? target.name : '',
+        targetName: target.name,
+        targetType: testMode.value,
         model: selectedModelId.value,
         result: null,
         error: errorMessage.value
@@ -417,13 +472,13 @@ function usageSourceLabel(source: string | undefined): string {
   return t('admin.channelTest.usageEstimated')
 }
 
-watch(selectedAccountId, () => {
+watch([testMode, selectedAccountId, selectedGroupId], () => {
   void loadModels()
 })
 
 onMounted(async () => {
   readHistory()
-  await loadAccounts()
+  await Promise.all([loadAccounts(), loadGroups()])
   await loadModels()
 })
 

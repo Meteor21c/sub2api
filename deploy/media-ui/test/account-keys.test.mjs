@@ -48,3 +48,24 @@ test('no token means no key API requests; changed session during fetch is reject
   await assert.rejects(raced.refresh(),/变化/)
   assert.equal(raced.get('image','1'),'')
 })
+
+test('default media-group discovery follows visible capabilities instead of fixed IDs', async () => {
+  const dynamic = createClient({readToken:()=> 'session', fetchJSON:async path => {
+    if (path.endsWith('/me')) return {id:7}
+    if (path.endsWith('/groups/available')) return [
+      {id:91, status:'active', allow_image_generation:true, image_price_1k:0.1},
+      {id:107, status:'active', video_price_720p:0.02},
+      {id:23, status:'active', allow_image_generation:false},
+    ]
+    return {items: [
+      {...key, id:3, group_id:91, user_id:7, key:'image-secret'},
+      {...key, id:4, group_id:107, user_id:7, key:'video-secret'},
+      {...key, id:5, group_id:23, user_id:7, key:'other-secret'},
+    ], total:3}
+  }})
+  await dynamic.refresh()
+  assert.deepEqual(dynamic.list('image'), [{id:'3', name:'绘图'}])
+  assert.deepEqual(dynamic.list('video'), [{id:'4', name:'绘图'}])
+  assert.equal(dynamic.get('image', '3'), 'image-secret')
+  assert.equal(dynamic.get('image', '4'), '')
+})

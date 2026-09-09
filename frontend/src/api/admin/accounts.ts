@@ -320,6 +320,8 @@ export interface AccountDebugTestResult {
   content: string
   raw_response?: string
   model: string
+  account_id?: number
+  account_name?: string
   timing: {
     first_response_ms: number
     total_ms: number
@@ -343,6 +345,23 @@ export async function debugTestAccount(
 ): Promise<AccountDebugTestResult> {
   const { data } = await apiClient.post<AccountDebugTestResult>(
     `/admin/accounts/${id}/debug-test`,
+    payload,
+    {
+      signal: options?.signal,
+      timeout: 120000
+    }
+  )
+  return data
+}
+
+/** Run the same debugger after selecting an account through group scheduling. */
+export async function debugTestGroup(
+  id: number,
+  payload: { model_id?: string; prompt?: string } = {},
+  options?: { signal?: AbortSignal }
+): Promise<AccountDebugTestResult> {
+  const { data } = await apiClient.post<AccountDebugTestResult>(
+    `/admin/groups/${id}/debug-test`,
     payload,
     {
       signal: options?.signal,
@@ -1129,6 +1148,7 @@ export const accountsAPI = {
   toggleStatus,
   testAccount,
   debugTestAccount,
+  debugTestGroup,
   refreshCredentials,
   applyOAuthCredentials,
   getStats,
