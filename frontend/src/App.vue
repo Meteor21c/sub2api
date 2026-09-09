@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView, useRouter, useRoute } from 'vue-router'
-import { onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
 import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
@@ -9,6 +9,7 @@ import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
+import CustomPageView from '@/views/user/CustomPageView.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -18,6 +19,12 @@ const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
+const isMediaRoute = computed(() => route.name === 'CustomPage' && ['meteor-image', 'meteor-video'].includes(String(route.params.id || '')))
+const mediaWorkspaceInitialized = ref(isMediaRoute.value)
+
+watch(isMediaRoute, (active) => {
+  if (active) mediaWorkspaceInitialized.value = true
+})
 
 function updateDocumentTitle() {
   const customMenuItems = [
@@ -138,7 +145,14 @@ onMounted(async () => {
 
 <template>
   <NavigationProgress />
-  <RouterView />
+  <CustomPageView
+    v-if="mediaWorkspaceInitialized"
+    v-show="isMediaRoute"
+    media-only
+  />
+  <RouterView v-slot="{ Component }">
+    <component :is="Component" v-if="!isMediaRoute" />
+  </RouterView>
   <Toast />
   <AnnouncementPopup />
   <AdminComplianceDialog />

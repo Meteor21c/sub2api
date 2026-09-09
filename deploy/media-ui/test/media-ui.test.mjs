@@ -18,6 +18,7 @@ test('media UI is self-contained and points at official routes', async () => {
   assert.doesNotMatch(js, /sessionStorage\.setItem|localStorage\.setItem/)
   assert.match(html, /account-keys\.js/)
   assert.match(html, /image-options\.js/)
+  assert.match(html, /media-history\.js/)
   assert.match(js, /getGroup\("image"/)
   assert.match(js, /request\("\/v1\/images\/generations"/)
   assert.match(js, /request\("\/v1\/videos\/generations"/)
@@ -25,6 +26,22 @@ test('media UI is self-contained and points at official routes', async () => {
   assert.doesNotMatch(js, /\/pg\/(?:images|video|materials)/)
   assert.doesNotMatch(js, /groupRatio|GroupRatio|affinity|亲合度|倍率中心/)
   assert.doesNotMatch(js, /console\.log\(.*key/i)
+})
+
+test('media history is wired before the app and supports restore, resume, and explicit clearing', async () => {
+  const html = await readFile(file('index.html'), 'utf8')
+  const js = await readFile(file('app.js'), 'utf8')
+  assert.ok(html.indexOf('media-history.js') < html.indexOf('app.js'))
+  assert.match(html, /id="image-clear-history"/)
+  assert.match(html, /id="video-clear-history"/)
+  assert.match(js, /MeteorMediaHistory/)
+  assert.match(js, /saveImages\(entry, scope\)/)
+  assert.match(js, /readImages\(scope\)/)
+  assert.match(js, /readVideos\(scope\)/)
+  assert.match(js, /upsertVideo\(record, scope\)/)
+  assert.match(js, /resumeVideoTasks\(\)/)
+  assert.match(js, /clearImages\(\)/)
+  assert.match(js, /clearVideos\(scope\)/)
 })
 
 test('image tiers follow selected key group pricing and resolve tier plus orientation', async () => {
@@ -53,8 +70,8 @@ test('native sidebar wrappers contain no token interpolation', async () => {
 })
 
 test('no API key is embedded in static assets', async () => {
-  const [html, js, options, css] = await Promise.all([readFile(file('index.html'), 'utf8'), readFile(file('app.js'), 'utf8'), readFile(file('image-options.js'), 'utf8'), readFile(file('styles.css'), 'utf8')])
-  for (const source of [html, js, options, css]) {
+  const [html, js, options, history, css] = await Promise.all([readFile(file('index.html'), 'utf8'), readFile(file('app.js'), 'utf8'), readFile(file('image-options.js'), 'utf8'), readFile(file('media-history.js'), 'utf8'), readFile(file('styles.css'), 'utf8')])
+  for (const source of [html, js, options, history, css]) {
     assert.doesNotMatch(source, /20020816Lzr@|MCP_ASSET_SIGNING_SECRET|Bearer\s+[A-Za-z0-9_-]{24,}/)
   }
 })

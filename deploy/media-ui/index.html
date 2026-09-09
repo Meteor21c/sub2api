@@ -42,6 +42,7 @@
             <div>
               <h2>图片生成</h2>
             </div>
+            <button class="ghost-button" id="image-clear-history" type="button">清空记录</button>
           </div>
 
           <form id="image-form" class="form-layout">
@@ -115,6 +116,7 @@
             <div>
               <h2>视频生成</h2>
             </div>
+            <button class="ghost-button" id="video-clear-history" type="button">清空记录</button>
           </div>
 
           <form id="video-form" class="form-layout">
@@ -198,7 +200,7 @@
           </form>
 
           <div class="result-area" id="video-result" aria-live="polite">
-            <div class="empty-state"><span class="empty-icon">▶</span><strong>任务结果会显示在这里</strong><span>生成期间请保持页面打开。</span></div>
+            <div class="empty-state"><span class="empty-icon">▶</span><strong>任务结果会显示在这里</strong></div>
           </div>
         </section>
 
@@ -216,6 +218,7 @@
     </div>
     <script src="./account-keys.js" defer></script>
     <script src="./image-options.js" defer></script>
+    <script src="./media-history.js" defer></script>
     <script src="./app.js" defer></script>
   </body>
 </html>

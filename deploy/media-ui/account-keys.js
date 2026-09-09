@@ -62,7 +62,11 @@
         },
       };
     }
-    return { refresh, list, get, getInfo, getGroup, clear };
+    function owns(kind, secret) {
+      if (!current() || !secret) { clear(); return false; }
+      return rows.some(k => k.key === secret && usable(k, userId, groups[kind]));
+    }
+    return { refresh, list, get, getInfo, getGroup, owns, clear };
   }
   globalThis.MeteorAccountKeys = { createClient, usable };
 })();

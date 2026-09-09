@@ -2,14 +2,23 @@
   <AppLayout>
     <div class="custom-page-layout">
       <div class="card flex-1 min-h-0 overflow-hidden">
-        <div v-if="loading" class="flex h-full items-center justify-center py-12">
+        <div v-if="retainedMediaKind" v-show="activeMediaKind" class="custom-embed-shell">
+          <iframe
+            :src="mediaEmbeddedUrl"
+            class="custom-embed-frame"
+            title="图片与视频生成"
+            allowfullscreen
+          ></iframe>
+        </div>
+
+        <div v-if="!activeMediaKind && loading" class="flex h-full items-center justify-center py-12">
           <div
             class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
           ></div>
         </div>
 
         <div
-          v-else-if="!menuItem"
+          v-else-if="!activeMediaKind && !menuItem"
           class="flex h-full items-center justify-center p-10 text-center"
         >
           <div class="max-w-md">
@@ -28,7 +37,7 @@
         </div>
 
         <!-- Markdown mode with TOC -->
-        <div v-else-if="isMarkdownMode" class="flex h-full overflow-hidden">
+        <div v-else-if="!activeMediaKind && isMarkdownMode" class="flex h-full overflow-hidden">
           <!-- TOC Sidebar -->
           <aside
             v-show="tocVisible"
@@ -77,7 +86,7 @@
         </div>
 
         <!-- URL not configured -->
-        <div v-else-if="!isValidUrl" class="flex h-full items-center justify-center p-10 text-center">
+        <div v-else-if="!activeMediaKind && !isValidUrl" class="flex h-full items-center justify-center p-10 text-center">
           <div class="max-w-md">
             <div
               class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700"
@@ -94,7 +103,7 @@
         </div>
 
         <!-- Iframe embed mode -->
-        <div v-else ref="embedShell" class="custom-embed-shell">
+        <div v-else-if="!activeMediaKind" ref="embedShell" class="custom-embed-shell">
           <a
             ref="openButton"
             :href="embeddedUrl"
@@ -144,6 +153,10 @@ interface TocItem {
   text: string
   level: number
 }
+
+const props = withDefaults(defineProps<{ mediaOnly?: boolean }>(), {
+  mediaOnly: false,
+})
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -219,7 +232,19 @@ useResizeObserver([embedShell, openButton], () => {
 
 const menuItemId = computed(() => route.params.id as string)
 
+type MediaKind = 'image' | 'video'
+const retainedMediaKind = ref<MediaKind | ''>('')
+
+function mediaKindForId(id: unknown): MediaKind | '' {
+  if (id === 'meteor-image') return 'image'
+  if (id === 'meteor-video') return 'video'
+  return ''
+}
+
+const requestedMediaKind = computed(() => mediaKindForId(route.params.id))
+
 const menuItem = computed(() => {
+  if (props.mediaOnly && !requestedMediaKind.value) return null
   const id = menuItemId.value
   const publicItems = appStore.cachedPublicSettings?.custom_menu_items ?? []
   const found = publicItems.find((item) => item.id === id) ?? null
@@ -230,6 +255,18 @@ const menuItem = computed(() => {
   return null
 })
 
+const activeMediaKind = computed(() => menuItem.value ? requestedMediaKind.value : '')
+
+watch(
+  [() => route.name, activeMediaKind],
+  ([routeName, kind]) => {
+    if (routeName === 'CustomPage' && kind) retainedMediaKind.value = kind
+  },
+  { immediate: true },
+)
+
+const mediaEmbeddedUrl = computed(() => `/media/?embedded=1#${retainedMediaKind.value || 'image'}`)
+
 const markdownSlug = computed(() => {
   const item = menuItem.value
   if (!item) return ''
@@ -238,7 +275,7 @@ const markdownSlug = computed(() => {
   return ''
 })
 
-const isMarkdownMode = computed(() => !!markdownSlug.value)
+const isMarkdownMode = computed(() => !!markdownSlug.value && !activeMediaKind.value)
 
 const embeddedUrl = computed(() => {
   if (!menuItem.value || isMarkdownMode.value) return ''
@@ -402,7 +439,7 @@ function injectCopyButtons() {
 }
 
 watch(markdownSlug, (slug) => {
-  if (slug) {
+  if (slug && !activeMediaKind.value) {
     fetchAndRenderMarkdown(slug)
   } else {
     renderedHtml.value = ''

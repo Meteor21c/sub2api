@@ -3,15 +3,23 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import CustomPageView from '../CustomPageView.vue'
 
-const { appStore } = vi.hoisted(() => ({
+const { appStore, routeHarness } = vi.hoisted(() => ({
   appStore: {
     publicSettingsLoaded: true,
     cachedPublicSettings: { custom_menu_items: [{ id: 'docs', url: 'https://example.com/docs' }] },
   },
+  routeHarness: {
+    state: { name: 'CustomPage', params: { id: 'docs' as string | undefined } },
+    proxy: null as null | { name: string; params: { id: string | undefined } },
+  },
 }))
 
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: 'docs' } }) }))
+vi.mock('vue-router', async () => {
+  const { reactive } = await import('vue')
+  routeHarness.proxy ||= reactive(routeHarness.state)
+  return { useRoute: () => routeHarness.proxy }
+})
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }) }))
 vi.mock('@/stores', () => ({ useAppStore: () => appStore }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ isAdmin: false, user: { id: 7 }, token: 'test-token' }) }))
@@ -21,8 +29,9 @@ vi.mock('@/api/client', () => ({ buildApiUrl: (path: string) => `/api/v1${path}`
 let notifyResize: () => void
 const wrappers: ReturnType<typeof mount>[] = []
 
-function mountPage() {
+function mountPage(props: { mediaOnly?: boolean } = {}) {
   const wrapper = mount(CustomPageView, {
+    props,
     global: { stubs: { AppLayout: { template: '<div><slot /></div>' }, Icon: true } },
   })
   wrappers.push(wrapper)
@@ -66,6 +75,9 @@ function click(button: HTMLElement, detail = 1) {
 
 describe('custom page open button', () => {
   beforeEach(() => {
+    const route = routeHarness.proxy || routeHarness.state
+    route.name = 'CustomPage'
+    route.params.id = 'docs'
     appStore.cachedPublicSettings.custom_menu_items = [{ id: 'docs', url: 'https://example.com/docs' }]
     vi.stubGlobal('ResizeObserver', class {
       constructor(callback: () => void) { notifyResize = callback }
@@ -157,5 +169,61 @@ describe('custom page open button', () => {
     expect(wrapper.find('.custom-open-fab').exists()).toBe(false)
     expect(wrapper.find('iframe').exists()).toBe(false)
     expect(wrapper.get('.markdown-page-content h1').text()).toBe('Guide')
+  })
+
+  it('keeps one media iframe alive across image, video, and non-media navigation', async () => {
+    appStore.cachedPublicSettings.custom_menu_items = [
+      { id: 'meteor-image', url: 'md:meteor-image' },
+      { id: 'meteor-video', url: 'md:meteor-video' },
+      { id: 'docs', url: 'md:guide' },
+    ]
+    const route = routeHarness.proxy || routeHarness.state
+    route.params.id = 'meteor-image'
+    const wrapper = mountPage()
+    await nextTick()
+    const iframe = wrapper.get<HTMLIFrameElement>('iframe').element
+    expect(iframe.getAttribute('src')).toBe('/media/?embedded=1#image')
+    expect(wrapper.find('.toc-sidebar').exists()).toBe(false)
+
+    route.params.id = 'meteor-video'
+    await nextTick()
+    expect(wrapper.get('iframe').element).toBe(iframe)
+    expect(iframe.getAttribute('src')).toBe('/media/?embedded=1#video')
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => '# Guide' }))
+    route.params.id = 'docs'
+    await flushPromises()
+    expect(wrapper.find('iframe').exists()).toBe(true)
+    expect(wrapper.get('iframe').element).toBe(iframe)
+    expect(iframe.parentElement?.style.display).toBe('none')
+    expect(wrapper.get('.markdown-page-content h1').text()).toBe('Guide')
+
+    route.params.id = 'meteor-image'
+    await flushPromises()
+    expect(wrapper.get('iframe').element).toBe(iframe)
+    expect(iframe.parentElement?.style.display).toBe('')
+    expect(iframe.getAttribute('src')).toBe('/media/?embedded=1#image')
+  })
+
+  it('does not load non-media content from the retained media-only workspace', async () => {
+    appStore.cachedPublicSettings.custom_menu_items = [
+      { id: 'meteor-image', url: 'md:meteor-image' },
+      { id: 'docs', url: 'md:guide' },
+    ]
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: async () => '# Guide' })
+    vi.stubGlobal('fetch', fetchMock)
+    const route = routeHarness.proxy || routeHarness.state
+    route.params.id = 'meteor-image'
+    const wrapper = mountPage({ mediaOnly: true })
+    await nextTick()
+    const iframe = wrapper.get('iframe').element
+
+    route.params.id = 'docs'
+    await flushPromises()
+
+    expect(wrapper.get('iframe').element).toBe(iframe)
+    expect(iframe.parentElement?.style.display).toBe('none')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(wrapper.find('.markdown-page-content').exists()).toBe(false)
   })
 })

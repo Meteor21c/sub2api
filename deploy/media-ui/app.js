@@ -9,8 +9,8 @@
     "kling-v3", "kling-v3-omni",
   ];
   const state = {
-    image: { key: "", models: [], busy: false },
-    video: { key: "", models: [], busy: false, taskId: "" },
+    image: { key: "", models: [], busy: false, history: [], objectUrls: [], scope: "", restoreEpoch: 0 },
+    video: { key: "", models: [], busy: false, taskId: "", history: [], polling: new Set(), pollEpoch: 0, objectUrls: new Map(), scope: "" },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -24,6 +24,7 @@
       return body.data;
     },
   });
+  const mediaHistory = MeteorMediaHistory;
   const selectedKey = kind => accountKeys.get(kind, $(`${kind}-key`).value);
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -74,7 +75,7 @@
   }
 
   async function request(path, options = {}, key = "") {
-    if (key && !["image", "video"].some(kind => selectedKey(kind) === key)) throw new ApiError("登录状态或密钥已变化，请重新读取。");
+    if (key && !["image", "video"].some(kind => accountKeys.owns(kind, key))) throw new ApiError("登录状态或密钥已变化，请重新读取。");
     const headers = new Headers(options.headers || {});
     if (key) headers.set("Authorization", `Bearer ${key}`);
     if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
@@ -95,7 +96,7 @@
   }
 
   async function requestBlob(path, options = {}, key = "") {
-    if (key && !["image", "video"].some(kind => selectedKey(kind) === key)) throw new ApiError("登录状态或密钥已变化，请重新读取。");
+    if (key && !["image", "video"].some(kind => accountKeys.owns(kind, key))) throw new ApiError("登录状态或密钥已变化，请重新读取。");
     const headers = new Headers(options.headers || {});
     if (key) headers.set("Authorization", `Bearer ${key}`);
     const controller = new AbortController();
@@ -206,6 +207,7 @@
           await loadModels(kind);
         }
       }
+      void resumeVideoTasks();
     } catch (error) {
       clearKeys();
       for (const kind of ["image", "video"]) setStatus(kind, error.message, "error");
@@ -232,66 +234,109 @@
 
   function dataUrl(row) {
     if (typeof row?.b64_json === "string" && row.b64_json) {
-      if (row.b64_json.startsWith("data:")) return row.b64_json;
+      if (row.b64_json.startsWith("data:")) return /^data:image\/(?:png|jpeg|webp|avif);/i.test(row.b64_json) ? row.b64_json : "";
       return `data:image/png;base64,${row.b64_json}`;
     }
-    if (typeof row?.url === "string" && row.url) return row.url;
+    if (typeof row?.url === "string" && /^(?:https?:|blob:)/i.test(row.url)) return row.url;
     return "";
   }
 
-  function renderImages(data, prompt, model) {
-    const rows = Array.isArray(data?.data) ? data.data : [];
+  function emptyResult(kind, title) {
+    const result = $(`${kind}-result`);
+    result.replaceChildren();
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    const strong = document.createElement("strong");
+    strong.textContent = title;
+    empty.append(strong);
+    result.append(empty);
+  }
+
+  function renderImageHistory(entries) {
     const result = $("image-result");
     result.replaceChildren();
-    const card = document.createElement("div");
-    card.className = "result-card";
-    const head = document.createElement("div");
-    head.className = "result-head";
-    const title = document.createElement("strong");
-    title.textContent = `${model} · ${rows.length} 张结果`;
-    const time = document.createElement("span");
-    time.textContent = new Date().toLocaleString("zh-CN");
-    head.append(title, time);
-    const grid = document.createElement("div");
-    grid.className = "image-grid";
-    rows.forEach((row, index) => {
-      const src = dataUrl(row);
-      if (!src) return;
-      const item = document.createElement("div");
-      item.className = "image-item";
-      const image = document.createElement("img");
-      image.src = src;
-      image.alt = row.revised_prompt || prompt || `生成图片 ${index + 1}`;
-      image.loading = "lazy";
-      const tools = document.createElement("div");
-      tools.className = "image-tools";
-      const label = document.createElement("small");
-      label.textContent = `图片 ${index + 1}`;
-      const link = document.createElement("a");
-      link.href = src;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      link.download = `meteor-image-${index + 1}.png`;
-      link.textContent = "打开 / 下载";
-      tools.append(label, link);
-      item.append(image, tools);
-      grid.append(item);
+    if (!entries.length) return emptyResult("image", "生成结果会显示在这里");
+    entries.forEach((entry) => {
+      const rows = Array.isArray(entry.images) ? entry.images : [];
+      const card = document.createElement("div");
+      card.className = "result-card";
+      const head = document.createElement("div");
+      head.className = "result-head";
+      const title = document.createElement("strong");
+      title.textContent = `${entry.model} · ${rows.length} 张结果`;
+      const time = document.createElement("span");
+      time.textContent = new Date(entry.createdAt).toLocaleString("zh-CN");
+      head.append(title, time);
+      const grid = document.createElement("div");
+      grid.className = "image-grid";
+      rows.forEach((row, index) => {
+        const src = dataUrl(row);
+        if (!src) return;
+        const item = document.createElement("div");
+        item.className = "image-item";
+        const image = document.createElement("img");
+        image.src = src;
+        image.alt = row.revised_prompt || entry.prompt || `生成图片 ${index + 1}`;
+        image.loading = "lazy";
+        const tools = document.createElement("div");
+        tools.className = "image-tools";
+        const label = document.createElement("small");
+        label.textContent = `图片 ${index + 1}`;
+        const link = document.createElement("a");
+        link.href = src;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.download = `meteor-image-${index + 1}.png`;
+        link.textContent = "打开 / 下载";
+        tools.append(label, link);
+        item.append(image, tools);
+        grid.append(item);
+      });
+      if (!grid.children.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "接口已返回，但没有可显示的图片数据。";
+        result.append(empty);
+        return;
+      }
+      card.append(head, grid);
+      if (rows.some((row) => row.revised_prompt)) {
+        const revised = document.createElement("p");
+        revised.className = "task-prompt";
+        revised.textContent = rows.find((row) => row.revised_prompt)?.revised_prompt || "";
+        card.append(revised);
+      }
+      result.append(card);
     });
-    if (!grid.children.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = "接口已返回，但没有可显示的图片数据。";
-      result.append(empty);
-      return;
+  }
+
+  async function restoreImageHistory() {
+    const scope = mediaHistory.userScope();
+    const epoch = ++state.image.restoreEpoch;
+    if (state.image.scope !== scope) {
+      mediaHistory.revokeObjectUrls(state.image.objectUrls);
+      state.image.scope = scope;
+      state.image.objectUrls = [];
+      state.image.history = [];
+      emptyResult("image", "生成结果会显示在这里");
     }
-    card.append(head, grid);
-    if (rows.some((row) => row.revised_prompt)) {
-      const revised = document.createElement("p");
-      revised.className = "task-prompt";
-      revised.textContent = rows.find((row) => row.revised_prompt)?.revised_prompt || "";
-      card.append(revised);
+    try {
+      const loaded = await mediaHistory.readImages(scope);
+      if (!scope || mediaHistory.userScope() !== scope || epoch !== state.image.restoreEpoch) {
+        mediaHistory.revokeObjectUrls(loaded.objectUrls);
+        return;
+      }
+      mediaHistory.revokeObjectUrls(state.image.objectUrls);
+      state.image.history = loaded.entries;
+      state.image.objectUrls = loaded.objectUrls;
+      renderImageHistory(state.image.history);
+    } catch {
+      if ((scope && mediaHistory.userScope() !== scope) || epoch !== state.image.restoreEpoch) return;
+      mediaHistory.revokeObjectUrls(state.image.objectUrls);
+      state.image.history = [];
+      state.image.objectUrls = [];
+      emptyResult("image", "生成结果会显示在这里");
     }
-    result.append(card);
   }
 
   async function submitImage(event) {
@@ -302,7 +347,9 @@
     const prompt = $("image-prompt").value.trim();
     const n = Number($("image-count").value);
     const refs = [...$("image-reference").files];
+    const scope = mediaHistory.userScope();
     if (!key) return setStatus("image", "请先读取并选择绘图密钥", "error");
+    if (!scope) return setStatus("image", "登录状态无效，请重新登录", "error");
     if (!model || !prompt) return setStatus("image", "模型和提示词不能为空", "error");
     const size = MeteorImageOptions.resolveSize($("image-tier").value, $("image-orientation").value);
     if (!size) return setStatus("image", "当前密钥没有可用的图片档位", "error");
@@ -325,7 +372,27 @@
       } else {
         result = await request("/v1/images/generations", { method: "POST", body: JSON.stringify(payload) }, key);
       }
-      renderImages(result.data, prompt, model);
+      const entry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        createdAt: Date.now(),
+        model,
+        prompt,
+        images: Array.isArray(result.data?.data) ? result.data.data : [],
+      };
+      if (mediaHistory.userScope() !== scope) return;
+      try {
+        const saved = await mediaHistory.saveImages(entry, scope);
+        if (mediaHistory.userScope() !== scope) return;
+        if (saved) await restoreImageHistory();
+        else {
+          state.image.history = [entry, ...state.image.history].slice(0, mediaHistory.HISTORY_LIMIT);
+          renderImageHistory(state.image.history);
+        }
+      } catch {
+        if (mediaHistory.userScope() !== scope) return;
+        state.image.history = [entry, ...state.image.history].slice(0, mediaHistory.HISTORY_LIMIT);
+        renderImageHistory(state.image.history);
+      }
       setStatus("image", "图片生成完成", "success");
     } catch (error) {
       setStatus("image", error.message || "图片生成失败", "error");
@@ -371,6 +438,10 @@
     return String(data?.id || data?.task_id || data?.request_id || data?.data?.id || data?.data?.task_id || data?.data?.request_id || "").trim();
   }
 
+  function safeRemoteUrl(value) {
+    return typeof value === "string" && /^https?:\/\//i.test(value.trim()) ? value.trim() : "";
+  }
+
   function videoInfo(data, fallbackId = "") {
     const candidates = [data, data?.data, data?.task, data?.data?.task].filter(Boolean);
     let status = "";
@@ -380,7 +451,7 @@
     for (const item of candidates) {
       if (!status && item.status) status = String(item.status).toLowerCase();
       if (!id) id = String(item.id || item.task_id || item.request_id || "").trim();
-      url ||= String(item.result_url || item.video_url || item.url || item.video?.url || item.result?.url || "").trim();
+      url ||= safeRemoteUrl(item.result_url || item.video_url || item.url || item.video?.url || item.result?.url);
       reason ||= String(item.fail_reason || item.error?.message || item.message || "").trim();
     }
     if (["success", "succeeded", "completed", "complete", "done", "succeed"].includes(status) || url) status = "success";
@@ -403,14 +474,12 @@
   async function fetchVideoContent(taskId, key) {
     try {
       const blob = await requestBlob(`/v1/videos/generations/${encodeURIComponent(taskId)}/content`, {}, key);
-      if (blob.size) return URL.createObjectURL(blob);
+      if (blob.size && (blob.type.startsWith("video/") || blob.type === "application/octet-stream")) return URL.createObjectURL(blob);
     } catch { /* Some Sub2API versions return a provider URL instead. */ }
     return "";
   }
 
-  function renderVideoTask(info, prompt, model, message = "") {
-    const result = $("video-result");
-    result.replaceChildren();
+  function createVideoCard(info, prompt, model, createdAt) {
     const card = document.createElement("div");
     card.className = "result-card task-card";
     const head = document.createElement("div");
@@ -418,7 +487,7 @@
     const title = document.createElement("strong");
     title.textContent = `${model} · 视频任务`;
     const time = document.createElement("span");
-    time.textContent = message || (info.status === "pending" ? "页面会自动轮询" : new Date().toLocaleString("zh-CN"));
+    time.textContent = new Date(createdAt || Date.now()).toLocaleString("zh-CN");
     head.append(title, time);
     const status = document.createElement("div");
     status.className = "task-status";
@@ -456,23 +525,93 @@
       link.textContent = "打开 / 下载视频";
       card.append(wrap, link);
     }
-    result.append(card);
+    return card;
   }
 
-  async function pollVideo(taskId, key, prompt, model) {
-    for (let attempt = 0; attempt < 240; attempt += 1) {
-      const data = await statusRequest(taskId, key);
-      const info = videoInfo(data, taskId);
-      renderVideoTask(info, prompt, model, `第 ${attempt + 1} 次检查`);
-      if (info.status === "success") {
-        if (!info.url) info.url = await fetchVideoContent(taskId, key);
-        renderVideoTask(info, prompt, model, "视频生成完成");
-        return info;
-      }
-      if (info.status === "failure") throw new ApiError(info.reason || "视频任务失败");
-      await sleep(5000);
+  function renderVideoHistory(records) {
+    const result = $("video-result");
+    result.replaceChildren();
+    if (!records.length) return emptyResult("video", "任务结果会显示在这里");
+    records.forEach((record) => result.append(createVideoCard(record, record.prompt, record.model, record.createdAt)));
+  }
+
+  function revokeVideoObjectUrls() {
+    mediaHistory.revokeObjectUrls([...state.video.objectUrls.values()]);
+    state.video.objectUrls.clear();
+  }
+
+  function rememberVideo(record, scope, epoch) {
+    if (!scope || mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return false;
+    if (record.url?.startsWith("blob:")) {
+      const previous = state.video.objectUrls.get(record.id);
+      if (previous && previous !== record.url) mediaHistory.revokeObjectUrls([previous]);
+      state.video.objectUrls.set(record.id, record.url);
+    } else if (record.url) {
+      const previous = state.video.objectUrls.get(record.id);
+      if (previous) mediaHistory.revokeObjectUrls([previous]);
+      state.video.objectUrls.delete(record.id);
     }
-    throw new ApiError("任务轮询超过 20 分钟，已停止自动检查；可稍后按任务 ID 查询");
+    const persisted = mediaHistory.upsertVideo(record, scope);
+    if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return false;
+    state.video.history = persisted.map((item) => ({ ...item, url: state.video.objectUrls.get(item.id) || item.url }));
+    renderVideoHistory(state.video.history);
+    return true;
+  }
+
+  function restoreVideoHistory() {
+    const scope = mediaHistory.userScope();
+    if (state.video.scope !== scope) {
+      state.video.pollEpoch += 1;
+      revokeVideoObjectUrls();
+      state.video.scope = scope;
+    }
+    state.video.history = mediaHistory.readVideos(scope).map((item) => ({ ...item, url: state.video.objectUrls.get(item.id) || item.url }));
+    renderVideoHistory(state.video.history);
+  }
+
+  async function pollVideo(taskId, key, keyId, prompt, model, createdAt, scope, epoch) {
+    const pollKey = `${scope}:${taskId}`;
+    if (state.video.polling.has(pollKey)) return null;
+    state.video.polling.add(pollKey);
+    try {
+      const deadline = createdAt + mediaHistory.PENDING_TTL_MS;
+      do {
+        if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return null;
+        const data = await statusRequest(taskId, key);
+        if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return null;
+        const info = videoInfo(data, taskId);
+        if (info.status === "success" && !info.url) info.url = await fetchVideoContent(taskId, key);
+        if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) {
+          if (info.url?.startsWith("blob:")) mediaHistory.revokeObjectUrls([info.url]);
+          return null;
+        }
+        if (!rememberVideo({ ...info, keyId, prompt, model, createdAt }, scope, epoch)) {
+          if (info.url?.startsWith("blob:")) mediaHistory.revokeObjectUrls([info.url]);
+          return null;
+        }
+        if (info.status === "success") return info;
+        if (info.status === "failure") throw new ApiError(info.reason || "视频任务失败");
+        if (Date.now() >= deadline) return info;
+        await sleep(5000);
+      } while (true);
+    } finally {
+      state.video.polling.delete(pollKey);
+    }
+  }
+
+  async function resumeVideoTasks() {
+    const scope = mediaHistory.userScope();
+    const epoch = state.video.pollEpoch;
+    if (!scope) return;
+    for (const record of state.video.history) {
+      const key = accountKeys.get("video", record.keyId);
+      if (!key) continue;
+      if (record.status === "pending" || record.status === "success") {
+        void pollVideo(record.id, key, record.keyId, record.prompt, record.model, record.createdAt, scope, epoch).catch((error) => {
+          setStatus("video", error.message || "视频任务状态读取失败", "error");
+        });
+      }
+    }
   }
 
   async function submitVideo(event) {
@@ -488,9 +627,13 @@
     const endFile = $("video-end-file").files[0];
     const startUrl = $("video-start-url").value.trim();
     const endUrl = $("video-end-url").value.trim();
+    const scope = mediaHistory.userScope();
+    const epoch = state.video.pollEpoch;
+    const keyId = $("video-key").value;
     const family = videoFamily(model);
     const min = family === "kling" || family === "grok" ? 3 : 4;
     if (!key) return setStatus("video", "请先读取并选择视频密钥", "error");
+    if (!scope) return setStatus("video", "登录状态无效，请重新登录", "error");
     if (!model || !prompt) return setStatus("video", "模型和提示词不能为空", "error");
     if (prompt.length > 1300) return setStatus("video", "提示词不能超过 1,300 个字符", "error");
     if (!Number.isInteger(duration) || duration < min || duration > 15) return setStatus("video", `当前模型时长必须为 ${min}–15 秒`, "error");
@@ -531,11 +674,14 @@
       }
       const taskId = taskIdFrom(data);
       if (!taskId) throw new ApiError("接口已响应，但没有返回任务 ID");
+      if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return;
       state.video.taskId = taskId;
-      renderVideoTask(videoInfo(data, taskId), prompt, model, "任务已提交，正在等待状态");
+      const createdAt = Date.now();
+      rememberVideo({ ...videoInfo(data, taskId), keyId, prompt, model, createdAt }, scope, epoch);
       setStatus("video", `任务已提交：${taskId}`, "success");
-      // Keep polling in the same page so a reload is never required to observe the result.
-      await pollVideo(taskId, key, prompt, model);
+      const final = await pollVideo(taskId, key, keyId, prompt, model, createdAt, scope, epoch);
+      if (final?.status === "success") setStatus("video", "视频生成完成", "success");
+      else if (final?.status === "pending") setStatus("video", "任务仍在处理中，稍后返回本页可继续查询");
     } catch (error) {
       setStatus("video", error.message || "视频任务失败", "error");
     } finally {
@@ -595,17 +741,36 @@
     $("video-load-models").addEventListener("click", () => void loadModels("video"));
     $("image-form").addEventListener("submit", (event) => void submitImage(event));
     $("video-form").addEventListener("submit", (event) => void submitVideo(event));
+    $("image-clear-history").addEventListener("click", () => {
+      void mediaHistory.clearImages().then(() => restoreImageHistory());
+    });
+    $("video-clear-history").addEventListener("click", () => {
+      const scope = mediaHistory.userScope();
+      state.video.pollEpoch += 1;
+      revokeVideoObjectUrls();
+      mediaHistory.clearVideos(scope);
+      state.video.history = [];
+      renderVideoHistory(state.video.history);
+    });
     $("clear-keys").addEventListener("click", () => { clearKeys(); void restoreKeys(); });
     for (const kind of ["image", "video"]) $(`${kind}-key`).addEventListener("change", () => {
       if (kind === "image") updateImageOptions();
       void loadModels(kind);
     });
     window.addEventListener("storage", event => {
-      if (event.key === "auth_token" || event.key === null) { clearKeys(); void restoreKeys(); }
+      if (event.key === "auth_token" || event.key === "auth_user" || event.key === null) {
+        clearKeys();
+        setBusy("image", false);
+        setBusy("video", false);
+        void restoreImageHistory();
+        restoreVideoHistory();
+        void restoreKeys();
+      }
     });
-    window.addEventListener("pagehide", clearKeys);
     updateImageOptions();
     updateVideoOptions();
+    void restoreImageHistory();
+    restoreVideoHistory();
     // Only authenticated key/model reads; generation always requires submission.
     void restoreKeys();
   }
