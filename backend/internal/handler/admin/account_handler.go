@@ -1251,6 +1251,14 @@ type TestAccountRequest struct {
 	AudioDataURL string `json:"audio_data_url"`
 }
 
+// DebugTestAccountRequest is used by the administrator channel test page.
+// Unlike TestAccountRequest, this endpoint returns one JSON result containing
+// timing, usage and an informational billing estimate instead of an SSE stream.
+type DebugTestAccountRequest struct {
+	ModelID string `json:"model_id"`
+	Prompt  string `json:"prompt"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -1294,6 +1302,38 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// DebugTest runs the same upstream connectivity probe as Test, but captures
+// its safe event stream and returns a compact JSON result for the dedicated
+// administrator channel-test page. No user balance or usage record is changed.
+// POST /api/v1/admin/accounts/:id/debug-test
+func (h *AccountHandler) DebugTest(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if h.accountTestService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Account test service unavailable")
+		return
+	}
+
+	var req DebugTestAccountRequest
+	// Keep the body optional so a direct POST still uses the default hello probe.
+	_ = c.ShouldBindJSON(&req)
+	result, err := h.accountTestService.TestAccountDebug(c, accountID, req.ModelID, req.Prompt)
+	if err != nil {
+		response.Error(c, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	if h.rateLimitService != nil {
+		if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID); recoverErr != nil {
+			_ = c.Error(recoverErr)
+		}
+	}
+	response.Success(c, result)
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.

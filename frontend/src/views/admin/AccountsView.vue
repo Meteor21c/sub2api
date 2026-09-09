@@ -378,8 +378,57 @@
               @probe="handleProbeUpstreamBilling(row)"
             />
           </template>
-          <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+          <template #cell-priority="{ row }">
+            <div class="inline-flex items-center gap-1">
+              <input
+                :value="inlineAccountFieldValue(row, 'priority')"
+                type="number"
+                min="0"
+                step="1"
+                class="w-20 rounded-md border border-gray-300 bg-white px-2 py-1 text-right text-sm font-mono text-gray-700 shadow-sm outline-none transition focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:cursor-wait disabled:opacity-60 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200"
+                :disabled="isInlineAccountFieldSaving(row.id, 'priority')"
+                :aria-label="t('admin.accounts.priority')"
+                @click.stop
+                @input="handleInlineAccountFieldInput(row, 'priority', $event)"
+                @blur="commitInlineAccountField(row, 'priority')"
+                @keydown.enter.prevent="commitInlineAccountField(row, 'priority')"
+                @keydown.esc="cancelInlineAccountField(row, 'priority')"
+              />
+              <Icon
+                v-if="isInlineAccountFieldSaving(row.id, 'priority')"
+                name="refresh"
+                size="xs"
+                class="animate-spin text-gray-400"
+                aria-hidden="true"
+              />
+            </div>
+          </template>
+          <template #cell-load_factor="{ row }">
+            <div class="inline-flex items-center gap-1">
+              <input
+                :value="inlineAccountFieldValue(row, 'load_factor')"
+                type="number"
+                min="0"
+                max="10000"
+                step="1"
+                class="w-20 rounded-md border border-gray-300 bg-white px-2 py-1 text-right text-sm font-mono text-gray-700 shadow-sm outline-none transition focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:cursor-wait disabled:opacity-60 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200"
+                :disabled="isInlineAccountFieldSaving(row.id, 'load_factor')"
+                :placeholder="row.load_factor == null ? '-' : undefined"
+                :aria-label="t('admin.accounts.loadFactor')"
+                @click.stop
+                @input="handleInlineAccountFieldInput(row, 'load_factor', $event)"
+                @blur="commitInlineAccountField(row, 'load_factor')"
+                @keydown.enter.prevent="commitInlineAccountField(row, 'load_factor')"
+                @keydown.esc="cancelInlineAccountField(row, 'load_factor')"
+              />
+              <Icon
+                v-if="isInlineAccountFieldSaving(row.id, 'load_factor')"
+                name="refresh"
+                size="xs"
+                class="animate-spin text-gray-400"
+                aria-hidden="true"
+              />
+            </div>
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -1797,6 +1846,7 @@ const allColumns = computed(() => {
   c.push(
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
+    { key: 'load_factor', label: t('admin.accounts.loadFactor'), sortable: false },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
@@ -1820,6 +1870,82 @@ const cols = computed(() =>
     col.key === 'select' || col.key === 'name' || col.key === 'actions' || !hiddenColumns.has(col.key)
   )
 )
+
+type InlineAccountField = 'priority' | 'load_factor'
+const inlineAccountDrafts = reactive<Record<string, string>>({})
+const inlineAccountSaving = reactive(new Set<string>())
+
+const inlineAccountFieldKey = (accountID: number, field: InlineAccountField) => `${accountID}:${field}`
+
+const inlineAccountFieldValue = (account: Pick<AccountListItem, 'id' | 'priority' | 'load_factor'>, field: InlineAccountField) => {
+  const key = inlineAccountFieldKey(account.id, field)
+  if (Object.prototype.hasOwnProperty.call(inlineAccountDrafts, key)) return inlineAccountDrafts[key]
+  if (field === 'priority') return String(account.priority ?? '')
+  return account.load_factor == null ? '' : String(account.load_factor)
+}
+
+const isInlineAccountFieldSaving = (accountID: number, field: InlineAccountField) =>
+  inlineAccountSaving.has(inlineAccountFieldKey(accountID, field))
+
+const handleInlineAccountFieldInput = (account: AccountListItem, field: InlineAccountField, event: Event) => {
+  const input = event.target as HTMLInputElement | null
+  if (!input) return
+  inlineAccountDrafts[inlineAccountFieldKey(account.id, field)] = input.value
+}
+
+const normalizeInlineAccountField = (field: InlineAccountField, value: string): number | null => {
+  const trimmed = value.trim()
+  if (field === 'load_factor' && trimmed === '') return 0
+  if (trimmed === '') return null
+
+  const parsed = Number(trimmed)
+  if (!Number.isInteger(parsed) || parsed < 0) return null
+  if (field === 'load_factor' && parsed > 10000) return null
+  return parsed
+}
+
+const inlineAccountFieldCurrentValue = (account: AccountListItem, field: InlineAccountField): number => {
+  if (field === 'priority') return Number(account.priority ?? 0)
+  return account.load_factor == null ? 0 : Number(account.load_factor)
+}
+
+const cancelInlineAccountField = (account: AccountListItem, field: InlineAccountField) => {
+  delete inlineAccountDrafts[inlineAccountFieldKey(account.id, field)]
+}
+
+const commitInlineAccountField = async (account: AccountListItem, field: InlineAccountField) => {
+  const key = inlineAccountFieldKey(account.id, field)
+  if (inlineAccountSaving.has(key)) return
+
+  const draft = Object.prototype.hasOwnProperty.call(inlineAccountDrafts, key)
+    ? inlineAccountDrafts[key]
+    : inlineAccountFieldValue(account, field)
+  const value = normalizeInlineAccountField(field, draft)
+  if (value == null) {
+    cancelInlineAccountField(account, field)
+    appStore.showError(t('common.invalidNumber'))
+    return
+  }
+
+  if (value === inlineAccountFieldCurrentValue(account, field)) {
+    cancelInlineAccountField(account, field)
+    return
+  }
+
+  inlineAccountSaving.add(key)
+  try {
+    const updated = await adminAPI.accounts.update(account.id, { [field]: value })
+    patchAccountInList(updated)
+    enterAutoRefreshSilentWindow()
+    cancelInlineAccountField(account, field)
+  } catch (error) {
+    cancelInlineAccountField(account, field)
+    console.error(`Failed to update account ${field}:`, error)
+    appStore.showError(extractApiErrorMessage(error, t('common.error')))
+  } finally {
+    inlineAccountSaving.delete(key)
+  }
+}
 
 const accountDetailLoading = new Set<number>()
 const loadAccountDetails = async (account: Pick<AccountListItem, 'id'>): Promise<Account | null> => {

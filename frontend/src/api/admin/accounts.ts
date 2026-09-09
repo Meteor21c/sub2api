@@ -306,6 +306,52 @@ export async function testAccount(id: number): Promise<{
   return data
 }
 
+export interface AccountDebugTestUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cached_tokens?: number
+  cache_creation_tokens?: number
+  reasoning_tokens?: number
+  usage_source?: 'upstream' | 'estimated' | 'mixed' | string
+}
+
+export interface AccountDebugTestResult {
+  content: string
+  raw_response?: string
+  model: string
+  timing: {
+    first_response_ms: number
+    total_ms: number
+  }
+  usage: AccountDebugTestUsage
+  billing: {
+    usd: number
+    cost_source?: string
+  }
+  success: boolean
+}
+
+/**
+ * Run the administrator-only JSON channel debugger. The probe uses the same
+ * upstream path as the regular connection test and never debits a balance.
+ */
+export async function debugTestAccount(
+  id: number,
+  payload: { model_id?: string; prompt?: string } = {},
+  options?: { signal?: AbortSignal }
+): Promise<AccountDebugTestResult> {
+  const { data } = await apiClient.post<AccountDebugTestResult>(
+    `/admin/accounts/${id}/debug-test`,
+    payload,
+    {
+      signal: options?.signal,
+      timeout: 120000
+    }
+  )
+  return data
+}
+
 /**
  * Refresh account credentials
  * @param id - Account ID
@@ -1082,6 +1128,7 @@ export const accountsAPI = {
   delete: deleteAccount,
   toggleStatus,
   testAccount,
+  debugTestAccount,
   refreshCredentials,
   applyOAuthCredentials,
   getStats,

@@ -3866,7 +3866,7 @@
                     type="number"
                     min="1"
                     class="input"
-                    placeholder="1"
+                    placeholder="10"
                   />
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.defaults.defaultConcurrencyHint") }}
@@ -9625,7 +9625,7 @@ const form = reactive<SettingsForm>({
   affiliate_rebate_duration_days: 0,
   affiliate_rebate_per_invitee_cap: 0,
   affiliate_admin_recharge_enabled: false,
-  default_concurrency: 1,
+  default_concurrency: 10,
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
   default_user_rpm_limit: 0,

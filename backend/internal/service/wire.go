@@ -255,6 +255,7 @@ func ProvideAccountTestService(
 	openAIGatewayService *OpenAIGatewayService,
 	settingService *SettingService,
 	pluginManager *PluginManager,
+	billingService *BillingService,
 ) *AccountTestService {
 	service := NewAccountTestService(
 		accountRepo,
@@ -270,6 +271,7 @@ func ProvideAccountTestService(
 	service.SetOpenAIGatewayService(openAIGatewayService)
 	service.SetSettingService(settingService)
 	service.SetPluginManager(pluginManager)
+	service.SetBillingService(billingService)
 	return service
 }
 
