@@ -123,6 +123,19 @@
             {{ errorMessage }}
           </div>
 
+          <div v-if="result && !result.success" class="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200">
+            <div class="font-semibold">{{ t('admin.channelTest.failureTitle') }}</div>
+            <div class="mt-1 break-words">{{ result.error || t('admin.channelTest.requestFailed') }}</div>
+            <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              <span>
+                {{ t('admin.channelTest.failedChannel') }}：
+                <span class="font-medium">{{ result.account_name || result.account_id || '—' }}</span>
+              </span>
+              <span v-if="result.status_code">HTTP {{ result.status_code }}</span>
+              <span v-if="result.model">{{ t('admin.channelTest.model') }}：{{ result.model }}</span>
+            </div>
+          </div>
+
           <div v-if="result" class="space-y-5">
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
@@ -144,11 +157,38 @@
             </div>
 
             <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-              <div v-if="result.account_name"><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.selectedAccount') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ result.account_name }}</span></div>
+              <div><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.account') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ result.account_name || result.account_id || '—' }}</span></div>
               <div><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.model') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ result.model || '—' }}</span></div>
               <div><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.inputTokens') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ formatTokens(result.usage.prompt_tokens) }}</span></div>
               <div><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.outputTokens') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ formatTokens(result.usage.completion_tokens) }}</span></div>
               <div><span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.usageSource') }}</span><span class="ml-2 font-medium text-gray-900 dark:text-white">{{ usageSourceLabel(result.usage.usage_source) }}</span></div>
+            </div>
+
+            <div v-if="result.attempts?.length" class="rounded-xl border border-gray-200 dark:border-dark-700">
+              <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
+                <div class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.channelTest.attemptsTitle') }}</div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ result.failover_succeeded ? t('admin.channelTest.failoverSucceeded') : result.failover_attempted ? t('admin.channelTest.failoverExhausted') : t('admin.channelTest.attemptsDescription') }}
+                </div>
+              </div>
+              <div class="divide-y divide-gray-100 dark:divide-dark-700">
+                <div v-for="(attempt, index) in result.attempts" :key="`${attempt.account_id}-${index}`" class="space-y-2 px-4 py-3 text-sm">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-gray-100 px-1.5 text-xs font-semibold text-gray-600 dark:bg-dark-700 dark:text-gray-300">{{ index + 1 }}</span>
+                    <span class="font-medium text-gray-900 dark:text-white">{{ attempt.account_name || attempt.account_id }}</span>
+                    <span :class="attempt.success ? 'badge badge-success' : 'badge badge-danger'">
+                      {{ attempt.success ? t('admin.channelTest.attemptSucceeded') : t('admin.channelTest.attemptFailed') }}
+                    </span>
+                    <span v-if="attempt.status_code" class="text-xs text-gray-500 dark:text-gray-400">HTTP {{ attempt.status_code }}</span>
+                  </div>
+                  <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+                    <span v-if="attempt.model">{{ t('admin.channelTest.model') }}：{{ attempt.model }}</span>
+                    <span v-if="attempt.timing">{{ t('admin.channelTest.totalTime') }}：{{ formatMs(attempt.timing.total_ms) }}</span>
+                  </div>
+                  <code v-if="attempt.endpoint" class="block break-all rounded bg-gray-50 px-2 py-1 text-xs text-gray-600 dark:bg-dark-800 dark:text-gray-300">{{ attempt.endpoint }}</code>
+                  <div v-if="attempt.error" class="break-words text-xs text-red-600 dark:text-red-300">{{ attempt.error }}</div>
+                </div>
+              </div>
             </div>
 
             <div>
@@ -184,7 +224,9 @@
             <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
               <tr v-for="entry in history" :key="entry.id" class="cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-800" @click="openHistory(entry)">
                 <td class="whitespace-nowrap px-5 py-3 text-gray-500 dark:text-gray-400">{{ formatDate(entry.createdAt) }}</td>
-                <td class="px-5 py-3 font-medium text-gray-900 dark:text-white">{{ entry.targetName || entry.accountName }}</td>
+                <td class="px-5 py-3 font-medium text-gray-900 dark:text-white">
+                  {{ entry.targetName || entry.accountName }}
+                </td>
                 <td class="px-5 py-3 text-gray-600 dark:text-gray-300">{{ entry.result?.model || entry.model || '—' }}</td>
                 <td class="px-5 py-3 text-gray-600 dark:text-gray-300">{{ entry.result ? formatMs(entry.result.timing.total_ms) : '—' }}</td>
                 <td class="px-5 py-3">
@@ -220,6 +262,8 @@ interface ModelOption {
 interface HistoryEntry {
   id: string
   createdAt: string
+  mode?: 'account' | 'group'
+  targetId?: number
   accountId: number
   accountName: string
   targetName?: string
@@ -319,10 +363,10 @@ async function loadModels() {
       ? await adminAPI.accounts.getAvailableModels(targetId)
       : (await adminAPI.groups.getModelAllowlistCandidates(targetId, selectedGroup.value?.platform)).map(id => ({ id, display_name: id }))
     if (version !== modelLoadVersion.value) return
-    models.value = (available as Array<ClaudeModel & { id?: string; display_name?: string }>).reduce<ModelOption[]>((items, model) => {
-      const id = String(model.id ?? '').trim()
+    models.value = (available as Array<string | (ClaudeModel & { id?: string; display_name?: string })>).reduce<ModelOption[]>((items, model) => {
+      const id = String(typeof model === 'string' ? model : model.id ?? '').trim()
       if (!id || items.some(item => item.id === id)) return items
-      items.push({ id, label: String(model.display_name || id) })
+      items.push({ id, label: String(typeof model === 'string' ? model : model.display_name || id) })
       return items
     }, [])
     // Composite groups cannot resolve an empty public model. Start them on
@@ -371,8 +415,10 @@ function appendHistory(entry: HistoryEntry) {
 }
 
 async function runTest() {
-  const target = testMode.value === 'account' ? selectedAccount.value : selectedGroup.value
-  if (!target || running.value) return
+	const account = selectedAccount.value
+	const group = selectedGroup.value
+	const target = testMode.value === 'account' ? account : group
+	if (!target || running.value) return
   const controller = new AbortController()
   testController.value = controller
   running.value = true
@@ -390,28 +436,36 @@ async function runTest() {
     // History is kept in browser storage for convenience; do not persist the
     // raw event stream or a potentially large upstream payload.
     const historyResult: AccountDebugTestResult = { ...debugResult, raw_response: undefined }
-    appendHistory({
-      id: `${Date.now()}-${testMode.value}-${target.id}`,
-      createdAt: new Date().toISOString(),
-      accountId: debugResult.account_id || (testMode.value === 'account' ? target.id : 0),
-      accountName: debugResult.account_name || (testMode.value === 'account' ? target.name : ''),
-      targetName: testMode.value === 'group' && debugResult.account_name ? `${target.name} → ${debugResult.account_name}` : target.name,
-      targetType: testMode.value,
-      model: debugResult.model,
-      result: historyResult
-    })
-    appStore.showSuccess(t('admin.channelTest.testSucceeded'))
-  } catch (error) {
+		appendHistory({
+			id: `${Date.now()}-${testMode.value}-${target.id}`,
+			createdAt: new Date().toISOString(),
+			mode: testMode.value,
+			targetId: target.id,
+			accountId: debugResult.account_id || account?.id || 0,
+			accountName: debugResult.account_name || account?.name || '',
+			targetName: testMode.value === 'group' && debugResult.account_name ? `${target.name} → ${debugResult.account_name}` : target.name,
+			targetType: testMode.value,
+			model: debugResult.model,
+			result: historyResult
+		})
+		if (debugResult.success) {
+			appStore.showSuccess(t('admin.channelTest.testSucceeded'))
+		} else {
+			errorMessage.value = debugResult.error || t('admin.channelTest.requestFailed')
+		}
+	} catch (error) {
     if (controller.signal.aborted) {
       errorMessage.value = t('admin.channelTest.stopped')
     } else {
       errorMessage.value = errorText(error)
-      appendHistory({
-        id: `${Date.now()}-${testMode.value}-${target.id}`,
-        createdAt: new Date().toISOString(),
-        accountId: testMode.value === 'account' ? target.id : 0,
-        accountName: testMode.value === 'account' ? target.name : '',
-        targetName: target.name,
+		appendHistory({
+			id: `${Date.now()}-${testMode.value}-${target.id}`,
+			createdAt: new Date().toISOString(),
+			mode: testMode.value,
+			targetId: target.id,
+			accountId: account?.id || 0,
+			accountName: account?.name || '',
+			targetName: target.name,
         targetType: testMode.value,
         model: selectedModelId.value,
         result: null,
@@ -434,9 +488,9 @@ function clearHistory() {
 }
 
 function openHistory(entry: HistoryEntry) {
-  if (entry.result) {
-    result.value = entry.result
-    errorMessage.value = ''
+	if (entry.result) {
+		result.value = entry.result
+		errorMessage.value = entry.result.success ? '' : (entry.result.error || t('admin.channelTest.requestFailed'))
   } else {
     result.value = null
     errorMessage.value = entry.error || t('admin.channelTest.requestFailed')

@@ -50,13 +50,15 @@ const (
 
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
-	Type     string     `json:"type"`
-	Text     string     `json:"text,omitempty"`
-	Model    string     `json:"model,omitempty"`
-	Usage    *TestUsage `json:"usage,omitempty"`
-	Status   string     `json:"status,omitempty"`
-	Code     string     `json:"code,omitempty"`
-	ImageURL string     `json:"image_url,omitempty"`
+	Type       string     `json:"type"`
+	Text       string     `json:"text,omitempty"`
+	Model      string     `json:"model,omitempty"`
+	Endpoint   string     `json:"endpoint,omitempty"`
+	StatusCode int        `json:"status_code,omitempty"`
+	Usage      *TestUsage `json:"usage,omitempty"`
+	Status     string     `json:"status,omitempty"`
+	Code       string     `json:"code,omitempty"`
+	ImageURL   string     `json:"image_url,omitempty"`
 	// AudioURL / VideoURL are data: or https URLs for in-browser media players.
 	AudioURL string `json:"audio_url,omitempty"`
 	VideoURL string `json:"video_url,omitempty"`
@@ -140,6 +142,7 @@ func normalizeGrokAccountTestMode(mode string) string {
 // AccountTestService handles account testing operations
 type AccountTestService struct {
 	accountRepo               AccountRepository
+	groupRepo                 GroupRepository
 	geminiTokenProvider       *GeminiTokenProvider
 	claudeTokenProvider       *ClaudeTokenProvider
 	grokTokenProvider         *GrokTokenProvider
@@ -160,6 +163,16 @@ type AccountTestService struct {
 	// grokWSDialer is optional; realtime account tests use the default OpenAI-style
 	// WS dialer when nil (supports proxy + coder/websocket handshake).
 	grokWSDialer openAIWSClientDialer
+}
+
+// SetGroupTestDependencies attaches the normal group schedulers used by the
+// administrator availability test. Keeping this optional preserves the
+// lightweight constructor used by focused account-test unit tests.
+func (s *AccountTestService) SetGroupTestDependencies(groupRepo GroupRepository, gateway *GatewayService) {
+	if s != nil {
+		s.groupRepo = groupRepo
+		s.gatewayService = gateway
+	}
 }
 
 func (s *AccountTestService) SetSettingService(settingService *SettingService) {
@@ -365,7 +378,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		if testModelID == "" {
 			testModelID = claude.DefaultTestModel
 		}
-		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+		s.sendTestStart(c, testModelID, "synthetic UI test endpoint")
 		s.sendEvent(c, TestEvent{Type: "content", Text: "Synthetic Anthropic OAuth account is healthy and interactive."})
 		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 		return nil
@@ -492,7 +505,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendTestStart(c, testModelID, apiURL)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -586,7 +599,7 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to build Vertex URL: %s", err.Error()))
 	}
 
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendTestStart(c, testModelID, fullURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(vertexBody))
 	if err != nil {
@@ -660,7 +673,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 	// Use non-streaming endpoint (response is standard Claude JSON)
 	apiURL := BuildBedrockURL(region, testModelID, false)
 
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendTestStart(c, testModelID, apiURL)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(bedrockBody))
 	if err != nil {
@@ -825,7 +838,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Send test_start event once. A task-invalid Agent Identity response may
 	// restart this probe after registering a replacement task.
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
-		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+		s.sendTestStart(c, testModelID, apiURL)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
@@ -1188,7 +1201,7 @@ func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx con
 	}
 
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
-		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+		s.sendTestStart(c, testModelID, apiURL)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
@@ -1234,7 +1247,7 @@ func (s *AccountTestService) testGrokImageGeneration(c *gin.Context, ctx context
 	}
 
 	s.prepareGrokTestSSE(c)
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
+	s.sendTestStart(c, modelID, apiURL)
 	if endpoint == GrokMediaEndpointImagesEdits {
 		s.sendEvent(c, TestEvent{Type: "status", Text: "Calling Grok /v1/images/edits with uploaded source image..."})
 	} else {
@@ -1349,7 +1362,7 @@ func (s *AccountTestService) testGrokVideoGeneration(c *gin.Context, ctx context
 	}
 
 	s.prepareGrokTestSSE(c)
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
+	s.sendTestStart(c, modelID, apiURL)
 	s.sendEvent(c, TestEvent{Type: "status", Text: "Calling Grok /v1/videos/generations..."})
 
 	payload := map[string]any{
@@ -1516,7 +1529,8 @@ func (s *AccountTestService) testGrokWebSearch(c *gin.Context, ctx context.Conte
 	// uses the same DoGrokNativeResponsesJSON helper as the gateway handler so
 	// results match production search.
 	s.prepareGrokTestSSE(c)
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: "grok-web-search"})
+	// The endpoint is not known until the request builder has validated the
+	// selected Grok account, so the test_start event is emitted below.
 	s.sendEvent(c, TestEvent{Type: "status", Text: "Calling standalone web_search probe (same as gateway /v1/web_search)..."})
 
 	// Keep parity with handler.buildGrokWebSearchPrompt / include sources.
@@ -1540,6 +1554,7 @@ User query:
 	if err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid Grok base URL: %s", err.Error()))
 	}
+	s.sendTestStart(c, "grok-web-search", apiURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create standalone web_search probe request")
@@ -1608,7 +1623,7 @@ func (s *AccountTestService) testGrokTTS(c *gin.Context, ctx context.Context, ac
 	}
 
 	s.prepareGrokTestSSE(c)
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: "grok-voice-tts"})
+	s.sendTestStart(c, "grok-voice-tts", apiURL)
 	s.sendEvent(c, TestEvent{Type: "status", Text: "Calling standalone /v1/tts..."})
 
 	// xAI requires `language`; optional voice_id. Prefer the shape that matches
@@ -1670,7 +1685,7 @@ func (s *AccountTestService) testGrokSTT(c *gin.Context, ctx context.Context, ac
 	}
 
 	s.prepareGrokTestSSE(c)
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: "grok-voice-stt"})
+	s.sendTestStart(c, "grok-voice-stt", apiURL)
 
 	var audioBytes []byte
 	filename := "probe.wav"
@@ -1780,7 +1795,7 @@ func (s *AccountTestService) testGrokRealtime(c *gin.Context, ctx context.Contex
 	wsURL := u.String()
 
 	s.prepareGrokTestSSE(c)
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: model})
+	s.sendTestStart(c, model, wsURL)
 	s.sendEvent(c, TestEvent{Type: "status", Text: "Dialing standalone wss /v1/realtime (connectivity probe)..."})
 	s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("realtime target: %s\n", redactGrokRealtimeURLForLog(wsURL))})
 
@@ -2064,7 +2079,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	payload := createOpenAIChatCompletionsTestPayload(testModelID, prompt)
 	payloadBytes, _ := json.Marshal(payload)
 
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendTestStart(c, testModelID, apiURL)
 	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/chat/completions 测试连接"})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
@@ -2164,7 +2179,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	}
 	payloadBytes, _ := json.Marshal(createOpenAICompactProbePayload(testModelID, isOAuth))
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
-		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+		s.sendTestStart(c, testModelID, apiURL)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
@@ -2357,7 +2372,7 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 	}
 
 	// Send test_start event
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendTestStart(c, testModelID, req.URL.String())
 
 	// Get proxy and execute request
 	proxyURL := ""
@@ -2411,7 +2426,7 @@ func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, ac
 	c.Writer.Flush()
 
 	// Send test_start event
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendTestStart(c, testModelID, "Antigravity gateway test endpoint")
 
 	// 调用 AntigravityGatewayService.TestConnection（复用协议转换逻辑）
 	result, err := s.antigravityGatewayService.TestConnection(ctx, account, testModelID)
@@ -2983,7 +2998,7 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
+	s.sendTestStart(c, modelID, apiURL)
 
 	payload := map[string]any{
 		"model":           modelID,
@@ -3081,7 +3096,7 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.Flush()
 
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
+	s.sendTestStart(c, modelID, chatgptCodexAPIURL)
 	s.sendEvent(c, TestEvent{Type: "content", Text: "Calling Codex /responses image tool...\n"})
 
 	parsed := &OpenAIImagesRequest{
@@ -3218,7 +3233,11 @@ func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
 // sendErrorAndEnd sends an error event and ends the stream
 func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) error {
 	log.Printf("Account test error: %s", errorMsg)
-	s.sendEvent(c, TestEvent{Type: "error", Error: errorMsg})
+	s.sendEvent(c, TestEvent{
+		Type:       "error",
+		Error:      errorMsg,
+		StatusCode: accountTestStatusCode(errorMsg),
+	})
 	return fmt.Errorf("%s", errorMsg)
 }
 

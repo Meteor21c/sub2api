@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -41,24 +42,59 @@ type AccountTestDebugBilling struct {
 	CostSource string  `json:"cost_source,omitempty"`
 }
 
+// AccountTestDebugAttempt records one concrete channel probe. Group tests can
+// contain more than one attempt because a failed channel is excluded and the
+// normal scheduler is asked for the next channel in the same group.
+type AccountTestDebugAttempt struct {
+	AccountID   int64                  `json:"account_id"`
+	AccountName string                 `json:"account_name"`
+	Model       string                 `json:"model,omitempty"`
+	Endpoint    string                 `json:"endpoint,omitempty"`
+	StatusCode  int                    `json:"status_code,omitempty"`
+	Error       string                 `json:"error,omitempty"`
+	Timing      AccountTestDebugTiming `json:"timing"`
+	Success     bool                   `json:"success"`
+}
+
 // AccountTestDebugResult is returned by the administrator-only channel test
 // endpoint.  RawResponse contains the redacted SSE events emitted by the
 // account tester, never account credentials or upstream request headers.
 type AccountTestDebugResult struct {
-	Content     string                  `json:"content"`
-	RawResponse string                  `json:"raw_response"`
-	Model       string                  `json:"model"`
-	AccountID   int64                   `json:"account_id,omitempty"`
-	AccountName string                  `json:"account_name,omitempty"`
-	Timing      AccountTestDebugTiming  `json:"timing"`
-	Usage       TestUsage               `json:"usage"`
-	Billing     AccountTestDebugBilling `json:"billing"`
-	Success     bool                    `json:"success"`
+	AccountID         int64                     `json:"account_id"`
+	AccountName       string                    `json:"account_name"`
+	GroupID           *int64                    `json:"group_id,omitempty"`
+	GroupName         string                    `json:"group_name,omitempty"`
+	RequestedModel    string                    `json:"requested_model,omitempty"`
+	Content           string                    `json:"content"`
+	RawResponse       string                    `json:"raw_response"`
+	Model             string                    `json:"model"`
+	Endpoint          string                    `json:"endpoint,omitempty"`
+	StatusCode        int                       `json:"status_code,omitempty"`
+	Error             string                    `json:"error,omitempty"`
+	Timing            AccountTestDebugTiming    `json:"timing"`
+	Usage             TestUsage                 `json:"usage"`
+	Billing           AccountTestDebugBilling   `json:"billing"`
+	Success           bool                      `json:"success"`
+	Attempts          []AccountTestDebugAttempt `json:"attempts,omitempty"`
+	FailoverAttempted bool                      `json:"failover_attempted"`
+	FailoverSucceeded bool                      `json:"failover_succeeded"`
 }
 
-// TestGroupDebug selects one account through the normal group scheduler, then
-// runs the same non-billing upstream probe used by the account debugger. The
-// scheduler slot and synthetic session are always released after the probe.
+func isOpenAICompatibleGroupPlatform(platform string) bool {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
+		return true
+	default:
+		return false
+	}
+}
+
+const maxAccountTestErrorLength = 2048
+
+// TestGroupDebug selects accounts through the normal group scheduler and runs
+// the same non-billing upstream probe used by the account debugger. A failed
+// channel is excluded for the remainder of this test, so the next selection
+// can exercise the group's real failover path.
 func (s *AccountTestService) TestGroupDebug(c *gin.Context, groupID int64, modelID, prompt string) (*AccountTestDebugResult, error) {
 	if s == nil || s.gatewayService == nil {
 		return nil, fmt.Errorf("group scheduler is unavailable")
@@ -69,6 +105,7 @@ func (s *AccountTestService) TestGroupDebug(c *gin.Context, groupID int64, model
 
 	ctx := c.Request.Context()
 	requestedModel := strings.TrimSpace(modelID)
+	publicModel := requestedModel
 	group, resolvedGroupID, err := s.gatewayService.resolveGatewayGroup(ctx, &groupID)
 	if err != nil {
 		return nil, err
@@ -103,69 +140,111 @@ func (s *AccountTestService) TestGroupDebug(c *gin.Context, groupID int64, model
 	}
 
 	sessionHash := fmt.Sprintf("admin-group-test-%d", time.Now().UnixNano())
-	selection, err := s.selectGroupDebugAccount(ctx, resolvedGroupID, sessionHash, requestedModel, group.Platform)
-	if err != nil {
-		return nil, err
-	}
-	// Match normal gateway behavior for short-lived contention: a scheduler
-	// WaitPlan is a reservation opportunity, not an immediate failure. Retry
-	// selection at a bounded cadence so this diagnostic does not report a
-	// healthy group as unavailable while a slot is about to be released.
-	if selection != nil && !selection.Acquired && selection.WaitPlan != nil {
-		waitFor := selection.WaitPlan.Timeout
-		if waitFor <= 0 || waitFor > groupDebugMaxWait {
-			waitFor = groupDebugMaxWait
-		}
-		deadline := time.Now().Add(waitFor)
-		for !selection.Acquired {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				break
-			}
-			delay := groupDebugSelectionRetryInterval
-			if remaining < delay {
-				delay = remaining
-			}
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return nil, ctx.Err()
-			case <-timer.C:
-			}
-			selection, err = s.selectGroupDebugAccount(ctx, resolvedGroupID, sessionHash, requestedModel, group.Platform)
-			if err != nil {
-				return nil, err
-			}
-			if selection == nil || selection.Account == nil {
-				return nil, ErrNoAvailableAccounts
-			}
-			if selection.WaitPlan == nil {
-				break
-			}
-		}
-	}
-	if selection == nil || selection.Account == nil {
-		return nil, ErrNoAvailableAccounts
-	}
-	account := selection.Account
-	defer s.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
-	if selection.ReleaseFunc != nil {
-		defer selection.ReleaseFunc()
-	}
-	if !selection.Acquired {
-		return nil, fmt.Errorf("no account in the group has an immediately available concurrency slot")
-	}
+	excludedIDs := make(map[int64]struct{})
+	attemptedIDs := make(map[int64]struct{})
+	attempts := make([]AccountTestDebugAttempt, 0, 2)
+	var lastResult *AccountTestDebugResult
 
-	result, err := s.TestAccountDebug(c, account.ID, probeModel, prompt)
-	if err != nil {
-		return nil, err
+	for {
+		selection, selectErr := s.selectGroupDebugAccountWithWait(ctx, resolvedGroupID, sessionHash, requestedModel, group.Platform, excludedIDs)
+		if selectErr != nil || selection == nil || selection.Account == nil {
+			message := "no available account in group"
+			if selectErr != nil {
+				message = fmt.Sprintf("no available account in group: %s", selectErr.Error())
+			}
+			if lastResult != nil {
+				lastResult.Error = appendAccountTestError(lastResult.Error, message)
+				lastResult.Attempts = attempts
+				lastResult.FailoverAttempted = len(excludedIDs) > 0
+				lastResult.FailoverSucceeded = false
+				lastResult.GroupID = resolvedGroupID
+				lastResult.GroupName = group.Name
+				lastResult.RequestedModel = publicModel
+				return lastResult, nil
+			}
+			return &AccountTestDebugResult{
+				GroupID:           resolvedGroupID,
+				GroupName:         group.Name,
+				RequestedModel:    publicModel,
+				Model:             probeModel,
+				Error:             message,
+				Attempts:          attempts,
+				Success:           false,
+				FailoverAttempted: len(excludedIDs) > 0,
+			}, nil
+		}
+
+		account := selection.Account
+		if _, alreadyAttempted := attemptedIDs[account.ID]; alreadyAttempted {
+			message := fmt.Sprintf("scheduler returned channel %s (%d) again after it was excluded", account.Name, account.ID)
+			if lastResult == nil {
+				lastResult = newFailedAccountTestResult(account, probeModel, message)
+			}
+			lastResult.Error = appendAccountTestError(lastResult.Error, message)
+			lastResult.Attempts = attempts
+			lastResult.FailoverAttempted = len(excludedIDs) > 0
+			lastResult.FailoverSucceeded = false
+			lastResult.GroupID = resolvedGroupID
+			lastResult.GroupName = group.Name
+			lastResult.RequestedModel = publicModel
+			return lastResult, nil
+		}
+		attemptedIDs[account.ID] = struct{}{}
+
+		if !selection.Acquired {
+			message := "channel was selected but not tested because its concurrency capacity is full"
+			attempt := AccountTestDebugAttempt{
+				AccountID:   account.ID,
+				AccountName: account.Name,
+				Model:       probeModel,
+				Endpoint:    safeAccountTestEndpoint(accountTestEndpointHint(account, probeModel)),
+				Error:       message,
+				Success:     false,
+			}
+			attempts = append(attempts, attempt)
+			s.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
+			excludedIDs[account.ID] = struct{}{}
+			lastResult = failedAccountTestResultFromAttempt(attempt)
+			continue
+		}
+
+		result, testErr := func() (*AccountTestDebugResult, error) {
+			defer s.gatewayService.ReleaseAccountSession(context.Background(), account, sessionHash)
+			if selection.ReleaseFunc != nil {
+				defer selection.ReleaseFunc()
+			}
+			return s.TestAccountDebug(c, account.ID, probeModel, prompt)
+		}()
+		if testErr != nil {
+			return nil, testErr
+		}
+		if result == nil {
+			return nil, fmt.Errorf("channel test returned no result")
+		}
+
+		if result.AccountID == 0 {
+			result.AccountID = account.ID
+		}
+		if result.AccountName == "" {
+			result.AccountName = account.Name
+		}
+		attempts = append(attempts, result.Attempts...)
+		if len(result.Attempts) == 0 {
+			attempts = append(attempts, accountTestAttemptFromResult(result))
+		}
+		result.GroupID = resolvedGroupID
+		result.GroupName = group.Name
+		result.RequestedModel = publicModel
+		result.Attempts = attempts
+		result.FailoverAttempted = len(attempts) > 1
+		result.FailoverSucceeded = result.Success && len(attempts) > 1
+		if result.Success {
+			return result, nil
+		}
+
+		excludedIDs[account.ID] = struct{}{}
+		lastResult = result
 	}
-	result.AccountID = account.ID
-	result.AccountName = account.Name
-	return result, nil
 }
 
 const (
@@ -194,12 +273,13 @@ func (s *AccountTestService) selectGroupDebugAccount(
 	ctx context.Context,
 	groupID *int64,
 	sessionHash, requestedModel, groupPlatform string,
+	excludedIDs map[int64]struct{},
 ) (*AccountSelectionResult, error) {
 	platform := strings.ToLower(strings.TrimSpace(groupPlatform))
 	if resolved, ok := ResolvedTargetPlatformFromContext(ctx); ok {
 		platform = strings.ToLower(strings.TrimSpace(resolved))
 	}
-	if (platform == PlatformOpenAI || platform == PlatformGrok) && s.openaiGatewayService != nil {
+	if isOpenAICompatibleGroupPlatform(platform) && s.openaiGatewayService != nil {
 		capability := OpenAIEndpointCapabilityChatCompletions
 		if isOpenAIImageModel(requestedModel) {
 			capability = OpenAIEndpointCapabilityResponses
@@ -212,7 +292,7 @@ func (s *AccountTestService) selectGroupDebugAccount(
 			"",
 			sessionHash,
 			requestedModel,
-			nil,
+			excludedIDs,
 			OpenAIUpstreamTransportAny,
 			capability,
 			false,
@@ -223,8 +303,55 @@ func (s *AccountTestService) selectGroupDebugAccount(
 		return returnSelection, err
 	}
 	return s.gatewayService.SelectAccountWithLoadAwareness(
-		ctx, groupID, sessionHash, requestedModel, nil, "", 0,
+		ctx, groupID, sessionHash, requestedModel, excludedIDs, "", 0,
 	)
+}
+
+// selectGroupDebugAccountWithWait preserves the normal scheduler's bounded
+// wait for a temporarily full channel. Once that wait is exhausted, the
+// caller can record the channel as unavailable and continue with the group's
+// next candidate instead of returning an opaque "no result" response.
+func (s *AccountTestService) selectGroupDebugAccountWithWait(
+	ctx context.Context,
+	groupID *int64,
+	sessionHash, requestedModel, groupPlatform string,
+	excludedIDs map[int64]struct{},
+) (*AccountSelectionResult, error) {
+	selection, err := s.selectGroupDebugAccount(ctx, groupID, sessionHash, requestedModel, groupPlatform, excludedIDs)
+	if err != nil || selection == nil || selection.Acquired || selection.WaitPlan == nil {
+		return selection, err
+	}
+
+	waitFor := selection.WaitPlan.Timeout
+	if waitFor <= 0 || waitFor > groupDebugMaxWait {
+		waitFor = groupDebugMaxWait
+	}
+	deadline := time.Now().Add(waitFor)
+	for !selection.Acquired && selection.WaitPlan != nil {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		delay := groupDebugSelectionRetryInterval
+		if remaining < delay {
+			delay = remaining
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+
+		selection, err = s.selectGroupDebugAccount(ctx, groupID, sessionHash, requestedModel, groupPlatform, excludedIDs)
+		if err != nil || selection == nil || selection.Acquired || selection.WaitPlan == nil {
+			return selection, err
+		}
+	}
+	return selection, nil
 }
 
 // AccountTestCapture collects the safe TestEvent stream without writing SSE
@@ -238,6 +365,9 @@ type AccountTestCapture struct {
 	eventTimes []time.Time
 	content    strings.Builder
 	model      string
+	endpoint   string
+	statusCode int
+	errorMsg   string
 	usage      TestUsage
 	usageSeen  bool
 	firstAt    time.Time
@@ -294,8 +424,20 @@ func (capture *AccountTestCapture) record(event TestEvent) {
 	if event.Model != "" {
 		capture.model = event.Model
 	}
+	if event.Endpoint != "" {
+		capture.endpoint = safeAccountTestEndpoint(event.Endpoint)
+	}
+	if event.StatusCode > 0 {
+		capture.statusCode = event.StatusCode
+	}
+	if event.Error != "" {
+		capture.errorMsg = event.Error
+		if capture.statusCode == 0 {
+			capture.statusCode = accountTestStatusCode(event.Error)
+		}
+	}
 	if event.Text != "" && event.Type == "content" {
-		capture.content.WriteString(event.Text)
+		_, _ = capture.content.WriteString(event.Text)
 	}
 	if event.Usage != nil {
 		capture.mergeUsage(*event.Usage)
@@ -310,6 +452,164 @@ func (capture *AccountTestCapture) record(event TestEvent) {
 		capture.completed = event.Type == "test_complete" && event.Success
 		capture.failed = event.Type == "error"
 	}
+}
+
+// Metadata returns failure and request metadata collected from the safe test
+// event stream. It is separate from Result to keep the original capture API
+// used by the existing SSE parser tests stable.
+func (capture *AccountTestCapture) Metadata() (errorMsg, endpoint string, statusCode int) {
+	if capture == nil {
+		return "", "", 0
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return truncateAccountTestError(capture.errorMsg), capture.endpoint, capture.statusCode
+}
+
+func (s *AccountTestService) sendTestStart(c *gin.Context, model, endpoint string) {
+	s.sendEvent(c, TestEvent{
+		Type:     "test_start",
+		Model:    model,
+		Endpoint: safeAccountTestEndpoint(endpoint),
+	})
+}
+
+func safeAccountTestEndpoint(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err == nil {
+		parsed.User = nil
+		query := parsed.Query()
+		for key := range query {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "key") || strings.Contains(lower, "token") ||
+				strings.Contains(lower, "secret") || strings.Contains(lower, "password") ||
+				strings.Contains(lower, "auth") {
+				query.Set(key, "[redacted]")
+			}
+		}
+		parsed.RawQuery = query.Encode()
+		raw = parsed.String()
+	}
+	if len(raw) > 512 {
+		return raw[:512] + "..."
+	}
+	return raw
+}
+
+func accountTestStatusCode(message string) int {
+	for _, token := range strings.Fields(message) {
+		token = strings.Trim(token, "()[]{}:;,\"")
+		if len(token) != 3 {
+			continue
+		}
+		if token[0] < '1' || token[0] > '5' || token[1] < '0' || token[1] > '9' || token[2] < '0' || token[2] > '9' {
+			continue
+		}
+		return int(token[0]-'0')*100 + int(token[1]-'0')*10 + int(token[2]-'0')
+	}
+	return 0
+}
+
+func truncateAccountTestError(message string) string {
+	message = strings.TrimSpace(message)
+	if len(message) <= maxAccountTestErrorLength {
+		return message
+	}
+	return message[:maxAccountTestErrorLength] + "..."
+}
+
+func appendAccountTestError(existing, next string) string {
+	existing = strings.TrimSpace(existing)
+	next = truncateAccountTestError(next)
+	if existing == "" {
+		return next
+	}
+	if next == "" || strings.Contains(existing, next) {
+		return existing
+	}
+	return truncateAccountTestError(existing + "; " + next)
+}
+
+func accountTestEndpointHint(account *Account, modelID string) string {
+	if account == nil {
+		return ""
+	}
+	modelID = strings.TrimSpace(modelID)
+	if account.IsOpenAI() {
+		if account.IsOAuth() {
+			return chatgptCodexAPIURL
+		}
+		base := strings.TrimRight(strings.TrimSpace(account.GetOpenAIBaseURL()), "/")
+		if base == "" {
+			base = "https://api.openai.com"
+		}
+		if isOpenAIImageModel(modelID) {
+			return buildOpenAIImagesURL(base, openAIImagesGenerationsEndpoint)
+		}
+		if account.GetAPIProtocol() == APIProtocolChatCompletions {
+			return buildOpenAIChatCompletionsURL(base)
+		}
+		return buildOpenAIResponsesURLForPlatform(account.Platform, base)
+	}
+	if account.IsGemini() {
+		return "Gemini generateContent endpoint"
+	}
+	if account.Platform == PlatformGrok {
+		return "Grok connectivity endpoint"
+	}
+	if account.Platform == PlatformAntigravity {
+		return "Antigravity gateway test endpoint"
+	}
+	base := strings.TrimRight(strings.TrimSpace(account.GetBaseURL()), "/")
+	if base == "" {
+		return testClaudeAPIURL
+	}
+	return base + "/v1/messages?beta=true"
+}
+
+func accountTestAttemptFromResult(result *AccountTestDebugResult) AccountTestDebugAttempt {
+	if result == nil {
+		return AccountTestDebugAttempt{}
+	}
+	return AccountTestDebugAttempt{
+		AccountID:   result.AccountID,
+		AccountName: result.AccountName,
+		Model:       result.Model,
+		Endpoint:    result.Endpoint,
+		StatusCode:  result.StatusCode,
+		Error:       result.Error,
+		Timing:      result.Timing,
+		Success:     result.Success,
+	}
+}
+
+func failedAccountTestResultFromAttempt(attempt AccountTestDebugAttempt) *AccountTestDebugResult {
+	return &AccountTestDebugResult{
+		AccountID:   attempt.AccountID,
+		AccountName: attempt.AccountName,
+		Model:       attempt.Model,
+		Endpoint:    attempt.Endpoint,
+		StatusCode:  attempt.StatusCode,
+		Error:       attempt.Error,
+		Timing:      attempt.Timing,
+		Attempts:    []AccountTestDebugAttempt{attempt},
+		Success:     false,
+	}
+}
+
+func newFailedAccountTestResult(account *Account, modelID, message string) *AccountTestDebugResult {
+	return failedAccountTestResultFromAttempt(AccountTestDebugAttempt{
+		AccountID:   account.ID,
+		AccountName: account.Name,
+		Model:       strings.TrimSpace(modelID),
+		Endpoint:    safeAccountTestEndpoint(accountTestEndpointHint(account, modelID)),
+		Error:       truncateAccountTestError(message),
+		Success:     false,
+	})
 }
 
 func (capture *AccountTestCapture) mergeUsage(next TestUsage) {
@@ -490,6 +790,15 @@ func (s *AccountTestService) TestAccountDebug(c *gin.Context, accountID int64, m
 	if prompt == "" {
 		prompt = "hello"
 	}
+	requestedModel := strings.TrimSpace(modelID)
+	accountName := ""
+	endpointHint := ""
+	if s.accountRepo != nil {
+		if account, accountErr := s.accountRepo.GetByID(c.Request.Context(), accountID); accountErr == nil && account != nil {
+			accountName = account.Name
+			endpointHint = accountTestEndpointHint(account, requestedModel)
+		}
+	}
 	capture := NewAccountTestCapture()
 	setAccountTestCapture(c, capture)
 	originalWriter := c.Writer
@@ -503,15 +812,22 @@ func (s *AccountTestService) TestAccountDebug(c *gin.Context, accountID int64, m
 
 	err := s.TestAccountConnection(c, accountID, modelID, prompt, AccountTestModeDefault)
 	content, raw, resolvedModel, timing, usage := capture.Result(prompt)
+	errorMsg, endpoint, statusCode := capture.Metadata()
 	if resolvedModel == "" {
-		resolvedModel = strings.TrimSpace(modelID)
+		resolvedModel = requestedModel
 	}
-	if err != nil {
-		return nil, err
+	if endpoint == "" {
+		endpoint = safeAccountTestEndpoint(endpointHint)
+	}
+	if errorMsg == "" && err != nil {
+		errorMsg = truncateAccountTestError(err.Error())
+	}
+	if statusCode == 0 {
+		statusCode = accountTestStatusCode(errorMsg)
 	}
 
 	billing := AccountTestDebugBilling{CostSource: "unavailable"}
-	if s.billingService != nil && resolvedModel != "" {
+	if err == nil && s.billingService != nil && resolvedModel != "" {
 		breakdown, billingErr := s.billingService.CalculateCost(resolvedModel, UsageTokens{
 			InputTokens:         usage.PromptTokens,
 			OutputTokens:        usage.CompletionTokens,
@@ -524,13 +840,21 @@ func (s *AccountTestService) TestAccountDebug(c *gin.Context, accountID int64, m
 		}
 	}
 
-	return &AccountTestDebugResult{
-		Content:     content,
-		RawResponse: raw,
-		Model:       resolvedModel,
-		Timing:      timing,
-		Usage:       usage,
-		Billing:     billing,
-		Success:     true,
-	}, nil
+	result := &AccountTestDebugResult{
+		AccountID:      accountID,
+		AccountName:    accountName,
+		RequestedModel: requestedModel,
+		Content:        content,
+		RawResponse:    raw,
+		Model:          resolvedModel,
+		Endpoint:       endpoint,
+		StatusCode:     statusCode,
+		Timing:         timing,
+		Usage:          usage,
+		Billing:        billing,
+		Error:          errorMsg,
+		Success:        err == nil,
+	}
+	result.Attempts = []AccountTestDebugAttempt{accountTestAttemptFromResult(result)}
+	return result, nil
 }

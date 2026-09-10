@@ -1328,7 +1328,7 @@ func (h *AccountHandler) DebugTest(c *gin.Context) {
 		return
 	}
 
-	if h.rateLimitService != nil {
+	if result.Success && h.rateLimitService != nil {
 		if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID); recoverErr != nil {
 			_ = c.Error(recoverErr)
 		}
@@ -1358,7 +1358,7 @@ func (h *AccountHandler) DebugTestGroup(c *gin.Context) {
 		return
 	}
 
-	if h.rateLimitService != nil && result.AccountID > 0 {
+	if result.Success && h.rateLimitService != nil && result.AccountID > 0 {
 		if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), result.AccountID); recoverErr != nil {
 			_ = c.Error(recoverErr)
 		}

@@ -322,6 +322,12 @@ export interface AccountDebugTestResult {
   model: string
   account_id?: number
   account_name?: string
+  group_id?: number
+  group_name?: string
+  requested_model?: string
+  endpoint?: string
+  status_code?: number
+  error?: string
   timing: {
     first_response_ms: number
     total_ms: number
@@ -330,6 +336,23 @@ export interface AccountDebugTestResult {
   billing: {
     usd: number
     cost_source?: string
+  }
+  success: boolean
+  attempts?: AccountDebugTestAttempt[]
+  failover_attempted?: boolean
+  failover_succeeded?: boolean
+}
+
+export interface AccountDebugTestAttempt {
+  account_id: number
+  account_name: string
+  model?: string
+  endpoint?: string
+  status_code?: number
+  error?: string
+  timing: {
+    first_response_ms: number
+    total_ms: number
   }
   success: boolean
 }
