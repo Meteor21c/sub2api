@@ -43,6 +43,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores'
+import { sanitizeRedirectPath as sanitizeRedirectPathForRouter } from '@/router/redirect'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -81,8 +82,10 @@ function normalizeRedirectPath(path: string | null | undefined): string {
   if (!value.startsWith('/')) return '/purchase'
   if (value.startsWith('//') || value.includes('://')) return '/purchase'
   if (value === '/payment') return '/purchase'
-  if (value.startsWith('/payment?')) return '/purchase' + value.slice('/payment'.length)
-  return value
+  if (value.startsWith('/payment?')) {
+    return sanitizeRedirectPathForRouter(router, '/purchase' + value.slice('/payment'.length), '/purchase')
+  }
+  return sanitizeRedirectPathForRouter(router, value, '/purchase')
 }
 
 function appendQueryParam(query: Record<string, string>, key: string, value: string) {
