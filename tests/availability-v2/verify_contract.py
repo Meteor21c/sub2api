@@ -946,7 +946,10 @@ def run_v2_implementation_evidence(repo_root: Path) -> list[str]:
         missing.append("catalog endpoint/handler")
     if not any("/conversations" in text and "conversation" in text.lower() for _, text in sources):
         missing.append("conversation endpoint/handler")
-    if not any("turns/stream" in text and "conversation_id" in text for _, text in sources):
+    if (
+        not any("turns/stream" in text and "StreamTurn" in text for text in route_sources)
+        or "conversation_id" not in all_backend
+    ):
         missing.append("turn stream endpoint/handler")
     if not all(event_name in all_backend for event_name in EVENT_TYPES):
         missing.append("all fixed SSE event type implementations")
