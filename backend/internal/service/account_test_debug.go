@@ -213,6 +213,11 @@ func (s *AccountTestService) TestGroupDebug(c *gin.Context, groupID int64, model
 			if selection.ReleaseFunc != nil {
 				defer selection.ReleaseFunc()
 			}
+			// The V2 observer uses this request-scoped value to attach the
+			// concrete scheduler choice to test_start before the upstream call.
+			// It is deliberately set only around the real account probe.
+			setAccountTestActiveAccount(c, account)
+			defer setAccountTestActiveAccount(c, nil)
 			return s.TestAccountDebug(c, account.ID, probeModel, prompt)
 		}()
 		if testErr != nil {
@@ -254,7 +259,7 @@ const (
 
 func defaultGroupDebugModel(platform string) string {
 	switch strings.ToLower(strings.TrimSpace(platform)) {
-	case PlatformOpenAI:
+	case PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
 		return openai.DefaultTestModel
 	case PlatformGemini:
 		return geminicli.DefaultTestModel
@@ -373,9 +378,21 @@ type AccountTestCapture struct {
 	firstAt    time.Time
 	completed  bool
 	failed     bool
+	observer   AccountTestEventObserver
 }
 
 const accountTestCaptureContextKey = "account_test_debug_capture"
+
+// AccountTestEventObserver receives the same sanitized events that the legacy
+// SSE test endpoint emits.  It is intentionally attached to the request
+// context rather than the AccountTestService so concurrent account tests do
+// not share mutable observers.
+type AccountTestEventObserver func(TestEvent)
+
+const (
+	accountTestEventObserverContextKey = "account_test_event_observer"
+	accountTestActiveAccountContextKey = "account_test_active_account"
+)
 
 // accountTestCaptureResponseWriter prevents the existing SSE probe code from
 // committing text/event-stream headers before the debug endpoint writes its
@@ -409,13 +426,48 @@ func accountTestCaptureFromContext(c *gin.Context) *AccountTestCapture {
 	return capture
 }
 
+func setAccountTestEventObserver(c *gin.Context, observer AccountTestEventObserver) {
+	if c != nil {
+		c.Set(accountTestEventObserverContextKey, observer)
+	}
+}
+
+func accountTestEventObserverFromContext(c *gin.Context) AccountTestEventObserver {
+	if c == nil {
+		return nil
+	}
+	value, exists := c.Get(accountTestEventObserverContextKey)
+	if !exists {
+		return nil
+	}
+	observer, _ := value.(AccountTestEventObserver)
+	return observer
+}
+
+func setAccountTestActiveAccount(c *gin.Context, account *Account) {
+	if c != nil {
+		c.Set(accountTestActiveAccountContextKey, account)
+	}
+}
+
+func accountTestActiveAccountFromContext(c *gin.Context) *Account {
+	if c == nil {
+		return nil
+	}
+	value, exists := c.Get(accountTestActiveAccountContextKey)
+	if !exists {
+		return nil
+	}
+	account, _ := value.(*Account)
+	return account
+}
+
 func (capture *AccountTestCapture) record(event TestEvent) {
 	if capture == nil {
 		return
 	}
 	now := time.Now()
 	capture.mu.Lock()
-	defer capture.mu.Unlock()
 	if capture.startedAt.IsZero() {
 		capture.startedAt = now
 	}
@@ -451,6 +503,11 @@ func (capture *AccountTestCapture) record(event TestEvent) {
 		capture.finishedAt = now
 		capture.completed = event.Type == "test_complete" && event.Success
 		capture.failed = event.Type == "error"
+	}
+	observer := capture.observer
+	capture.mu.Unlock()
+	if observer != nil {
+		observer(event)
 	}
 }
 
@@ -800,6 +857,7 @@ func (s *AccountTestService) TestAccountDebug(c *gin.Context, accountID int64, m
 		}
 	}
 	capture := NewAccountTestCapture()
+	capture.observer = accountTestEventObserverFromContext(c)
 	setAccountTestCapture(c, capture)
 	originalWriter := c.Writer
 	if originalWriter != nil {

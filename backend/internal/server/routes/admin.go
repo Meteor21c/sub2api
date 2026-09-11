@@ -118,6 +118,9 @@ func RegisterAdminRoutes(
 		// 渠道监控
 		registerChannelMonitorRoutes(admin, h, settingService)
 		registerChannelMonitorV2Routes(admin, h, settingService)
+		if h != nil && h.Admin != nil && h.Admin.AvailabilityV2 != nil {
+			registerAvailabilityV2Routes(admin, h)
+		}
 
 		// 风控中心
 		registerContentModerationRoutes(admin, h)
@@ -130,6 +133,18 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+	}
+}
+
+func registerAvailabilityV2Routes(admin *gin.RouterGroup, h *handler.Handlers) {
+	channelTest := admin.Group("/channel-test")
+	{
+		channelTest.GET("/catalog", h.Admin.AvailabilityV2.Catalog)
+		channelTest.GET("/conversations", h.Admin.AvailabilityV2.ListConversations)
+		channelTest.POST("/conversations", h.Admin.AvailabilityV2.CreateConversation)
+		channelTest.GET("/conversations/:id", h.Admin.AvailabilityV2.GetConversation)
+		channelTest.POST("/conversations/:id/turns/stream", h.Admin.AvailabilityV2.StreamTurn)
+		channelTest.POST("/conversations/:id/turns/:turn_id/cancel", h.Admin.AvailabilityV2.CancelTurn)
 	}
 }
 

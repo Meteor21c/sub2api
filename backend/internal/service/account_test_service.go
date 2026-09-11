@@ -838,7 +838,11 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// Send test_start event once. A task-invalid Agent Identity response may
 	// restart this probe after registering a replacement task.
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
-		s.sendTestStart(c, testModelID, apiURL)
+		// Advertise the model that is actually placed on the upstream wire.
+		// OAuth/Codex accounts can normalize a requested alias (for example a
+		// public GPT alias) before building the payload; V2 records the public
+		// value separately as requested_model.
+		s.sendTestStart(c, upstreamTestModelID, apiURL)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
