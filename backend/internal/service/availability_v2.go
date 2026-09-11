@@ -131,6 +131,7 @@ type AvailabilityAccount struct {
 	Platform           string `json:"platform"`
 	Status             string `json:"status"`
 	Priority           int    `json:"priority"`
+	GroupPriority      int    `json:"group_priority"`
 	LoadFactor         *int   `json:"load_factor"`
 	Concurrency        int    `json:"concurrency"`
 	Eligible           bool   `json:"eligible"`
@@ -458,14 +459,15 @@ func (s *AvailabilityV2Service) Catalog(ctx context.Context, ownerUserID, groupI
 		account := &accounts[i]
 		load := loadMap[account.ID]
 		row := AvailabilityAccount{
-			ID:          account.ID,
-			Name:        account.Name,
-			Platform:    account.Platform,
-			Status:      account.Status,
-			Priority:    availabilityAccountPriority(account, groupID),
-			LoadFactor:  account.LoadFactor,
-			Concurrency: account.Concurrency,
-			Eligible:    account.IsSchedulable(),
+			ID:            account.ID,
+			Name:          account.Name,
+			Platform:      account.Platform,
+			Status:        account.Status,
+			Priority:      account.Priority,
+			GroupPriority: availabilityGroupPriority(account, groupID),
+			LoadFactor:    account.LoadFactor,
+			Concurrency:   account.Concurrency,
+			Eligible:      account.IsSchedulable(),
 		}
 		if load != nil {
 			current := load.CurrentConcurrency
@@ -482,22 +484,7 @@ func (s *AvailabilityV2Service) Catalog(ctx context.Context, ownerUserID, groupI
 		}
 		accountRows = append(accountRows, row)
 	}
-	sort.SliceStable(accountRows, func(i, j int) bool {
-		if accountRows[i].Priority != accountRows[j].Priority {
-			return accountRows[i].Priority < accountRows[j].Priority
-		}
-		leftLoad, rightLoad := 0, 0
-		if accountRows[i].CurrentConcurrency != nil {
-			leftLoad = *accountRows[i].CurrentConcurrency
-		}
-		if accountRows[j].CurrentConcurrency != nil {
-			rightLoad = *accountRows[j].CurrentConcurrency
-		}
-		if leftLoad != rightLoad {
-			return leftLoad < rightLoad
-		}
-		return accountRows[i].ID < accountRows[j].ID
-	})
+	sortAvailabilityAccountRows(accountRows)
 	for i := range accountRows {
 		accountRows[i].Rank = i + 1
 	}
@@ -506,7 +493,7 @@ func (s *AvailabilityV2Service) Catalog(ctx context.Context, ownerUserID, groupI
 	return &AvailabilityCatalog{
 		Accounts:       accountRows,
 		Models:         models,
-		SchedulingNote: "Rank is the current scheduler order by group account priority, live concurrency, and account ID. It is an order, not a probability; runtime rate limits, model capability, and other scheduler constraints still apply.",
+		SchedulingNote: "Rank is the current scheduler order by group priority, account priority, live concurrency, and account ID. It is an order, not a probability; runtime rate limits, model capability, and other scheduler constraints still apply.",
 	}, nil
 }
 
@@ -540,7 +527,7 @@ func accountBelongsToAvailabilityGroup(account *Account, groupID int64) bool {
 	return false
 }
 
-func availabilityAccountPriority(account *Account, groupID int64) int {
+func availabilityGroupPriority(account *Account, groupID int64) int {
 	if account == nil {
 		return 0
 	}
@@ -550,6 +537,28 @@ func availabilityAccountPriority(account *Account, groupID int64) int {
 		}
 	}
 	return account.Priority
+}
+
+func sortAvailabilityAccountRows(accounts []AvailabilityAccount) {
+	sort.SliceStable(accounts, func(i, j int) bool {
+		if accounts[i].GroupPriority != accounts[j].GroupPriority {
+			return accounts[i].GroupPriority < accounts[j].GroupPriority
+		}
+		if accounts[i].Priority != accounts[j].Priority {
+			return accounts[i].Priority < accounts[j].Priority
+		}
+		leftLoad, rightLoad := 0, 0
+		if accounts[i].CurrentConcurrency != nil {
+			leftLoad = *accounts[i].CurrentConcurrency
+		}
+		if accounts[j].CurrentConcurrency != nil {
+			rightLoad = *accounts[j].CurrentConcurrency
+		}
+		if leftLoad != rightLoad {
+			return leftLoad < rightLoad
+		}
+		return accounts[i].ID < accounts[j].ID
+	})
 }
 
 func availabilityAccountIneligibleReason(account *Account) string {

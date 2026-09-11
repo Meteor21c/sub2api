@@ -1,15 +1,15 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
-      <header class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 px-5 py-6 text-white shadow-sm sm:px-7">
-        <div class="relative z-10 flex flex-wrap items-start justify-between gap-5">
+    <div class="space-y-4">
+      <header class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 px-5 py-3 text-white shadow-sm sm:px-6">
+        <div class="relative z-10 flex flex-wrap items-start justify-between gap-3">
           <div class="max-w-3xl">
-            <div class="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-indigo-200">
+            <div class="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-200">
               <Icon name="beaker" size="sm" />
               {{ t('admin.channelTest.eyebrow') }}
             </div>
-            <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">{{ t('admin.channelTest.title') }}</h1>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
+            <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">{{ t('admin.channelTest.title') }}</h1>
+            <p class="mt-1 max-w-2xl text-xs leading-5 text-slate-300 sm:text-sm">
               {{ t('admin.channelTest.description') }}
             </p>
           </div>
@@ -28,8 +28,8 @@
         <div class="pointer-events-none absolute bottom-[-5rem] left-1/3 h-40 w-64 rounded-full bg-cyan-400/10 blur-3xl" aria-hidden="true"></div>
       </header>
 
-      <section class="card p-5 sm:p-6" data-testid="availability-group-panel">
-        <div class="flex flex-wrap items-start justify-between gap-4">
+      <section class="card grid gap-3 p-3 lg:grid-cols-[minmax(10rem,0.7fr)_minmax(17rem,1.1fr)_minmax(13rem,1fr)] lg:items-end" data-testid="availability-group-panel">
+        <div class="flex flex-wrap items-start justify-between gap-2 lg:block">
           <div>
             <div class="flex items-center gap-2">
               <span class="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300">
@@ -37,9 +37,9 @@
               </span>
               <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.channelTest.groupTitle') }}</h2>
             </div>
-            <p class="mt-2 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.groupHint') }}</p>
+            <p class="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.groupHint') }}</p>
           </div>
-          <div v-if="selectedGroup" class="flex flex-wrap items-center gap-2 text-xs">
+          <div v-if="selectedGroup" class="flex flex-wrap items-center gap-2 text-xs lg:mt-2">
             <span class="badge badge-gray">{{ selectedGroup.platform }}</span>
             <span :class="selectedGroup.status === 'active' ? 'badge badge-success' : 'badge badge-danger'">
               {{ selectedGroup.status }}
@@ -47,7 +47,7 @@
           </div>
         </div>
 
-        <div class="mt-5 grid gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-end">
+        <div class="contents">
           <label class="block">
             <span class="input-label">{{ t('admin.channelTest.activeGroup') }}</span>
             <select
@@ -62,7 +62,7 @@
               </option>
             </select>
           </label>
-          <div class="rounded-2xl border border-gray-200 bg-gray-50/80 px-4 py-3 dark:border-dark-700 dark:bg-dark-900/40">
+          <div class="rounded-xl border border-gray-200 bg-gray-50/80 px-3 py-2 dark:border-dark-700 dark:bg-dark-900/40">
             <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               <span>{{ t('admin.channelTest.scheduler') }}</span>
               <span v-if="loadingCatalog" class="text-indigo-600 dark:text-indigo-300">{{ t('admin.channelTest.loading') }}</span>
@@ -74,7 +74,7 @@
           </div>
         </div>
 
-        <div v-if="pageError" class="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200" role="alert">
+        <div v-if="pageError" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200 lg:col-span-3" role="alert">
           {{ pageError }}
         </div>
       </section>
@@ -89,10 +89,9 @@
       </div>
 
       <template v-else>
-        <div class="grid min-w-0 grid-cols-1 gap-6 2xl:grid-cols-[21rem_minmax(0,1fr)]">
-          <aside class="min-w-0 space-y-6">
-            <section class="card overflow-hidden" data-testid="availability-accounts-panel">
-              <div class="border-b border-gray-200 px-5 py-4 dark:border-dark-700">
+        <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(13rem,0.95fr)_minmax(14rem,1fr)_minmax(15rem,1.1fr)] lg:items-stretch">
+            <section class="card flex min-h-0 flex-col overflow-hidden lg:h-[calc(100vh-23rem)] lg:min-h-[28rem] lg:max-h-[40rem]" data-testid="availability-accounts-panel">
+              <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
                 <div class="flex items-start justify-between gap-3">
                   <div>
                     <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.channelTest.accountsTitle') }}</h2>
@@ -100,7 +99,7 @@
                   </div>
                   <span class="badge badge-gray whitespace-nowrap">{{ t('admin.channelTest.accountsCount', { count: accounts.length }) }}</span>
                 </div>
-                <label class="relative mt-4 block">
+                <label class="relative mt-3 block">
                   <span class="sr-only">{{ t('admin.channelTest.searchAccounts') }}</span>
                   <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
@@ -113,7 +112,7 @@
                 </label>
               </div>
 
-              <div class="availability-scrollbar max-h-[min(44vh,540px)] space-y-2 overflow-y-auto p-3">
+              <div class="availability-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
                 <button
                   type="button"
                   data-testid="availability-account-auto"
@@ -152,7 +151,7 @@
                 <article
                   v-for="account in filteredAccounts"
                   :key="account.id"
-                  class="rounded-2xl border p-3 transition"
+                  class="rounded-xl border p-2.5 transition"
                   :class="selectedAccountId === account.id
                     ? 'border-indigo-400 bg-indigo-50/70 ring-2 ring-indigo-100 dark:border-indigo-500 dark:bg-indigo-900/20 dark:ring-indigo-900/40'
                     : 'border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900'"
@@ -165,51 +164,37 @@
                     :aria-pressed="selectedAccountId === account.id"
                     @click="selectAccount(account)"
                   >
-                    <span class="flex items-start gap-3">
-                      <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-xs font-bold tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300">
+                    <span class="flex items-start gap-2.5">
+                      <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-[11px] font-bold tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300" :title="t('admin.channelTest.rank')">
                         #{{ account.rank }}
                       </span>
                       <span class="min-w-0 flex-1">
-                        <span class="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-                          <span class="truncate">{{ account.name }}</span>
-                          <span :class="account.eligible ? 'badge badge-success' : 'badge badge-danger'">
+                        <span class="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
+                          <span class="truncate" :title="account.name">{{ account.name }}</span>
+                          <span class="shrink-0" :class="account.eligible ? 'badge badge-success' : 'badge badge-danger'">
                             {{ account.eligible ? t('admin.channelTest.eligible') : t('admin.channelTest.unavailable') }}
                           </span>
                         </span>
-                        <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ account.platform }} · {{ account.status }}</span>
+                        <span class="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                          <span>{{ account.platform }} · {{ account.status }}</span>
+                          <span class="rounded bg-gray-100 px-1.5 py-0.5 tabular-nums dark:bg-dark-800">
+                            {{ t('admin.channelTest.groupPriority') }} {{ account.group_priority }}
+                          </span>
+                        </span>
                       </span>
                     </span>
                   </button>
 
-                  <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <div class="rounded-xl bg-gray-50 px-2.5 py-2 dark:bg-dark-800/80">
-                      <div class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.priority') }}</div>
-                      <div class="mt-0.5 font-semibold tabular-nums text-gray-900 dark:text-white">{{ account.priority }}</div>
-                    </div>
-                    <div class="rounded-xl bg-gray-50 px-2.5 py-2 dark:bg-dark-800/80">
-                      <div class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.loadFactor') }}</div>
-                      <div class="mt-0.5 font-semibold tabular-nums text-gray-900 dark:text-white">{{ formatLoadFactor(account.load_factor) }}</div>
-                    </div>
-                    <div class="rounded-xl bg-gray-50 px-2.5 py-2 dark:bg-dark-800/80">
-                      <div class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.concurrency') }}</div>
-                      <div class="mt-0.5 font-semibold tabular-nums text-gray-900 dark:text-white">{{ formatConcurrency(account) }}</div>
-                    </div>
-                    <div class="rounded-xl bg-gray-50 px-2.5 py-2 dark:bg-dark-800/80">
-                      <div class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.rankBasis') }}</div>
-                      <div class="mt-0.5 truncate font-semibold text-gray-900 dark:text-white">{{ t('admin.channelTest.serverRank') }}</div>
-                    </div>
-                  </div>
-
-                  <div class="mt-3 grid gap-2 sm:grid-cols-2 2xl:grid-cols-1" @click.stop>
+                  <div class="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2" @click.stop>
                     <label class="block">
-                      <span class="mb-1 block text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.priority') }}</span>
+                      <span class="mb-0.5 block text-[10px] font-medium text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.priority') }}</span>
                       <input
                         :value="accountFieldValue(account, 'priority')"
                         :data-testid="`availability-account-${account.id}-priority`"
                         type="number"
                         min="0"
                         step="1"
-                        class="input w-full px-2.5 py-1.5 text-xs"
+                        class="input w-full px-2 py-1 text-xs"
                         :disabled="isAccountFieldSaving(account.id, 'priority') || running || sendPending"
                         @input="updateAccountDraft(account, 'priority', $event)"
                         @blur="commitAccountField(account, 'priority')"
@@ -218,7 +203,7 @@
                       />
                     </label>
                     <label class="block">
-                      <span class="mb-1 block text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.loadFactor') }} / {{ t('admin.channelTest.weight') }}</span>
+                      <span class="mb-0.5 block text-[10px] font-medium text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.loadFactor') }}</span>
                       <input
                         :value="accountFieldValue(account, 'load_factor')"
                         :data-testid="`availability-account-${account.id}-load-factor`"
@@ -226,7 +211,7 @@
                         min="0"
                         max="10000"
                         step="1"
-                        class="input w-full px-2.5 py-1.5 text-xs"
+                        class="input w-full px-2 py-1 text-xs"
                         :placeholder="account.load_factor == null ? '—' : undefined"
                         :disabled="isAccountFieldSaving(account.id, 'load_factor') || running || sendPending"
                         @input="updateAccountDraft(account, 'load_factor', $event)"
@@ -235,8 +220,12 @@
                         @keydown.esc="cancelAccountField(account, 'load_factor')"
                       />
                     </label>
+                    <div class="pb-1 text-right text-[10px] text-gray-500 dark:text-gray-400">
+                      <span class="block whitespace-nowrap">{{ t('admin.channelTest.concurrency') }}</span>
+                      <strong class="text-xs tabular-nums text-gray-800 dark:text-gray-100">{{ formatConcurrency(account) }}</strong>
+                    </div>
                   </div>
-                  <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" aria-live="polite">
+                  <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]" aria-live="polite">
                     <span v-if="accountFieldState(account.id, 'priority') === 'saving' || accountFieldState(account.id, 'load_factor') === 'saving'" class="text-indigo-600 dark:text-indigo-300">
                       {{ t('admin.channelTest.saving') }}
                     </span>
@@ -253,7 +242,7 @@
                 </article>
               </div>
 
-              <div class="border-t border-amber-200 bg-amber-50 px-5 py-3 text-xs leading-5 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-200">
+              <div class="border-t border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/10 dark:text-amber-200">
                 <div class="flex items-start gap-2">
                   <Icon name="exclamationTriangle" size="sm" class="mt-0.5 shrink-0" />
                   <span><strong>{{ t('admin.channelTest.impactWarning') }}</strong> {{ t('admin.channelTest.impactWarningDetail') }}</span>
@@ -261,8 +250,8 @@
               </div>
             </section>
 
-            <section class="card overflow-hidden" data-testid="availability-models-panel">
-              <div class="border-b border-gray-200 px-5 py-4 dark:border-dark-700">
+            <section class="card flex min-h-0 flex-col overflow-hidden lg:h-[calc(100vh-23rem)] lg:min-h-[28rem] lg:max-h-[40rem]" data-testid="availability-models-panel">
+              <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
                 <div class="flex items-start justify-between gap-3">
                   <div>
                     <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.channelTest.modelsTitle') }}</h2>
@@ -270,7 +259,7 @@
                   </div>
                   <span class="badge badge-gray whitespace-nowrap">{{ t('admin.channelTest.modelCount', { count: models.length }) }}</span>
                 </div>
-                <label class="relative mt-4 block">
+                <label class="relative mt-3 block">
                   <span class="sr-only">{{ t('admin.channelTest.searchModels') }}</span>
                   <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
@@ -282,7 +271,7 @@
                   />
                 </label>
               </div>
-              <div class="availability-scrollbar max-h-[min(42vh,500px)] space-y-2 overflow-y-auto p-3">
+              <div class="availability-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
                 <div v-if="!models.length" class="rounded-2xl border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
                   {{ loadingCatalog ? t('admin.channelTest.loading') : t('admin.channelTest.noModels') }}
                 </div>
@@ -293,7 +282,7 @@
                   v-for="model in filteredModels"
                   :key="model.id"
                   type="button"
-                  class="w-full rounded-2xl border p-3 text-left transition"
+                  class="w-full rounded-xl border p-2.5 text-left transition"
                   :class="selectedModelId === model.id
                     ? 'border-indigo-400 bg-indigo-50/70 ring-2 ring-indigo-100 dark:border-indigo-500 dark:bg-indigo-900/20 dark:ring-indigo-900/40'
                     : model.downstream_allowed === false
@@ -306,7 +295,7 @@
                 >
                   <span class="flex items-start justify-between gap-3">
                     <span class="min-w-0">
-                      <span class="block truncate text-sm font-semibold text-gray-900 dark:text-white">{{ model.id }}</span>
+                      <span class="block truncate text-sm font-semibold text-gray-900 dark:text-white" :title="model.id">{{ model.id }}</span>
                       <span v-if="model.upstream_model && model.upstream_model !== model.id" class="mt-1 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                         <span>{{ t('admin.channelTest.mappedFrom') }} {{ model.id }}</span>
                         <Icon name="arrowRight" size="xs" />
@@ -317,39 +306,35 @@
                       {{ upstreamSupportLabel(model.upstream_support) }}
                     </span>
                   </span>
-                  <span class="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                  <span class="mt-2 flex flex-wrap gap-1 text-[10px]">
                     <span class="badge" :class="model.downstream_allowed === true ? 'badge-success' : model.downstream_allowed === false ? 'badge-danger' : 'badge-gray'">
                       {{ downstreamLabel(model.downstream_allowed) }}
                     </span>
                     <span class="badge badge-gray">{{ model.mapping_effective ? t('admin.channelTest.mappingEffective') : t('admin.channelTest.passthrough') }}</span>
                     <span class="badge badge-gray">{{ t('admin.channelTest.modelAccounts', { count: model.account_ids.length }) }}</span>
                   </span>
-                  <span class="mt-3 block rounded-xl bg-gray-50 px-2.5 py-2 text-xs dark:bg-dark-800/80">
-                    <span class="block text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">{{ t('admin.channelTest.lastTest') }}</span>
+                  <span class="mt-2 block border-t border-gray-100 pt-2 text-[11px] dark:border-dark-700">
                     <template v-if="model.last_test">
-                      <span class="mt-1 block font-medium text-gray-700 dark:text-gray-200">
-                        {{ model.last_test.success ? t('common.success') : t('common.error') }} · {{ t('admin.channelTest.lastTestAt', { time: relativeTime(model.last_test.at) }) }}
+                      <span class="flex items-center justify-between gap-2 font-medium text-gray-700 dark:text-gray-200">
+                        <span>{{ model.last_test.success ? t('common.success') : t('common.error') }} · {{ t('admin.channelTest.lastTestAt', { time: relativeTime(model.last_test.at) }) }}</span>
+                        <span class="shrink-0 tabular-nums text-gray-500 dark:text-gray-400">{{ formatMs(model.last_test.first_response_ms) }} / {{ formatMs(model.last_test.total_ms) }}</span>
                       </span>
-                      <span class="mt-0.5 block text-gray-500 dark:text-gray-400" :title="formatDateTime(model.last_test.at)">
-                        {{ t('admin.channelTest.testedBy') }}: {{ model.last_test.account_name }} · {{ model.last_test.model }} · {{ formatDateTime(model.last_test.at) }}
-                      </span>
-                      <span class="mt-0.5 block text-gray-500 dark:text-gray-400">
-                        {{ t('admin.channelTest.firstResponse') }} {{ formatMs(model.last_test.first_response_ms) }} · {{ t('admin.channelTest.totalTime') }} {{ formatMs(model.last_test.total_ms) }}
+                      <span class="mt-0.5 block truncate text-gray-500 dark:text-gray-400" :title="`${model.last_test.account_name} · ${model.last_test.model} · ${formatDateTime(model.last_test.at)}`">
+                        {{ t('admin.channelTest.testedBy') }}: {{ model.last_test.account_name }} · {{ model.last_test.model }}
                       </span>
                     </template>
-                    <span v-else class="mt-1 block text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.noTest') }}</span>
+                    <span v-else class="block text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.lastTest') }} · {{ t('admin.channelTest.noTest') }}</span>
                   </span>
-                  <span class="mt-2 block truncate text-[11px] text-gray-400 dark:text-gray-500" :title="model.source">
+                  <span class="mt-1 block truncate text-[10px] text-gray-400 dark:text-gray-500" :title="model.source">
                     {{ t('admin.channelTest.modelSource') }}: {{ model.source || t('admin.channelTest.unknown') }}
                   </span>
                 </button>
                 <p class="px-1 text-[11px] leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.upstreamDirectoryNote') }}</p>
               </div>
             </section>
-          </aside>
 
-          <section class="card flex min-h-[38rem] min-w-0 flex-col overflow-hidden" data-testid="availability-conversation-panel">
-            <div class="border-b border-gray-200 px-5 py-4 dark:border-dark-700 sm:px-6">
+          <section class="card flex min-h-[28rem] min-w-0 flex-col overflow-hidden lg:h-[calc(100vh-23rem)] lg:max-h-[40rem]" data-testid="availability-conversation-panel">
+            <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div class="flex items-center gap-2">
@@ -358,7 +343,7 @@
                     </span>
                     <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.channelTest.conversationTitle') }}</h2>
                   </div>
-                  <p class="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.contextDescription') }}</p>
+                  <p class="mt-1 text-[11px] leading-4 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.contextDescription') }}</p>
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <button type="button" data-testid="availability-new-conversation" class="btn btn-secondary btn-sm" :disabled="running || sendPending" @click="newConversation">
@@ -369,7 +354,7 @@
                   </button>
                 </div>
               </div>
-              <div class="mt-4 flex flex-wrap items-center gap-2 text-xs">
+              <div class="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.conversationFor') }}:</span>
                 <span class="badge badge-gray">{{ selectedAccount ? selectedAccount.name : t('admin.channelTest.automaticAccount') }}</span>
                 <span class="badge badge-gray">{{ selectedModelId || t('admin.channelTest.selectModelToChat') }}</span>
@@ -379,7 +364,7 @@
               </div>
             </div>
 
-            <div class="min-h-0 flex-1 px-5 py-5 sm:px-6">
+            <div class="availability-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-3">
               <div v-if="conversationLoading" class="flex min-h-72 items-center justify-center text-sm text-gray-500 dark:text-gray-400" aria-live="polite">
                 {{ t('admin.channelTest.conversationLoading') }}
               </div>
@@ -387,7 +372,7 @@
                 <div v-if="!turns.length" class="rounded-2xl border border-dashed border-gray-300 px-5 py-12 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
                   {{ t('admin.channelTest.conversationNotStarted') }}
                 </div>
-                <div v-else class="availability-scrollbar max-h-[min(58vh,680px)] space-y-4 overflow-y-auto pr-1" data-testid="availability-turns">
+                <div v-else class="space-y-4 pr-1" data-testid="availability-turns">
                   <article v-for="turn in turns" :key="String(turn.id)" class="space-y-3 rounded-2xl border border-gray-200 p-4 dark:border-dark-700" :data-testid="`availability-turn-${turn.id}`">
                     <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
                       <div class="flex flex-wrap items-center gap-2">
@@ -511,18 +496,18 @@
               </div>
             </div>
 
-            <form class="border-t border-gray-200 bg-gray-50/70 p-5 dark:border-dark-700 dark:bg-dark-900/30 sm:p-6" @submit.prevent="sendTurn">
+            <form class="border-t border-gray-200 bg-gray-50/70 p-3 dark:border-dark-700 dark:bg-dark-900/30" @submit.prevent="sendTurn">
               <label for="availability-prompt" class="input-label">{{ t('admin.channelTest.prompt') }}</label>
               <textarea
                 id="availability-prompt"
                 v-model="prompt"
                 data-testid="availability-prompt"
-                rows="3"
-                class="input mt-2 w-full resize-y leading-6"
+                rows="2"
+                class="input mt-1.5 w-full resize-y leading-5"
                 :placeholder="t('admin.channelTest.promptPlaceholder')"
                 :disabled="running || sendPending"
               ></textarea>
-              <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
                 <span v-if="!selectedModelId" class="text-xs text-amber-700 dark:text-amber-300">{{ t('admin.channelTest.selectModelToChat') }}</span>
                 <span v-else-if="selectedModel?.downstream_allowed === false" class="text-xs text-red-600 dark:text-red-300">{{ t('admin.channelTest.downstreamClosed') }}</span>
                 <span v-else class="text-xs text-gray-500 dark:text-gray-400">{{ selectedAccount ? t('admin.channelTest.explicitAccountHint') : t('admin.channelTest.autoRouteHint') }}</span>
@@ -542,8 +527,8 @@
         </div>
       </template>
 
-      <section class="card overflow-hidden" data-testid="availability-history-panel">
-          <div class="border-b border-gray-200 px-5 py-4 dark:border-dark-700 sm:px-6">
+      <details class="card overflow-hidden" data-testid="availability-history-panel">
+          <summary class="cursor-pointer list-none px-4 py-3 marker:hidden">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div class="flex items-center gap-2">
@@ -553,11 +538,16 @@
                   <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.channelTest.historyTitle') }}</h2>
                   <span class="badge badge-success">{{ t('admin.channelTest.permanent') }}</span>
                 </div>
-                <p class="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.historyHint') }}</p>
+                <p class="mt-1 text-[11px] leading-4 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.historyHint') }}</p>
               </div>
-              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.totalConversations', { count: historyTotal }) }}</span>
+              <span class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.channelTest.totalConversations', { count: historyTotal }) }}
+                <Icon name="chevronDown" size="sm" class="history-chevron transition-transform" />
+              </span>
             </div>
-            <label class="relative mt-4 block max-w-xl">
+          </summary>
+          <div class="border-t border-gray-200 px-4 py-3 dark:border-dark-700">
+            <label class="relative block max-w-xl">
               <span class="sr-only">{{ t('admin.channelTest.searchHistory') }}</span>
               <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
@@ -615,7 +605,7 @@
               {{ t('admin.channelTest.next') }}<Icon name="chevronRight" size="sm" class="ml-1" />
             </button>
           </div>
-      </section>
+      </details>
     </div>
   </AppLayout>
 </template>
@@ -1007,11 +997,6 @@ async function commitAccountField(account: AvailabilityAccount, field: AccountFi
   } finally {
     accountSaving.delete(key)
   }
-}
-
-function formatLoadFactor(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '—'
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value)
 }
 
 function formatConcurrency(account: AvailabilityAccount): string {
@@ -1619,5 +1604,9 @@ onUnmounted(() => {
 .availability-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: rgba(148, 163, 184, 0.55) transparent;
+}
+
+details[open] .history-chevron {
+  transform: rotate(180deg);
 }
 </style>

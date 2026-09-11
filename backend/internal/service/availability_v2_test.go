@@ -152,6 +152,42 @@ func (r *availabilityV2TestRepo) ListRecentTests(context.Context, int64, int64, 
 	return []AvailabilityLastTest{}, nil
 }
 
+func TestAvailabilityAccountPrioritiesStayDistinct(t *testing.T) {
+	account := &Account{
+		ID:       7,
+		Priority: 40,
+		AccountGroups: []AccountGroup{
+			{GroupID: 12, Priority: 1},
+		},
+	}
+
+	if got := availabilityGroupPriority(account, 12); got != 1 {
+		t.Fatalf("group priority = %d, want 1", got)
+	}
+	if account.Priority != 40 {
+		t.Fatalf("account priority = %d, want 40", account.Priority)
+	}
+}
+
+func TestSortAvailabilityAccountRowsUsesGroupThenAccountPriority(t *testing.T) {
+	load0, load1 := 0, 1
+	rows := []AvailabilityAccount{
+		{ID: 1, Priority: 10, GroupPriority: 2, CurrentConcurrency: &load0},
+		{ID: 2, Priority: 50, GroupPriority: 1, CurrentConcurrency: &load0},
+		{ID: 3, Priority: 20, GroupPriority: 1, CurrentConcurrency: &load1},
+		{ID: 4, Priority: 20, GroupPriority: 1, CurrentConcurrency: &load0},
+	}
+
+	sortAvailabilityAccountRows(rows)
+
+	want := []int64{4, 3, 2, 1}
+	for i, id := range want {
+		if rows[i].ID != id {
+			t.Fatalf("row[%d].ID = %d, want %d", i, rows[i].ID, id)
+		}
+	}
+}
+
 func TestAvailabilityAttemptTrackerPersistsOrderedEvents(t *testing.T) {
 	repo := &availabilityV2TestRepo{}
 	svc := &AvailabilityV2Service{repo: repo}

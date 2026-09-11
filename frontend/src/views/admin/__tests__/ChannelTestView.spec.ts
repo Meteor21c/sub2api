@@ -53,6 +53,7 @@ const catalog = {
       platform: 'openai',
       status: 'active',
       priority: 10,
+      group_priority: 1,
       load_factor: 3,
       concurrency: 4,
       current_concurrency: 1,
@@ -66,6 +67,7 @@ const catalog = {
       platform: 'openai',
       status: 'active',
       priority: 20,
+      group_priority: 2,
       load_factor: null,
       concurrency: 2,
       current_concurrency: 2,
@@ -197,8 +199,9 @@ describe('Availability V2 administrator page', () => {
     expect(wrapper.text()).toContain('first account')
     expect(wrapper.text()).toContain('second account')
     expect(wrapper.text()).toContain('server scheduler order')
-    expect(wrapper.text()).toContain('10')
-    expect(wrapper.text()).toContain('3')
+    expect(wrapper.text()).toContain('admin.channelTest.groupPriority 1')
+    expect((wrapper.get('[data-testid="availability-account-7-priority"]').element as HTMLInputElement).value).toBe('10')
+    expect((wrapper.get('[data-testid="availability-account-7-load-factor"]').element as HTMLInputElement).value).toBe('3')
     expect(wrapper.find('[data-testid="availability-account-7"]').exists()).toBe(true)
     expect(localStorage.getItem('sub2api.admin.channel-test.history')).toBeNull()
     wrapper.unmount()

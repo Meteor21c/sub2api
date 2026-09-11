@@ -29,7 +29,10 @@ export interface AvailabilityAccount {
   name: string
   platform: string
   status: string
+  /** Account-level priority, matching the value editable on the account page. */
   priority: number
+  /** Priority of this account's binding inside the selected group. */
+  group_priority: number
   load_factor: number | null
   concurrency: number
   eligible: boolean
