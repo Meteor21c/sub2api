@@ -1199,7 +1199,7 @@ func (t *availabilityAttemptTracker) observeContent(event TestEvent) {
 	if t.attemptFirstResponseAt.IsZero() {
 		t.attemptFirstResponseAt = now
 	}
-	t.content.WriteString(event.Text)
+	_, _ = t.content.WriteString(event.Text)
 	if t.current != nil && t.current.FirstResponseMs == nil {
 		ms := nonNegativeDurationMs(t.attemptFirstResponseAt.Sub(t.current.StartedAt))
 		t.current.FirstResponseMs = &ms
@@ -1288,7 +1288,7 @@ func (t *availabilityAttemptTracker) applyResult(result *AccountTestDebugResult)
 		return
 	}
 	if t.content.Len() == 0 && result.Content != "" {
-		t.content.WriteString(result.Content)
+		_, _ = t.content.WriteString(result.Content)
 	}
 	if len(t.attempts) == t.initialAttemptCount && len(result.Attempts) > 0 {
 		// A failure can happen before the tester emits test_start (for example,
@@ -1450,7 +1450,7 @@ func (s *AvailabilityV2Service) runAvailabilityTurn(run *availabilityRun, ownerU
 		// observability, but make the durable answer (and future context) the
 		// final successful probe response rather than a concatenated half-answer.
 		tracker.content.Reset()
-		tracker.content.WriteString(result.Content)
+		_, _ = tracker.content.WriteString(result.Content)
 	}
 
 	status := AvailabilityTurnSucceeded
@@ -1625,11 +1625,12 @@ func (s *AvailabilityV2Service) finalizeAvailabilityTurn(run *availabilityRun, o
 	if finalTurn.Status != AvailabilityTurnSucceeded && finalTurn.Status != AvailabilityTurnFailed && finalTurn.Status != AvailabilityTurnCancelled {
 		finalTurn.Status = status
 	}
-	if finalTurn.Status == AvailabilityTurnCancelled {
+	switch finalTurn.Status {
+	case AvailabilityTurnCancelled:
 		status = AvailabilityTurnCancelled
-	} else if finalTurn.Status == AvailabilityTurnSucceeded {
+	case AvailabilityTurnSucceeded:
 		status = AvailabilityTurnSucceeded
-	} else {
+	default:
 		status = AvailabilityTurnFailed
 	}
 
@@ -1637,9 +1638,10 @@ func (s *AvailabilityV2Service) finalizeAvailabilityTurn(run *availabilityRun, o
 		return
 	}
 	terminalType := AvailabilityEventTurnFailed
-	if status == AvailabilityTurnSucceeded {
+	switch status {
+	case AvailabilityTurnSucceeded:
 		terminalType = AvailabilityEventTurnCompleted
-	} else if status == AvailabilityTurnCancelled {
+	case AvailabilityTurnCancelled:
 		terminalType = AvailabilityEventTurnCancelled
 	}
 	_ = s.emitAvailabilityEvent(run, ownerUserID, AvailabilityEvent{
@@ -1786,9 +1788,10 @@ func (s *AvailabilityV2Service) appendStandaloneTerminalEvent(ctx context.Contex
 		}
 	}
 	eventType := AvailabilityEventTurnCancelled
-	if turn.Status == AvailabilityTurnSucceeded {
+	switch turn.Status {
+	case AvailabilityTurnSucceeded:
 		eventType = AvailabilityEventTurnCompleted
-	} else if turn.Status == AvailabilityTurnFailed {
+	case AvailabilityTurnFailed:
 		eventType = AvailabilityEventTurnFailed
 	}
 	_ = s.repo.AppendEvent(ctx, ownerUserID, AvailabilityEvent{
