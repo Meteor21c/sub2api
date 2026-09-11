@@ -36,6 +36,7 @@ import riskControlAPI from './riskControl'
 import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
 import pluginsAPI from './plugins'
+import availabilityAPI from './availability'
 
 /**
  * Unified admin API object for convenient access
@@ -73,7 +74,8 @@ export const adminAPI = {
   riskControl: riskControlAPI,
   compliance: adminComplianceAPI,
   audit: auditAPI,
-  plugins: pluginsAPI
+  plugins: pluginsAPI,
+  availability: availabilityAPI
 }
 
 export {
@@ -109,7 +111,8 @@ export {
   riskControlAPI,
   adminComplianceAPI,
   auditAPI,
-  pluginsAPI
+  pluginsAPI,
+  availabilityAPI
 }
 
 export default adminAPI
@@ -127,3 +130,23 @@ export type {
   PluginUISession,
   PluginTestResult
 } from './plugins'
+export type {
+  AvailabilityAccount,
+  AvailabilityAttempt,
+  AvailabilityCatalog,
+  AvailabilityConversation,
+  AvailabilityConversationDetail,
+  AvailabilityConversationPage,
+  AvailabilityEvent,
+  AvailabilityEventType,
+  AvailabilityLastTest,
+  AvailabilityModel,
+  AvailabilityStatus,
+  ListConversationsParams,
+  StreamTurnOptions,
+  AvailabilityTurn,
+  StreamTurnPayload,
+  StreamTurnResult,
+  TurnStatus,
+  UpstreamSupport
+} from './availability'
