@@ -89,7 +89,7 @@
       </div>
 
       <template v-else>
-        <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(13rem,0.95fr)_minmax(14rem,1fr)_minmax(15rem,1.1fr)] lg:items-stretch">
+        <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch">
             <section class="card flex min-h-0 flex-col overflow-hidden lg:h-[calc(100vh-23rem)] lg:min-h-[28rem] lg:max-h-[40rem]" data-testid="availability-accounts-panel">
               <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
                 <div class="flex items-start justify-between gap-3">
@@ -333,7 +333,7 @@
               </div>
             </section>
 
-          <section class="card flex min-h-[28rem] min-w-0 flex-col overflow-hidden lg:h-[calc(100vh-23rem)] lg:max-h-[40rem]" data-testid="availability-conversation-panel">
+          <section class="card flex min-h-[28rem] min-w-0 flex-col overflow-hidden lg:col-span-2 lg:h-[calc(100vh-23rem)] lg:max-h-[40rem]" data-testid="availability-conversation-panel">
             <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
