@@ -378,9 +378,6 @@
                       <div class="flex flex-wrap items-center gap-2">
                         <span class="font-semibold text-gray-700 dark:text-gray-200">#{{ turn.id }}</span>
                         <span class="badge" :class="turnStatusClass(turn.status)">{{ turnStatusLabel(turn.status) }}</span>
-                        <span v-if="turnActualAttempt(turn)" class="text-gray-500 dark:text-gray-400">
-                          {{ t('admin.channelTest.actualRoute') }}: {{ turnActualAttempt(turn)?.account_name }} · {{ turnActualAttempt(turn)?.model }}
-                        </span>
                       </div>
                       <div class="flex flex-wrap gap-x-3 gap-y-1 text-gray-500 dark:text-gray-400">
                         <span>{{ t('admin.channelTest.firstResponse') }} {{ formatMs(turn.first_response_ms) }}</span>
@@ -406,37 +403,6 @@
                       {{ turn.error }}
                     </div>
 
-                    <details v-if="turn.attempts.length" open class="rounded-2xl border border-gray-200 dark:border-dark-700">
-                      <summary class="cursor-pointer list-none px-4 py-3 text-sm font-medium text-gray-700 dark:text-gray-200">
-                        <span class="flex flex-wrap items-center justify-between gap-2">
-                          <span>{{ t('admin.channelTest.attemptsTitle') }}</span>
-                          <span class="badge badge-gray">{{ turn.attempts.length }}</span>
-                        </span>
-                      </summary>
-                      <div class="space-y-2 border-t border-gray-200 p-3 dark:border-dark-700">
-                        <div v-for="attempt in orderedAttempts(turn.attempts)" :key="String(attempt.id)" class="rounded-xl bg-gray-50 px-3 py-3 text-xs dark:bg-dark-800/80">
-                          <div class="flex flex-wrap items-center gap-2">
-                            <span class="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 font-semibold tabular-nums text-gray-600 shadow-sm dark:bg-dark-700 dark:text-gray-200">{{ attempt.index }}</span>
-                            <span class="font-semibold text-gray-800 dark:text-gray-100">{{ attempt.account_name }}</span>
-                            <span class="badge" :class="attemptStatusClass(attempt.status)">{{ attemptStatusLabel(attempt.status) }}</span>
-                            <span v-if="attempt.status_code" class="text-gray-500 dark:text-gray-400">HTTP {{ attempt.status_code }}</span>
-                          </div>
-                          <div class="mt-2 grid gap-x-4 gap-y-1 text-gray-500 dark:text-gray-400 sm:grid-cols-2">
-                            <span>{{ t('admin.channelTest.requestedModel') }}: {{ attempt.requested_model }}</span>
-                            <span>{{ t('admin.channelTest.upstreamModel') }}: {{ attempt.model }}</span>
-                            <span>{{ t('admin.channelTest.startedAt') }}: {{ formatDateTime(attempt.started_at) }}</span>
-                            <span>{{ t('admin.channelTest.firstResponse') }}: {{ formatMs(attempt.first_response_ms) }} · {{ t('admin.channelTest.totalTime') }}: {{ formatMs(attempt.total_ms) }}</span>
-                          </div>
-                          <code v-if="attempt.endpoint" class="mt-2 block break-all rounded-lg bg-white px-2 py-1.5 font-mono text-[11px] text-gray-600 dark:bg-dark-900 dark:text-gray-300">{{ attempt.endpoint }}</code>
-                          <div v-if="attempt.reason || attempt.error" class="mt-2 break-words text-red-600 dark:text-red-300">
-                            <span v-if="attempt.reason">{{ t('admin.channelTest.reason') }}: {{ attempt.reason }}</span>
-                            <span v-if="attempt.reason && attempt.error"> · </span>
-                            <span v-if="attempt.error">{{ t('admin.channelTest.error') }}: {{ attempt.error }}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </details>
-                    <div v-else class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.noAttempts') }}</div>
                   </article>
                 </div>
                 <button v-if="hasMoreTurns" type="button" class="btn btn-secondary w-full" :disabled="loadingMoreTurns" @click="loadMoreTurns">
@@ -447,53 +413,6 @@
                 {{ t('admin.channelTest.conversationNotStarted') }}
               </div>
 
-              <div v-if="liveEvents.length" class="mt-5 rounded-2xl border border-cyan-200 bg-cyan-50/50 p-4 dark:border-cyan-900/50 dark:bg-cyan-900/10" data-testid="availability-events">
-                <div class="flex items-center justify-between gap-3">
-                  <h3 class="text-sm font-semibold text-cyan-950 dark:text-cyan-100">{{ t('admin.channelTest.eventTimeline') }}</h3>
-                  <span v-if="streamStatus !== 'idle'" class="badge" :class="streamStatusClass(streamStatus)">{{ streamStatusLabel(streamStatus) }}</span>
-                </div>
-                <ol class="availability-scrollbar mt-3 max-h-52 space-y-2 overflow-y-auto pr-1" aria-live="polite">
-                  <li v-for="event in liveEvents" :key="`${event.seq}-${event.type}`" class="flex items-start gap-2 text-xs leading-5 text-cyan-950 dark:text-cyan-100">
-                    <span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-500"></span>
-                    <span class="min-w-0">
-                      <span class="font-semibold">{{ eventLabel(event.type) }}</span>
-                      <span v-if="event.attempt" class="text-cyan-800 dark:text-cyan-200">
-                        · {{ event.attempt.account_name }} · {{ event.attempt.model }}
-                        <span v-if="event.attempt.index > 1"> · {{ t('admin.channelTest.retryAttempt') }}</span>
-                      </span>
-                      <span v-if="event.attempt?.endpoint" class="text-cyan-700 dark:text-cyan-300"> · {{ event.attempt.endpoint }}</span>
-                      <span v-if="event.attempt?.reason || event.attempt?.error || event.error" class="block break-words text-red-700 dark:text-red-300">
-                        {{ event.attempt?.reason || event.attempt?.error || event.error }}
-                      </span>
-                    </span>
-                  </li>
-                </ol>
-              </div>
-
-              <div v-if="streamError" class="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200" role="alert">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                  <div class="flex min-w-0 items-start gap-2">
-                    <Icon name="exclamationCircle" size="sm" class="mt-0.5 shrink-0" />
-                    <span class="break-words">{{ streamError }}</span>
-                  </div>
-                  <div v-if="streamStatus === 'disconnected'" class="flex shrink-0 flex-wrap gap-3 text-xs font-semibold">
-                    <button
-                      v-if="pendingStreamRequest"
-                      type="button"
-                      data-testid="availability-reconnect"
-                      class="underline underline-offset-2"
-                      :disabled="running || conversationLoading"
-                      @click="resumeTurn"
-                    >
-                      {{ t('admin.channelTest.reconnect') }}
-                    </button>
-                    <button type="button" class="underline underline-offset-2" :disabled="conversationLoading" @click="refreshConversationStatus">
-                      {{ t('admin.channelTest.refreshStatus') }}
-                    </button>
-                  </div>
-                </div>
-                <p v-if="streamStatus === 'disconnected'" class="mt-2 pl-6 text-xs leading-5">{{ t('admin.channelTest.disconnectedHint') }}</p>
-              </div>
             </div>
 
             <form class="border-t border-gray-200 bg-gray-50/70 p-3 dark:border-dark-700 dark:bg-dark-900/30" @submit.prevent="sendTurn">
@@ -523,6 +442,123 @@
                 </div>
               </div>
             </form>
+          </section>
+
+          <section v-if="liveEvents.length || streamError" class="card min-w-0 overflow-hidden lg:col-span-1" data-testid="availability-events-panel">
+            <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex min-w-0 items-start gap-2.5">
+                  <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+                    <Icon name="arrowsUpDown" size="sm" />
+                  </span>
+                  <div class="min-w-0">
+                    <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.channelTest.eventTimeline') }}</h2>
+                    <p class="mt-1 text-[11px] leading-4 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.routeEventsHint') }}</p>
+                  </div>
+                </div>
+                <span v-if="streamStatus !== 'idle'" class="badge shrink-0" :class="streamStatusClass(streamStatus)">{{ streamStatusLabel(streamStatus) }}</span>
+              </div>
+            </div>
+
+            <div class="availability-scrollbar max-h-[32rem] overflow-y-auto p-4">
+              <ol v-if="liveEvents.length" class="space-y-2" aria-live="polite" data-testid="availability-events">
+                <li v-for="event in liveEvents" :key="`${event.seq}-${event.type}`" class="flex items-start gap-2 rounded-xl bg-cyan-50/70 px-3 py-2.5 text-xs leading-5 text-cyan-950 dark:bg-cyan-900/10 dark:text-cyan-100">
+                  <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-500"></span>
+                  <span class="min-w-0">
+                    <span class="font-semibold">{{ eventLabel(event.type) }}</span>
+                    <span v-if="event.attempt" class="text-cyan-800 dark:text-cyan-200">
+                      · {{ event.attempt.account_name }} · {{ event.attempt.model }}
+                      <span v-if="event.attempt.index > 1"> · {{ t('admin.channelTest.retryAttempt') }}</span>
+                    </span>
+                    <span v-if="event.attempt?.endpoint" class="text-cyan-700 dark:text-cyan-300"> · {{ event.attempt.endpoint }}</span>
+                    <span v-if="event.attempt?.reason || event.attempt?.error || event.error" class="block break-words text-red-700 dark:text-red-300">
+                      {{ event.attempt?.reason || event.attempt?.error || event.error }}
+                    </span>
+                  </span>
+                </li>
+              </ol>
+              <div v-else class="rounded-xl border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400">
+                {{ t('admin.channelTest.noEvents') }}
+              </div>
+
+              <div v-if="streamError" class="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200" role="alert">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div class="flex min-w-0 items-start gap-2">
+                    <Icon name="exclamationCircle" size="sm" class="mt-0.5 shrink-0" />
+                    <span class="break-words">{{ streamError }}</span>
+                  </div>
+                  <div v-if="streamStatus === 'disconnected'" class="flex shrink-0 flex-wrap gap-3 text-xs font-semibold">
+                    <button
+                      v-if="pendingStreamRequest"
+                      type="button"
+                      data-testid="availability-reconnect"
+                      class="underline underline-offset-2"
+                      :disabled="running || conversationLoading"
+                      @click="resumeTurn"
+                    >
+                      {{ t('admin.channelTest.reconnect') }}
+                    </button>
+                    <button type="button" class="underline underline-offset-2" :disabled="conversationLoading" @click="refreshConversationStatus">
+                      {{ t('admin.channelTest.refreshStatus') }}
+                    </button>
+                  </div>
+                </div>
+                <p v-if="streamStatus === 'disconnected'" class="mt-2 pl-6 text-xs leading-5">{{ t('admin.channelTest.disconnectedHint') }}</p>
+              </div>
+            </div>
+          </section>
+
+          <section v-if="turnsWithAttempts.length" class="card min-w-0 overflow-hidden lg:col-span-1" data-testid="availability-attempts-panel">
+            <div class="border-b border-gray-200 px-4 py-3 dark:border-dark-700">
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex min-w-0 items-start gap-2.5">
+                  <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                    <Icon name="clipboard" size="sm" />
+                  </span>
+                  <div class="min-w-0">
+                    <h2 class="text-base font-semibold text-gray-900 dark:text-white">{{ t('admin.channelTest.attemptsTitle') }}</h2>
+                    <p class="mt-1 text-[11px] leading-4 text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.attemptsHint') }}</p>
+                  </div>
+                </div>
+                <span class="badge badge-gray shrink-0">{{ attemptCount }}</span>
+              </div>
+            </div>
+
+            <div class="availability-scrollbar max-h-[32rem] space-y-3 overflow-y-auto p-3">
+              <details v-for="turn in turnsWithAttempts" :key="String(turn.id)" class="rounded-2xl border border-gray-200 dark:border-dark-700" :open="String(turn.id) === String(activeTurnId)">
+                <summary class="cursor-pointer list-none px-3 py-2.5 text-xs font-medium text-gray-700 dark:text-gray-200">
+                  <span class="flex flex-wrap items-center justify-between gap-2">
+                    <span class="flex items-center gap-2">
+                      <span class="font-semibold">#{{ turn.id }}</span>
+                      <span class="badge" :class="turnStatusClass(turn.status)">{{ turnStatusLabel(turn.status) }}</span>
+                    </span>
+                    <span class="badge badge-gray">{{ turn.attempts.length }}</span>
+                  </span>
+                </summary>
+                <div class="space-y-2 border-t border-gray-200 p-3 dark:border-dark-700">
+                  <div v-for="attempt in orderedAttempts(turn.attempts)" :key="String(attempt.id)" class="rounded-xl bg-gray-50 px-3 py-3 text-xs dark:bg-dark-800/80">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 font-semibold tabular-nums text-gray-600 shadow-sm dark:bg-dark-700 dark:text-gray-200">{{ attempt.index }}</span>
+                      <span class="font-semibold text-gray-800 dark:text-gray-100">{{ attempt.account_name }}</span>
+                      <span class="badge" :class="attemptStatusClass(attempt.status)">{{ attemptStatusLabel(attempt.status) }}</span>
+                      <span v-if="attempt.status_code" class="text-gray-500 dark:text-gray-400">HTTP {{ attempt.status_code }}</span>
+                    </div>
+                    <div class="mt-2 grid gap-x-4 gap-y-1 text-gray-500 dark:text-gray-400 sm:grid-cols-2">
+                      <span>{{ t('admin.channelTest.requestedModel') }}: {{ attempt.requested_model }}</span>
+                      <span>{{ t('admin.channelTest.upstreamModel') }}: {{ attempt.model }}</span>
+                      <span>{{ t('admin.channelTest.startedAt') }}: {{ formatDateTime(attempt.started_at) }}</span>
+                      <span>{{ t('admin.channelTest.firstResponse') }}: {{ formatMs(attempt.first_response_ms) }} · {{ t('admin.channelTest.totalTime') }}: {{ formatMs(attempt.total_ms) }}</span>
+                    </div>
+                    <code v-if="attempt.endpoint" class="mt-2 block break-all rounded-lg bg-white px-2 py-1.5 font-mono text-[11px] text-gray-600 dark:bg-dark-900 dark:text-gray-300">{{ attempt.endpoint }}</code>
+                    <div v-if="attempt.reason || attempt.error" class="mt-2 break-words text-red-600 dark:text-red-300">
+                      <span v-if="attempt.reason">{{ t('admin.channelTest.reason') }}: {{ attempt.reason }}</span>
+                      <span v-if="attempt.reason && attempt.error"> · </span>
+                      <span v-if="attempt.error">{{ t('admin.channelTest.error') }}: {{ attempt.error }}</span>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </div>
           </section>
         </div>
       </template>
@@ -721,6 +757,8 @@ const filteredModels = computed(() => {
   return models.value.filter(model => `${model.id} ${model.upstream_model || ''} ${model.source}`.toLocaleLowerCase().includes(query))
 })
 const completedTurnCount = computed(() => turns.value.filter(turn => turn.status === 'succeeded').length)
+const turnsWithAttempts = computed(() => turns.value.filter(turn => turn.attempts.length > 0))
+const attemptCount = computed(() => turnsWithAttempts.value.reduce((total, turn) => total + turn.attempts.length, 0))
 const hasMoreTurns = computed(() => conversation.value != null && conversationTurnTotal.value > turns.value.length)
 const historyPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / historyPageSize)))
 const canSend = computed(() => (
@@ -1118,11 +1156,6 @@ function eventLabel(type: AvailabilityEventType): string {
 
 function orderedAttempts(attempts: AvailabilityAttempt[]): AvailabilityAttempt[] {
   return [...attempts].sort((left, right) => left.index - right.index)
-}
-
-function turnActualAttempt(turn: AvailabilityTurn): AvailabilityAttempt | null {
-  const ordered = orderedAttempts(turn.attempts)
-  return [...ordered].reverse().find(attempt => attempt.status === 'succeeded') ?? [...ordered].reverse()[0] ?? null
 }
 
 function mergeAttempts(existing: AvailabilityAttempt[], incoming: AvailabilityAttempt[]): AvailabilityAttempt[] {

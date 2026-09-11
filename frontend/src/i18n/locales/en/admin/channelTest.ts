@@ -100,6 +100,7 @@ export default {
     reconnect: 'Reconnect stream',
     refreshStatus: 'Refresh status',
     eventTimeline: 'Live route events',
+    routeEventsHint: 'The server records routing, retries and output state in real time.',
     noEvents: 'Route events will appear here.',
     attemptsTitle: 'Attempt chain',
     attemptsHint: 'Every attempt is ordered by the server and shows the actual account, model and endpoint.',

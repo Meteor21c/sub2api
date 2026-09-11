@@ -100,6 +100,7 @@ export default {
     reconnect: '重新连接流',
     refreshStatus: '刷新状态',
     eventTimeline: '实时路由事件',
+    routeEventsHint: '服务端实时记录选路、重试和输出状态。',
     noEvents: '路由事件会显示在这里。',
     attemptsTitle: '尝试链',
     attemptsHint: '每次尝试由服务端排序，展示实际账号、模型与接口。',
