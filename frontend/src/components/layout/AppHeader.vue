@@ -26,6 +26,9 @@
         <!-- Announcement Bell -->
         <AnnouncementBell v-if="user" />
 
+        <!-- MeteorAgent desktop assistant -->
+        <MeteorAgentPromo v-if="user" variant="header" />
+
         <!-- Docs Link -->
         <a
           v-if="docUrl"
@@ -258,6 +261,7 @@ import { useAdminSettingsStore } from '@/stores/adminSettings'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
+import MeteorAgentPromo from '@/components/common/MeteorAgentPromo.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'

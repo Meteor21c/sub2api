@@ -82,6 +82,7 @@
         >
           {{ isAuthenticated ? t('home.goToDashboard') : t('home.login') }}
         </router-link>
+        <MeteorAgentPromo variant="hero" class="mx-auto mt-6 max-w-xl text-left" />
       </div>
     </main>
 
@@ -224,6 +225,7 @@
                 {{ isAuthenticated ? t('home.goToDashboard') : t('home.getStarted') }}
                 <Icon name="arrowRight" size="md" class="ml-2" :stroke-width="2" />
               </router-link>
+              <MeteorAgentPromo variant="hero" class="mt-5 max-w-xl" />
             </div>
           </div>
 
@@ -499,6 +501,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
+import MeteorAgentPromo from '@/components/common/MeteorAgentPromo.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 
