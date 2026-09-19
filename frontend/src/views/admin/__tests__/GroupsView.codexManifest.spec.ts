@@ -208,6 +208,7 @@ const CodexManifestAccountsFieldStub = defineComponent({
 const mountView = () =>
   mount(GroupsView, {
     global: {
+      plugins: [createPinia()],
       stubs: {
         AppLayout: AppLayoutStub,
         TablePageLayout: TablePageLayoutStub,

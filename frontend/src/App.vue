@@ -10,6 +10,8 @@ import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, 
 import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
 import CustomPageView from '@/views/user/CustomPageView.vue'
+import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
+import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 
 const router = useRouter()
 const route = useRoute()
@@ -31,7 +33,9 @@ function updateDocumentTitle() {
     ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
     ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
   ]
-  document.title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems)
+  document.title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems, {
+    billingMode: resolveSiteBillingMode(appStore.cachedPublicSettings),
+  })
 }
 
 // Watch for site settings changes and update favicon/title
@@ -52,6 +56,8 @@ watch(
     () => route.meta.titleKey,
     () => appStore.siteName,
     () => appStore.cachedPublicSettings?.custom_menu_items,
+    () => appStore.cachedPublicSettings?.subscription_enabled,
+    () => appStore.cachedPublicSettings?.payment_balance_disabled,
     () => authStore.isAdmin,
     () => adminSettingsStore.customMenuItems,
   ],
@@ -71,6 +77,25 @@ function onAdminComplianceRequired(event: Event) {
   adminComplianceStore.requireAcknowledgement(detail)
 }
 
+// 订阅功能开关（opt-out）。关闭后不再预加载/轮询订阅接口；开关在登录后才到达时补启动，反向则清空。
+const subscriptionFeatureEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.subscription))
+
+function startSubscriptionSync() {
+  subscriptionStore.fetchActiveSubscriptions().catch((error) => {
+    console.error('Failed to preload subscriptions:', error)
+  })
+  subscriptionStore.startPolling()
+}
+
+watch(subscriptionFeatureEnabled, (enabled) => {
+  if (!authStore.isAuthenticated) return
+  if (enabled) {
+    startSubscriptionSync()
+  } else {
+    subscriptionStore.clear()
+  }
+})
+
 watch(
   () => authStore.isAuthenticated,
   (isAuthenticated, oldValue) => {
@@ -81,11 +106,11 @@ watch(
         })
       }
 
-      // User logged in: preload subscriptions and start polling
-      subscriptionStore.fetchActiveSubscriptions().catch((error) => {
-        console.error('Failed to preload subscriptions:', error)
-      })
-      subscriptionStore.startPolling()
+      // User logged in: preload subscriptions and start polling (skipped when the
+      // subscription feature is switched off; see the flag watcher below)
+      if (subscriptionFeatureEnabled.value) {
+        startSubscriptionSync()
+      }
 
       // Announcements: new login vs page refresh restore
       if (oldValue === false) {
