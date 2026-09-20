@@ -169,18 +169,22 @@ func TestAvailabilityAccountPrioritiesStayDistinct(t *testing.T) {
 	}
 }
 
-func TestSortAvailabilityAccountRowsUsesGroupThenAccountPriority(t *testing.T) {
-	load0, load1 := 0, 1
+func TestSortAvailabilityAccountRowsMatchesSchedulerPriorityLoadAndLRU(t *testing.T) {
+	load0, load20 := 0, 20
+	older := time.Now().Add(-time.Hour)
+	newer := time.Now()
 	rows := []AvailabilityAccount{
-		{ID: 1, Priority: 10, GroupPriority: 2, CurrentConcurrency: &load0},
-		{ID: 2, Priority: 50, GroupPriority: 1, CurrentConcurrency: &load0},
-		{ID: 3, Priority: 20, GroupPriority: 1, CurrentConcurrency: &load1},
-		{ID: 4, Priority: 20, GroupPriority: 1, CurrentConcurrency: &load0},
+		{ID: 1, Priority: 10, GroupPriority: 2, LoadRate: &load0},
+		{ID: 2, Priority: 50, GroupPriority: 1, LoadRate: &load0},
+		{ID: 3, Priority: 20, GroupPriority: 1, LoadRate: &load20},
+		{ID: 4, Priority: 20, GroupPriority: 1, LoadRate: &load0, LastUsedAt: &newer},
+		{ID: 5, Priority: 20, GroupPriority: 1, LoadRate: &load0, LastUsedAt: &older},
+		{ID: 6, Priority: 20, GroupPriority: 1, LoadRate: &load0},
 	}
 
 	sortAvailabilityAccountRows(rows)
 
-	want := []int64{4, 3, 2, 1}
+	want := []int64{6, 5, 4, 3, 2, 1}
 	for i, id := range want {
 		if rows[i].ID != id {
 			t.Fatalf("row[%d].ID = %d, want %d", i, rows[i].ID, id)

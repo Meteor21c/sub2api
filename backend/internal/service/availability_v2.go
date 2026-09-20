@@ -126,19 +126,22 @@ type AvailabilityEvent struct {
 }
 
 type AvailabilityAccount struct {
-	ID                 int64  `json:"id"`
-	Name               string `json:"name"`
-	Platform           string `json:"platform"`
-	Status             string `json:"status"`
-	Priority           int    `json:"priority"`
-	GroupPriority      int    `json:"group_priority"`
-	LoadFactor         *int   `json:"load_factor"`
-	Concurrency        int    `json:"concurrency"`
-	Eligible           bool   `json:"eligible"`
-	Reason             string `json:"reason,omitempty"`
-	Rank               int    `json:"rank"`
-	CurrentConcurrency *int   `json:"current_concurrency,omitempty"`
-	QueueDepth         *int   `json:"queue_depth,omitempty"`
+	ID                 int64      `json:"id"`
+	Name               string     `json:"name"`
+	Platform           string     `json:"platform"`
+	Status             string     `json:"status"`
+	Schedulable        bool       `json:"schedulable"`
+	Priority           int        `json:"priority"`
+	GroupPriority      int        `json:"group_priority"`
+	LoadFactor         *int       `json:"load_factor"`
+	LoadRate           *int       `json:"load_rate,omitempty"`
+	Concurrency        int        `json:"concurrency"`
+	Eligible           bool       `json:"eligible"`
+	Reason             string     `json:"reason,omitempty"`
+	Rank               int        `json:"rank"`
+	CurrentConcurrency *int       `json:"current_concurrency,omitempty"`
+	QueueDepth         *int       `json:"queue_depth,omitempty"`
+	LastUsedAt         *time.Time `json:"last_used_at,omitempty"`
 }
 
 type AvailabilityLastTest struct {
@@ -463,17 +466,21 @@ func (s *AvailabilityV2Service) Catalog(ctx context.Context, ownerUserID, groupI
 			Name:          account.Name,
 			Platform:      account.Platform,
 			Status:        account.Status,
+			Schedulable:   account.Schedulable,
 			Priority:      account.Priority,
 			GroupPriority: availabilityGroupPriority(account, groupID),
 			LoadFactor:    account.LoadFactor,
 			Concurrency:   account.Concurrency,
 			Eligible:      account.IsSchedulable(),
+			LastUsedAt:    account.LastUsedAt,
 		}
 		if load != nil {
 			current := load.CurrentConcurrency
 			queue := load.WaitingCount
+			loadRate := load.LoadRate
 			row.CurrentConcurrency = &current
 			row.QueueDepth = &queue
+			row.LoadRate = &loadRate
 			if load.LoadRate >= 100 {
 				row.Eligible = false
 				row.Reason = "concurrency capacity is full"
@@ -493,7 +500,7 @@ func (s *AvailabilityV2Service) Catalog(ctx context.Context, ownerUserID, groupI
 	return &AvailabilityCatalog{
 		Accounts:       accountRows,
 		Models:         models,
-		SchedulingNote: "Rank is the current scheduler order by group priority, account priority, live concurrency, and account ID. It is an order, not a probability; runtime rate limits, model capability, and other scheduler constraints still apply.",
+		SchedulingNote: "Rank follows group priority, account priority, live load rate, least-recently-used time, and account ID. It is an order, not a probability; sticky sessions, runtime rate limits, model capability, and other scheduler constraints still apply.",
 	}, nil
 }
 
@@ -547,15 +554,23 @@ func sortAvailabilityAccountRows(accounts []AvailabilityAccount) {
 		if accounts[i].Priority != accounts[j].Priority {
 			return accounts[i].Priority < accounts[j].Priority
 		}
-		leftLoad, rightLoad := 0, 0
-		if accounts[i].CurrentConcurrency != nil {
-			leftLoad = *accounts[i].CurrentConcurrency
+		leftLoadRate, rightLoadRate := 0, 0
+		if accounts[i].LoadRate != nil {
+			leftLoadRate = *accounts[i].LoadRate
 		}
-		if accounts[j].CurrentConcurrency != nil {
-			rightLoad = *accounts[j].CurrentConcurrency
+		if accounts[j].LoadRate != nil {
+			rightLoadRate = *accounts[j].LoadRate
 		}
-		if leftLoad != rightLoad {
-			return leftLoad < rightLoad
+		if leftLoadRate != rightLoadRate {
+			return leftLoadRate < rightLoadRate
+		}
+		switch {
+		case accounts[i].LastUsedAt == nil && accounts[j].LastUsedAt != nil:
+			return true
+		case accounts[i].LastUsedAt != nil && accounts[j].LastUsedAt == nil:
+			return false
+		case accounts[i].LastUsedAt != nil && accounts[j].LastUsedAt != nil && !accounts[i].LastUsedAt.Equal(*accounts[j].LastUsedAt):
+			return accounts[i].LastUsedAt.Before(*accounts[j].LastUsedAt)
 		}
 		return accounts[i].ID < accounts[j].ID
 	})

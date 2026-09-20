@@ -156,34 +156,55 @@
                     ? 'border-indigo-400 bg-indigo-50/70 ring-2 ring-indigo-100 dark:border-indigo-500 dark:bg-indigo-900/20 dark:ring-indigo-900/40'
                     : 'border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900'"
                 >
-                  <button
-                    type="button"
-                    class="w-full text-left"
-                    :data-testid="`availability-account-${account.id}`"
-                    :disabled="running || sendPending"
-                    :aria-pressed="selectedAccountId === account.id"
-                    @click="selectAccount(account)"
-                  >
-                    <span class="flex items-start gap-2.5">
-                      <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-[11px] font-bold tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300" :title="t('admin.channelTest.rank')">
-                        #{{ account.rank }}
-                      </span>
-                      <span class="min-w-0 flex-1">
-                        <span class="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
-                          <span class="truncate" :title="account.name">{{ account.name }}</span>
-                          <span class="shrink-0" :class="account.eligible ? 'badge badge-success' : 'badge badge-danger'">
-                            {{ account.eligible ? t('admin.channelTest.eligible') : t('admin.channelTest.unavailable') }}
+                  <div class="flex items-start gap-2">
+                    <button
+                      type="button"
+                      class="min-w-0 flex-1 text-left"
+                      :data-testid="`availability-account-${account.id}`"
+                      :disabled="running || sendPending"
+                      :aria-pressed="selectedAccountId === account.id"
+                      @click="selectAccount(account)"
+                    >
+                      <span class="flex items-start gap-2.5">
+                        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-[11px] font-bold tabular-nums text-gray-600 dark:bg-dark-800 dark:text-gray-300" :title="t('admin.channelTest.rank')">
+                          #{{ account.rank }}
+                        </span>
+                        <span class="min-w-0 flex-1">
+                          <span class="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
+                            <span class="truncate" :title="account.name">{{ account.name }}</span>
+                            <span class="shrink-0" :class="account.eligible ? 'badge badge-success' : 'badge badge-danger'">
+                              {{ account.eligible ? t('admin.channelTest.eligible') : t('admin.channelTest.unavailable') }}
+                            </span>
+                          </span>
+                          <span class="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                            <span>{{ account.platform }} · {{ account.status }}</span>
+                            <span class="rounded bg-gray-100 px-1.5 py-0.5 tabular-nums dark:bg-dark-800">
+                              {{ t('admin.channelTest.groupPriority') }} {{ account.group_priority }}
+                            </span>
                           </span>
                         </span>
-                        <span class="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-gray-500 dark:text-gray-400">
-                          <span>{{ account.platform }} · {{ account.status }}</span>
-                          <span class="rounded bg-gray-100 px-1.5 py-0.5 tabular-nums dark:bg-dark-800">
-                            {{ t('admin.channelTest.groupPriority') }} {{ account.group_priority }}
-                          </span>
-                        </span>
                       </span>
-                    </span>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      role="switch"
+                      class="shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                      :class="account.schedulable
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300'
+                        : 'border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300'"
+                      :data-testid="`availability-account-${account.id}-schedulable`"
+                      :aria-checked="account.schedulable"
+                      :title="account.schedulable ? t('admin.channelTest.disableSchedulingHint') : t('admin.channelTest.enableSchedulingHint')"
+                      :disabled="togglingSchedulable.has(account.id) || running || sendPending"
+                      @click="toggleAccountSchedulable(account)"
+                    >
+                      {{ togglingSchedulable.has(account.id)
+                        ? t('admin.channelTest.saving')
+                        : account.schedulable
+                          ? t('admin.channelTest.schedulingEnabled')
+                          : t('admin.channelTest.schedulingDisabled') }}
+                    </button>
+                  </div>
 
                   <div class="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2" @click.stop>
                     <label class="block">
@@ -221,7 +242,7 @@
                       />
                     </label>
                     <div class="pb-1 text-right text-[10px] text-gray-500 dark:text-gray-400">
-                      <span class="block whitespace-nowrap">{{ t('admin.channelTest.concurrency') }}</span>
+                      <span class="block whitespace-nowrap">{{ t('admin.channelTest.liveLoad') }} {{ formatLoadRate(account) }}</span>
                       <strong class="text-xs tabular-nums text-gray-800 dark:text-gray-100">{{ formatConcurrency(account) }}</strong>
                     </div>
                   </div>
@@ -694,7 +715,8 @@ const conversationLoading = ref(false)
 const loadingMoreTurns = ref(false)
 const conversationTurnTotal = ref(0)
 const conversationTurnPage = ref(1)
-const prompt = ref('')
+const defaultPrompt = 'Hello'
+const prompt = ref(defaultPrompt)
 const liveEvents = ref<AvailabilityEvent[]>([])
 const streamError = ref('')
 const streamStatus = ref<StreamStatus>('idle')
@@ -723,6 +745,7 @@ const accountDrafts = reactive<Record<string, string>>({})
 const accountSaving = reactive(new Set<string>())
 const accountSaveStates = reactive<Record<string, AccountFieldState>>({})
 const accountSaveErrors = reactive<Record<string, string>>({})
+const togglingSchedulable = reactive(new Set<number>())
 
 let catalogController: AbortController | null = null
 let historyController: AbortController | null = null
@@ -887,6 +910,7 @@ function resetConversation(): void {
   streamError.value = ''
   streamStatus.value = 'idle'
   lastStreamSeq.value = null
+  prompt.value = defaultPrompt
 }
 
 function startFreshConversation(): void {
@@ -1025,7 +1049,14 @@ async function commitAccountField(account: AvailabilityAccount, field: AccountFi
     }
     delete accountDrafts[key]
     accountSaveStates[key] = 'saved'
-    await loadCatalog(selectedAccountId.value, { preserveModel: true, silent: true })
+    try {
+      await refreshAccountRail()
+      if (selectedAccountId.value != null) {
+        await loadCatalog(selectedAccountId.value, { preserveModel: true, silent: true })
+      }
+    } catch (refreshError) {
+      appStore.showError(errorText(refreshError, t('admin.channelTest.catalogFailed')))
+    }
   } catch (error) {
     // The draft is discarded so the visible value rolls back to the last server value.
     delete accountDrafts[key]
@@ -1037,12 +1068,50 @@ async function commitAccountField(account: AvailabilityAccount, field: AccountFi
   }
 }
 
+async function refreshAccountRail(): Promise<void> {
+  const groupId = selectedGroupId.value
+  if (groupId == null) return
+  const loaded = await adminAPI.availability.getCatalog(groupId, null)
+  if (selectedGroupId.value !== groupId) return
+  groupAccounts.value = loaded.accounts
+  if (selectedAccountId.value == null) catalog.value = loaded
+}
+
+async function toggleAccountSchedulable(account: AvailabilityAccount): Promise<void> {
+  if (togglingSchedulable.has(account.id)) return
+  const nextSchedulable = !account.schedulable
+  togglingSchedulable.add(account.id)
+  try {
+    const updated = await adminAPI.accounts.setSchedulable(account.id, nextSchedulable)
+    account.schedulable = updated?.schedulable ?? nextSchedulable
+    appStore.showSuccess(account.schedulable
+      ? t('admin.channelTest.schedulingEnabledSuccess')
+      : t('admin.channelTest.schedulingDisabledSuccess'))
+    try {
+      await refreshAccountRail()
+      if (selectedAccountId.value === account.id) {
+        await loadCatalog(account.id, { preserveModel: true, silent: true })
+      }
+    } catch (refreshError) {
+      appStore.showError(errorText(refreshError, t('admin.channelTest.catalogFailed')))
+    }
+  } catch (error) {
+    appStore.showError(errorText(error, t('admin.channelTest.failedToToggleScheduling')))
+  } finally {
+    togglingSchedulable.delete(account.id)
+  }
+}
+
 function formatConcurrency(account: AvailabilityAccount): string {
   const current = account.current_concurrency
   const limit = Number.isFinite(account.concurrency) ? account.concurrency : null
   if (current != null && limit != null) return `${current}/${limit}`
   if (limit != null) return String(limit)
   return '—'
+}
+
+function formatLoadRate(account: AvailabilityAccount): string {
+  return account.load_rate == null ? '—' : `${account.load_rate}%`
 }
 
 function formatMs(value: number | null | undefined): string {
@@ -1440,7 +1509,7 @@ async function sendTurn(): Promise<void> {
     clientRequestId: newClientRequestId()
   }
   pendingStreamRequest.value = request
-  prompt.value = ''
+  prompt.value = defaultPrompt
   sendPending.value = false
   await runStreamRequest(request)
 }

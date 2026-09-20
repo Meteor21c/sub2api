@@ -29,17 +29,20 @@ export interface AvailabilityAccount {
   name: string
   platform: string
   status: string
+  schedulable: boolean
   /** Account-level priority, matching the value editable on the account page. */
   priority: number
   /** Priority of this account's binding inside the selected group. */
   group_priority: number
   load_factor: number | null
+  load_rate?: number | null
   concurrency: number
   eligible: boolean
   reason?: string
   rank: number
   current_concurrency?: number | null
   queue_depth?: number | null
+  last_used_at?: string | null
 }
 
 export interface AvailabilityLastTest {

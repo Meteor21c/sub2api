@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChannelTestView from '../ChannelTestView.vue'
 
-const { getAll, getCatalog, createConversation, listConversations, getConversation, streamTurn, update, showError, showSuccess } = vi.hoisted(() => ({
+const { getAll, getCatalog, createConversation, listConversations, getConversation, streamTurn, update, setSchedulable, showError, showSuccess } = vi.hoisted(() => ({
   getAll: vi.fn(),
   getCatalog: vi.fn(),
   createConversation: vi.fn(),
@@ -11,6 +11,7 @@ const { getAll, getCatalog, createConversation, listConversations, getConversati
   getConversation: vi.fn(),
   streamTurn: vi.fn(),
   update: vi.fn(),
+  setSchedulable: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn()
 }))
@@ -18,7 +19,7 @@ const { getAll, getCatalog, createConversation, listConversations, getConversati
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     groups: { getAll },
-    accounts: { update },
+    accounts: { update, setSchedulable },
     availability: {
       getCatalog,
       createConversation,
@@ -52,9 +53,11 @@ const catalog = {
       name: 'first account',
       platform: 'openai',
       status: 'active',
+      schedulable: true,
       priority: 10,
       group_priority: 1,
       load_factor: 3,
+      load_rate: 25,
       concurrency: 4,
       current_concurrency: 1,
       queue_depth: 0,
@@ -66,9 +69,11 @@ const catalog = {
       name: 'second account',
       platform: 'openai',
       status: 'active',
+      schedulable: false,
       priority: 20,
       group_priority: 2,
       load_factor: null,
+      load_rate: 100,
       concurrency: 2,
       current_concurrency: 2,
       queue_depth: 1,
@@ -165,6 +170,7 @@ describe('Availability V2 administrator page', () => {
     listConversations.mockReset().mockResolvedValue({ items: [], total: 0 })
     getConversation.mockReset().mockResolvedValue({ conversation, turns: [makeTurn()], total: 1, page: 1, page_size: 50 })
     update.mockReset().mockResolvedValue({ id: 7, priority: 10, load_factor: 3 })
+    setSchedulable.mockReset().mockResolvedValue({ id: 7, schedulable: false })
     streamTurn.mockReset().mockImplementation(async (_id, _payload, options) => {
       const runningTurn = makeTurn('running')
       const completedTurn = makeTurn()
@@ -203,7 +209,21 @@ describe('Availability V2 administrator page', () => {
     expect((wrapper.get('[data-testid="availability-account-7-priority"]').element as HTMLInputElement).value).toBe('10')
     expect((wrapper.get('[data-testid="availability-account-7-load-factor"]').element as HTMLInputElement).value).toBe('3')
     expect(wrapper.find('[data-testid="availability-account-7"]').exists()).toBe(true)
+    expect((wrapper.get('[data-testid="availability-prompt"]').element as HTMLTextAreaElement).value).toBe('Hello')
     expect(localStorage.getItem('sub2api.admin.channel-test.history')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('toggles account scheduling from the account card', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="availability-account-7-schedulable"]').trigger('click')
+    await flushPromises()
+
+    expect(setSchedulable).toHaveBeenCalledWith(7, false)
+    expect(showSuccess).toHaveBeenCalledWith('admin.channelTest.schedulingDisabledSuccess')
+    expect(getCatalog).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 
@@ -231,6 +251,7 @@ describe('Availability V2 administrator page', () => {
     expect(wrapper.get('[data-testid="availability-events-panel"]').find('[data-testid="availability-events"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="availability-attempts-panel"]').findAll('details')).toHaveLength(1)
     expect(showSuccess).toHaveBeenCalled()
+    expect((wrapper.get('[data-testid="availability-prompt"]').element as HTMLTextAreaElement).value).toBe('Hello')
     wrapper.unmount()
   })
 
