@@ -21,7 +21,8 @@ export default {
     },
     shop: {
       title: 'Visit my shop',
-      description: 'Discover useful finds and featured products.'
+      description: 'Discover useful finds and featured products.',
+      short: 'Shop'
     },
     // User-focused value proposition
     heroSubtitle: 'One Key, All AI Models',

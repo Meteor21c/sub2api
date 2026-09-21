@@ -149,8 +149,18 @@
 
     <!-- Bottom Section -->
     <div class="mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
-      <!-- MeteorAgent desktop assistant -->
-      <MeteorAgentPromo variant="sidebar" :collapsed="sidebarCollapsed" class="mb-2" />
+      <!-- Compact promotion entries -->
+      <div
+        class="mb-2 grid gap-1.5"
+        :class="sidebarCollapsed ? 'grid-cols-1' : 'grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]'"
+      >
+        <MeteorAgentPromo
+          variant="sidebar"
+          :collapsed="sidebarCollapsed"
+          :compact="!sidebarCollapsed"
+        />
+        <ShopPromo variant="sidebar" :collapsed="sidebarCollapsed" />
+      </div>
 
       <!-- Theme Toggle -->
       <button
@@ -197,6 +207,7 @@ import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import MeteorAgentPromo from '@/components/common/MeteorAgentPromo.vue'
+import ShopPromo from '@/components/common/ShopPromo.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'

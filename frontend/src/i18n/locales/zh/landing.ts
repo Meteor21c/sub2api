@@ -21,7 +21,8 @@ export default {
     },
     shop: {
       title: '逛逛我的小铺',
-      description: '发现一些实用好物，欢迎来看看。'
+      description: '发现一些实用好物，欢迎来看看。',
+      short: '逛小铺'
     },
     // 新增：面向用户的价值主张
     heroSubtitle: '一个密钥，畅用多个 AI 模型',
