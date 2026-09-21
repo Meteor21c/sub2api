@@ -19,6 +19,10 @@ export default {
       description: 'Use the meteor API from your local projects with the desktop assistant.',
       short: 'Get MeteorAgent'
     },
+    shop: {
+      title: 'Visit my shop',
+      description: 'Discover useful finds and featured products.'
+    },
     // User-focused value proposition
     heroSubtitle: 'One Key, All AI Models',
     heroDescription: 'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
