@@ -5,6 +5,12 @@ on:
     branches:
       - codex/payment-fee-tiers-channel-test
   workflow_dispatch:
+    inputs:
+      canary:
+        description: Build a canary tag without moving meteor-latest
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -37,8 +43,9 @@ jobs:
         with:
           images: ghcr.io/meteor21c/sub2api
           tags: |
-            type=raw,value=meteor-latest
-            type=sha,prefix=meteor-,format=short
+            type=raw,value=meteor-latest,enable=${{ !inputs.canary }}
+            type=sha,prefix=meteor-,format=short,enable=${{ !inputs.canary }}
+            type=sha,prefix=meteor-h1-canary-,format=short,enable=${{ inputs.canary }}
 
       - name: Build and push
         uses: docker/build-push-action@v6

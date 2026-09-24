@@ -202,7 +202,7 @@ func TestHTTPUpstreamDoAppliesGrokCLIIdentityBeforeOAuthRoundTrip(t *testing.T) 
 			isolation := svc.getIsolationMode()
 			profile := service.HTTPUpstreamProfileDefault
 			proxyKey := directProxyKey
-			protocolMode := svc.resolveProtocolMode(profile, proxyKey, nil)
+			protocolMode := svc.resolveProtocolMode(profile, proxyKey, nil, accountID)
 			settings := svc.resolvePoolSettings(isolation, 1)
 			settings = svc.applyProfilePoolSettings(settings, profile)
 			cacheKey := buildCacheKey(isolation, proxyKey, accountID, protocolMode)
@@ -252,7 +252,7 @@ func TestHTTPUpstreamDoFallsBackToOfficialGrokAPIOnCLIAccessDenied(t *testing.T)
 	isolation := svc.getIsolationMode()
 	profile := service.HTTPUpstreamProfileDefault
 	proxyKey := directProxyKey
-	protocolMode := svc.resolveProtocolMode(profile, proxyKey, nil)
+	protocolMode := svc.resolveProtocolMode(profile, proxyKey, nil, accountID)
 	settings := svc.resolvePoolSettings(isolation, 1)
 	settings = svc.applyProfilePoolSettings(settings, profile)
 	cacheKey := buildCacheKey(isolation, proxyKey, accountID, protocolMode)
@@ -690,6 +690,37 @@ func (s *HTTPUpstreamSuite) TestOpenAIProfileHTTP2DisabledUsesHTTP1Transport() {
 	require.False(s.T(), transport.ForceAttemptHTTP2, "OpenAI HTTP/2 disabled should not force H2")
 	require.NotNil(s.T(), transport.TLSNextProto, "HTTP/1 mode should disable automatic H2 negotiation")
 	require.Equal(s.T(), upstreamProtocolModeOpenAIH1, entry.protocolMode)
+}
+
+func (s *HTTPUpstreamSuite) TestOpenAIProfileHTTP1CanaryAffectsOnlySelectedAccount() {
+	s.cfg.Gateway = config.GatewayConfig{
+		OpenAIHTTP2: config.GatewayOpenAIHTTP2Config{
+			Enabled:             true,
+			ForceHTTP1AccountID: 109,
+		},
+	}
+	svc := s.newService()
+	canary, err := svc.getClientEntry("", 109, 1, service.HTTPUpstreamProfileOpenAI, false, false)
+	require.NoError(s.T(), err)
+	canaryTransport, ok := canary.client.Transport.(*http.Transport)
+	require.True(s.T(), ok)
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH1, canary.protocolMode)
+	require.False(s.T(), canaryTransport.ForceAttemptHTTP2)
+	require.NotNil(s.T(), canaryTransport.TLSNextProto)
+
+	control, err := svc.getClientEntry("", 107, 1, service.HTTPUpstreamProfileOpenAI, false, false)
+	require.NoError(s.T(), err)
+	controlTransport, ok := control.client.Transport.(*http.Transport)
+	require.True(s.T(), ok)
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, control.protocolMode)
+	require.True(s.T(), controlTransport.ForceAttemptHTTP2)
+	require.NotSame(s.T(), canary, control, "canary and control must use separate transport pools")
+
+	s.cfg.Gateway.OpenAIHTTP2.ForceHTTP1AccountID = 0
+	rolledBack, err := svc.getClientEntry("", 109, 1, service.HTTPUpstreamProfileOpenAI, false, false)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), upstreamProtocolModeOpenAIH2, rolledBack.protocolMode)
+	require.NotSame(s.T(), canary, rolledBack, "disabling the canary must select an H2 pool")
 }
 
 func (s *HTTPUpstreamSuite) TestOpenAIHeaderTimeoutChangeRebuildsClient() {

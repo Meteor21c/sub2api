@@ -605,6 +605,7 @@ func TestLoadDefaultOpenAIHTTP2Enabled(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.True(t, cfg.Gateway.OpenAIHTTP2.Enabled)
+	require.Zero(t, cfg.Gateway.OpenAIHTTP2.ForceHTTP1AccountID)
 	require.True(t, cfg.Gateway.OpenAIHTTP2.AllowProxyFallbackToHTTP1)
 	require.False(t, cfg.Gateway.OpenAIProxyStreamCircuit.Disabled)
 	require.Equal(t, 2, cfg.Gateway.OpenAIProxyStreamCircuit.FailureThreshold)
@@ -634,6 +635,15 @@ func TestLoadOpenAIHTTP2DisabledFromEnv(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.False(t, cfg.Gateway.OpenAIHTTP2.Enabled)
+}
+
+func TestLoadOpenAIHTTP1CanaryAccountFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_OPENAI_HTTP2_FORCE_HTTP1_ACCOUNT_ID", "109")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, int64(109), cfg.Gateway.OpenAIHTTP2.ForceHTTP1AccountID)
 }
 
 func TestLoadDefaultOpenAIResponseHeaderTimeoutUnlimited(t *testing.T) {
@@ -1909,6 +1919,11 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "gateway openai http2 fallback threshold",
 			mutate:  func(c *Config) { c.Gateway.OpenAIHTTP2.FallbackErrorThreshold = -1 },
 			wantErr: "gateway.openai_http2.fallback_error_threshold",
+		},
+		{
+			name:    "gateway openai http1 canary account",
+			mutate:  func(c *Config) { c.Gateway.OpenAIHTTP2.ForceHTTP1AccountID = -1 },
+			wantErr: "gateway.openai_http2.force_http1_account_id",
 		},
 		{
 			name:    "gateway openai http2 fallback window",
