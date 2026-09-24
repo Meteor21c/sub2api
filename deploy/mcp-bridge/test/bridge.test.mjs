@@ -247,7 +247,7 @@ test('video MCP uses the official Sub2API video task and status endpoints', asyn
   const bridge = await startBridge({ SUB2API_URL: mock.base })
   try {
     const created = await rpc(bridge.base, '/mcp/video', 'tools/call', {
-      name: 'create_video', arguments: { model: 'grok-imagine-video', prompt: 'a test clip' },
+      name: 'create_video', arguments: { model: 'doubao-seedance-2.0-fast', prompt: 'a test clip' },
     }, 'sk-user-video')
     assert.equal(created.body.result.structuredContent.task_id, 'sub-video-1')
     const status = await rpc(bridge.base, '/mcp/video', 'tools/call', {
@@ -276,7 +276,7 @@ test('FZYinghe provider adapter keeps the provider token separate from the MCP u
   try {
     const create = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
       method: 'POST', headers: { Authorization: 'Bearer sk-fzy-provider', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'cheap-seedance-2.0-fast', prompt: 'a provider clip', reference_images: ['reference:https://8.8.8.8/ref.png'] }),
+      body: JSON.stringify({ model: 'kling-v3', prompt: 'a provider clip', reference_images: ['reference:https://8.8.8.8/ref.png'] }),
     })
     assert.equal(create.status, 200)
     assert.equal((await create.json()).id, 'fzy-task-1')
@@ -289,9 +289,9 @@ test('FZYinghe provider adapter keeps the provider token separate from the MCP u
     assert.equal(requests[1].auth, 'Bearer sk-fzy-provider')
     assert.match(requests[0].url, /^\/video\/generation\/tasks$/)
     const payload = JSON.parse(requests[0].body)
-    assert.equal(payload.input, 'a provider clip')
-    assert.equal(payload.model, 'cheap-seedance-2.0-fast')
-    assert.deepEqual(payload.reference_images, ['https://8.8.8.8/ref.png'])
+    assert.equal(payload.prompt, 'a provider clip')
+    assert.equal(payload.model_name, 'kling-v3')
+    assert.equal(payload.image, 'https://8.8.8.8/ref.png')
   } finally {
     await stopBridge(bridge)
     await stopMock(mock)
@@ -310,10 +310,46 @@ test('FZYinghe provider rejects invalid duration before contacting the upstream'
   try {
     const response = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
       method: 'POST', headers: { Authorization: 'Bearer sk-fzy-provider', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'cheap-seedance-2.0-fast', prompt: 'bad duration', duration: 0 }),
+      body: JSON.stringify({ model: 'doubao-seedance-2.0-fast', prompt: 'bad duration', duration: 0 }),
     })
     assert.equal(response.status, 400)
     assert.match((await response.json()).error.message, /duration must be between 4 and 15/)
+    assert.equal(calls, 0)
+  } finally {
+    await stopBridge(bridge)
+    await stopMock(mock)
+  }
+})
+
+test('FZYinghe exposes only authorized models and checks model-specific duration', async () => {
+  let calls = 0
+  const mock = await startMock(async (_req, res) => {
+    calls += 1
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ id: 'unexpected', status: 'queued' }))
+  })
+  const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
+  try {
+    const models = await fetch(`${bridge.base}/provider/fzyinghe/v1/models`, {
+      headers: { Authorization: 'Bearer sk-fzy-provider' },
+    })
+    assert.equal(models.status, 200)
+    assert.deepEqual((await models.json()).data.map((item) => item.id).sort(), [
+      'doubao-seedance-1.5-pro', 'doubao-seedance-2.0', 'doubao-seedance-2.0-fast',
+      'doubao-seedance-2.0-mini', 'doubao-seedance-2.5', 'kling-v3', 'kling-v3-omni',
+    ].sort())
+    for (const [model, duration, error] of [
+      ['cheap-seedance-2.0', 5, /unsupported FZYinghe video model/],
+      ['doubao-seedance-1.5-pro', 13, /between 4 and 12 seconds/],
+      ['doubao-seedance-2.5', 31, /between 4 and 30 seconds/],
+    ]) {
+      const response = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
+        method: 'POST', headers: { Authorization: 'Bearer sk-fzy-provider', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: 'validation only', duration }),
+      })
+      assert.equal(response.status, 400)
+      assert.match((await response.json()).error.message, error)
+    }
     assert.equal(calls, 0)
   } finally {
     await stopBridge(bridge)
@@ -331,7 +367,7 @@ test('FZYinghe task IDs are validated before metadata is written', async () => {
   try {
     const response = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
       method: 'POST', headers: { Authorization: 'Bearer sk-fzy-provider', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'cheap-seedance-2.0-fast', prompt: 'unsafe task id' }),
+      body: JSON.stringify({ model: 'doubao-seedance-2.0-fast', prompt: 'unsafe task id' }),
     })
     assert.equal(response.status, 502)
     assert.match((await response.json()).error.message, /invalid task id/)
@@ -341,22 +377,31 @@ test('FZYinghe task IDs are validated before metadata is written', async () => {
   }
 })
 
-test('FZYinghe Doubao uses the v3 token-billing task endpoint', async () => {
-  let seenURL = ''
+test('FZYinghe authorized Doubao 1.5 Pro uses V3 for creation and successful status', async () => {
+  const seenURLs = []
   const mock = await startMock(async (req, res) => {
-    seenURL = req.url
+    seenURLs.push(req.url)
     await readBody(req)
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ data: { taskId: 'doubao-task-1', status: 'queued' } }))
+    if (req.method === 'POST') res.end(JSON.stringify({ id: 'doubao-task-1', status: 'queued' }))
+    else res.end(JSON.stringify({ id: 'doubao-task-1', status: 'succeeded', content: { video_url: 'https://cdn.example/video.mp4' } }))
   })
   const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
   try {
     const response = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
       method: 'POST', headers: { Authorization: 'Bearer sk-fzy-provider', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'doubao-seedance-2.0', prompt: 'a doubao clip' }),
+      body: JSON.stringify({ model: 'doubao-seedance-1.5-pro', prompt: 'a doubao clip', duration: 12 }),
     })
     assert.equal(response.status, 200)
-    assert.equal(seenURL, '/v3/video/tasks')
+    assert.equal((await response.json()).id, 'doubao-task-1')
+    const status = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/doubao-task-1`, {
+      headers: { Authorization: 'Bearer sk-fzy-provider' },
+    })
+    assert.equal(status.status, 200)
+    const result = await status.json()
+    assert.equal(result.status, 'done')
+    assert.equal(result.video.url, 'https://cdn.example/video.mp4')
+    assert.deepEqual(seenURLs, ['/v3/video/tasks', '/v3/video/tasks/doubao-task-1'])
   } finally {
     await stopBridge(bridge)
     await stopMock(mock)
@@ -367,16 +412,16 @@ test('FZYinghe HTTP-200 error envelopes become retryable gateway errors', async 
   const mock = await startMock(async (req, res) => {
     await readBody(req)
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ code: 500, msg: '当前模型已禁用:cheap-seedance-2.0-mini', data: null }))
+    res.end(JSON.stringify({ code: 500, msg: '当前模型已禁用:kling-v3', data: null }))
   })
   const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
   try {
     const create = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
       method: 'POST', headers: { Authorization: 'Bearer sk-fzy-provider', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'cheap-seedance-2.0-mini', prompt: 'provider validation' }),
+      body: JSON.stringify({ model: 'kling-v3', prompt: 'provider validation' }),
     })
     assert.equal(create.status, 502)
-    assert.equal((await create.json()).msg, '当前模型已禁用:cheap-seedance-2.0-mini')
+    assert.equal((await create.json()).msg, '当前模型已禁用:kling-v3')
   } finally {
     await stopBridge(bridge)
     await stopMock(mock)
@@ -395,7 +440,7 @@ test('FZYinghe status does not mask HTTP-200 error envelopes as pending', async 
   try {
     const created = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
       method: 'POST', headers: { Authorization: 'Bearer sk-fzy-provider', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'cheap-seedance-2.0-fast', prompt: 'error status setup' }),
+      body: JSON.stringify({ model: 'kling-v3', prompt: 'error status setup' }),
     })
     assert.equal(created.status, 200)
     const response = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/error-task-1`, {

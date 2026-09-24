@@ -33,13 +33,10 @@ const imageModels = new Set([
   'gpt-image-1', 'gpt-image-1-mini', 'gpt-image-2', 'gpt-image-2-pro',
   'gpt-image-2-plus', 'grok-imagine-image', 'grok-imagine-image-quality',
 ])
-const fzyCheapModels = new Set([
-  'cheap-seedance-2.0', 'cheap-seedance-2.0-fast', 'cheap-seedance-2.0-mini',
-  'seedance-2.0', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedace-2.0-mini',
-])
 const fzyDoubaoModels = new Set([
   'doubao-seedance-2.0', 'doubao-seedance-2.0-fast',
   'doubao-seedance-2.0-mini', 'doubao-seedance-2.5',
+  'doubao-seedance-1.5-pro',
 ])
 const fzyKlingModels = new Set(['kling-v3', 'kling-v3-omni'])
 
@@ -420,14 +417,13 @@ async function readResponseLimited(response, limit) {
 }
 
 function normalizeModel(model) {
-  const value = String(model || '').trim()
-  const aliases = {
-    'seedance-2.0': 'cheap-seedance-2.0',
-    'seedance-2.0-fast': 'cheap-seedance-2.0-fast',
-    'seedance-2.0-mini': 'cheap-seedance-2.0-mini',
-    'seedace-2.0-mini': 'cheap-seedance-2.0-mini',
-  }
-  return aliases[value] || value
+  return String(model || '').trim()
+}
+
+function videoDurationRange(model) {
+  if (model === 'doubao-seedance-2.5') return [4, 30]
+  if (model === 'doubao-seedance-1.5-pro') return [4, 12]
+  return [fzyKlingModels.has(model) ? 3 : 4, 15]
 }
 
 function mcpResponse(id, result) {
@@ -490,9 +486,9 @@ function toolsFor(profile) {
       inputSchema: {
         type: 'object', additionalProperties: false, required: ['prompt'],
         properties: {
-          model: commonString('Exact video model; defaults to cheap-seedance-2.0-fast.'),
+          model: commonString('Exact authorized video model; defaults to doubao-seedance-2.0-fast.'),
           prompt: commonString('Video prompt, up to 1300 characters.'),
-          duration: { type: 'integer', minimum: 3, maximum: 15, description: 'Duration in seconds; defaults to 5.' },
+          duration: { type: 'integer', minimum: 3, maximum: 30, description: 'Duration in seconds; allowed range depends on model, defaults to 5.' },
           resolution: { type: 'string', enum: ['480p', '720p', '1080p', '4K'] },
           aspect_ratio: { type: 'string', enum: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] },
           mode: { type: 'string', enum: ['text_with_reference', 'start_end_frame', 'std', 'pro', '4k'] },
@@ -718,11 +714,12 @@ async function resolveReferenceURLs(token, ids) {
 async function createVideo(token, args) {
   const prompt = String(args?.prompt || '').trim()
   if (!prompt) return mcpToolError('prompt is required')
-  const model = normalizeModel(args?.model || 'cheap-seedance-2.0-fast')
+  const model = normalizeModel(args?.model || 'doubao-seedance-2.0-fast')
+  if (!fzyDoubaoModels.has(model) && !fzyKlingModels.has(model)) return mcpToolError(`unsupported video model: ${model}`)
   if (prompt.length > 1300) return mcpToolError('prompt must not exceed 1300 characters')
   const duration = args?.duration === undefined ? 5 : asInt(args.duration)
-  const minimumDuration = fzyKlingModels.has(model) ? 3 : 4
-  if (duration < minimumDuration || duration > 15) return mcpToolError(`duration must be between ${minimumDuration} and 15 seconds`)
+  const [minimumDuration, maximumDuration] = videoDurationRange(model)
+  if (duration < minimumDuration || duration > maximumDuration) return mcpToolError(`duration must be between ${minimumDuration} and ${maximumDuration} seconds`)
   const rawReferences = [...(Array.isArray(args?.reference_images) ? args.reference_images.map(String) : [])]
   rawReferences.push(...await resolveReferenceURLs(token, args?.reference_material_ids))
   if (rawReferences.length > 9) return mcpToolError('reference_images supports at most 9 assets')
@@ -1032,7 +1029,7 @@ async function handleFzyProvider(req, res, parsed) {
   const prefix = '/provider/fzyinghe/v1'
   const relative = pathname.slice(prefix.length)
   if (req.method === 'GET' && relative === '/models') {
-    const models = [...fzyCheapModels, ...fzyDoubaoModels, ...fzyKlingModels].map((id) => ({ id, object: 'model', owned_by: 'fzyinghe' }))
+    const models = [...fzyDoubaoModels, ...fzyKlingModels].map((id) => ({ id, object: 'model', owned_by: 'fzyinghe' }))
     json(res, 200, { object: 'list', data: models }); return
   }
   const statusMatch = relative.match(/^\/videos\/([^/]+)(\/content)?$/)
@@ -1048,7 +1045,7 @@ async function handleFzyProvider(req, res, parsed) {
     // metadata records the provider-token hash for diagnostics; retain status
     // compatibility for tasks created before that field existed.
     if (taskMeta?.owner && taskMeta.owner !== ownerHash(token)) { text(res, 404, 'Not found'); return }
-    const model = normalizeModel(taskMeta?.model || 'cheap-seedance-2.0-fast')
+    const model = normalizeModel(taskMeta?.model || 'doubao-seedance-2.0-fast')
     const upstream = await fetch(fzyTaskEndpoint(model, taskID), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(120000) })
     const buffer = Buffer.from(await upstream.arrayBuffer())
     const raw = parseJSON(buffer) || {}
@@ -1087,7 +1084,7 @@ async function handleFzyProvider(req, res, parsed) {
     let body
     try { body = parseJSON(await readRequest(req)) } catch (error) { json(res, error.statusCode || 400, { error: { message: error.message } }); return }
     const model = normalizeModel(body?.model)
-    if (!fzyCheapModels.has(body?.model) && !fzyDoubaoModels.has(model) && !fzyKlingModels.has(model)) {
+    if (!fzyDoubaoModels.has(model) && !fzyKlingModels.has(model)) {
       json(res, 400, { error: { message: `unsupported FZYinghe video model: ${body?.model || ''}` } }); return
     }
     // Do not silently coerce an invalid duration to the default.  The
@@ -1097,10 +1094,10 @@ async function handleFzyProvider(req, res, parsed) {
     const prompt = String(body?.prompt || '').trim()
     if (!prompt) { json(res, 400, { error: { message: 'prompt is required' } }); return }
     if (prompt.length > 1300) { json(res, 400, { error: { message: 'prompt must not exceed 1300 characters' } }); return }
-    const minimumDuration = fzyKlingModels.has(model) ? 3 : 4
+    const [minimumDuration, maximumDuration] = videoDurationRange(model)
     const duration = body?.duration === undefined ? 5 : asInt(body.duration, NaN)
-    if (!Number.isFinite(duration) || duration < minimumDuration || duration > 15) {
-      json(res, 400, { error: { message: `duration must be between ${minimumDuration} and 15 seconds` } }); return
+    if (!Number.isFinite(duration) || duration < minimumDuration || duration > maximumDuration) {
+      json(res, 400, { error: { message: `duration must be between ${minimumDuration} and ${maximumDuration} seconds` } }); return
     }
     if (!(await validateFzyReferences(body))) {
       json(res, 400, { error: { message: 'reference URLs must be public HTTP/HTTPS URLs' } }); return

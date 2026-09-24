@@ -31,8 +31,15 @@
   `api.viapi.cc` 等已迁移的第三方渠道。
 - 视频：转发到 Sub2API `/v1/videos/generations`，轮询其状态接口。
 - FZYinghe：作为 Sub2API 的 Grok 兼容账号上游，桥接层的
-  `/provider/fzyinghe/v1` 再适配 Seedance/Kling 的
-  `/video/generation/tasks` 和 Doubao 的 `/v3/video/tasks` 接口。
+  `/provider/fzyinghe/v1` 再适配 Kling 的 `/video/generation/tasks`
+  和 Doubao Seedance 的 `/v3/video/tasks` 接口。
+
+当前授权范围为 `doubao-seedance-2.0`、`doubao-seedance-2.0-fast`、
+`doubao-seedance-2.0-mini`、`doubao-seedance-2.5`、
+`doubao-seedance-1.5-pro`、`kling-v3`、`kling-v3-omni`。
+生产账号的 `model_mapping` 应分别限定为豆包 5 个和 Kling 2 个模型；
+不要继续发布已无授权的 cheap/海外 Seedance 别名。1.5 Pro 时长为 4–12 秒，
+2.5 为 4–30 秒，其余模型按各自上游限制校验。
 
 因此视频请求仍由 Sub2API 扣除用户余额；桥接层不实现一套新的倍率或亲合度规则。
 FZY 模型的每秒价格在视频分组的 `video_model_prices` 中显式配置为官方默认视频费率，
