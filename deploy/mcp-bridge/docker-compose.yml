@@ -1,0 +1,30 @@
+services:
+  meteor-mcp-bridge:
+    build: .
+    image: meteor-mcp-bridge:local
+    container_name: meteor-mcp-bridge
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    ports:
+      - "127.0.0.1:3102:3102"
+    environment:
+      PORT: "3102"
+      SUB2API_URL: "http://sub2api:8080"
+      MCP_PUBLIC_BASE_URL: "https://api.meteor21c.fun"
+      MCP_SERVER_VERSION: "meteor-mcp-bridge/1.0.0"
+      MCP_ASSET_SIGNING_SECRET: "${MCP_ASSET_SIGNING_SECRET:?MCP_ASSET_SIGNING_SECRET is required}"
+      MCP_DATA_DIR: "/data"
+      FZYINGHE_BASE_URL: "https://api-aigc.fzyinghe.com"
+    volumes:
+      - ./data:/data
+    networks:
+      - sub2api-network
+
+networks:
+  sub2api-network:
+    external: true
+    name: deploy_sub2api-network
