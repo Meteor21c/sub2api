@@ -263,6 +263,35 @@ test('video MCP uses the official Sub2API video task and status endpoints', asyn
   }
 })
 
+test('video MCP returns the signed delivery URL after Sub2API rewrites video.url', async () => {
+  const taskID = 'signed-video-task-1'
+  const mock = await startMock(async (req, res) => {
+    await readBody(req)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ id: taskID, status: 'done', video: { url: `/v1/videos/${taskID}/content` } }))
+  })
+  const bridge = await startBridge({ SUB2API_URL: mock.base })
+  try {
+    const assetID = 'signedVideoAsset1234'
+    const exp = Math.floor(Date.now() / 1000) + 3600
+    const sig = crypto.createHmac('sha256', 'test-secret').update(`read:${assetID}:${exp}`).digest('base64url')
+    const signedURL = `${bridge.base}/mcp/assets/${assetID}?exp=${exp}&op=read&sig=${sig}`
+    const taskPath = path.join(bridge.dir, 'tasks', `${crypto.createHash('sha256').update(taskID).digest('hex')}.json`)
+    await writeFile(taskPath, JSON.stringify({ id: taskID, model: 'doubao-seedance-1.5-pro', deliveryURL: signedURL, deliveryExpiresAt: exp }))
+
+    const status = await rpc(bridge.base, '/mcp/video', 'tools/call', {
+      name: 'get_video', arguments: { task_id: taskID },
+    }, 'sk-user-video')
+    assert.equal(status.body.result.isError, undefined)
+    assert.equal(status.body.result.structuredContent.status, 'SUCCESS')
+    assert.equal(status.body.result.structuredContent.data.result_url, signedURL)
+    assert.equal(status.body.result.structuredContent.data.video_url, signedURL)
+  } finally {
+    await stopBridge(bridge)
+    await stopMock(mock)
+  }
+})
+
 test('FZYinghe provider adapter keeps the provider token separate from the MCP user token', async () => {
   const requests = []
   const mock = await startMock(async (req, res) => {

@@ -773,6 +773,28 @@ async function getVideo(token, taskID) {
   const result = await upstreamJSON(`/v1/videos/generations/${encodeURIComponent(taskID)}`, token, { timeoutMs: 60000 })
   if (!result.response.ok) return mcpToolError(`Sub2API video status returned HTTP ${result.response.status}: ${String(result.buffer).slice(0, 800)}`)
   const structured = mapVideoStatus(taskID, result.data || {})
+  if (structured.status === 'SUCCESS') {
+    // Sub2API replaces video.url with a relative, authenticated content path.
+    // Its successful status lookup has already checked this user's API key and
+    // task binding. The provider adapter also keeps a short-lived signed URL
+    // for the same task, which MCP clients can open without a Bearer header.
+    try {
+      const meta = JSON.parse(await fs.readFile(taskMetaPath(taskID), 'utf8'))
+      const url = new URL(String(meta.deliveryURL || ''))
+      const id = decodeURIComponent(url.pathname.slice('/mcp/assets/'.length))
+      if (meta.id === taskID && Number(meta.deliveryExpiresAt) > Math.floor(Date.now() / 1000) &&
+          url.origin === new URL(PUBLIC_BASE_URL).origin && url.pathname.startsWith('/mcp/assets/') &&
+          safeId(id) && verifyAssetQuery(id, url.searchParams, 'read')) {
+        structured.data.result_url = url.toString()
+        structured.data.video_url = url.toString()
+      }
+    } catch { /* Older tasks may not have a signed delivery URL. */ }
+    if (structured.data.result_url?.startsWith('/') && !structured.data.result_url.startsWith('//')) {
+      const publicURL = new URL(structured.data.result_url, PUBLIC_BASE_URL).toString()
+      structured.data.result_url = publicURL
+      structured.data.video_url = publicURL
+    }
+  }
   return mcpToolResult([{ type: 'text', text: JSON.stringify(structured) }], structured)
 }
 
