@@ -25,6 +25,7 @@ const MATERIAL_TTL = 24 * 60 * 60
 const UPLOAD_TTL = 15 * 60
 const OUTPUT_TTL = 24 * 60 * 60
 const STORAGE_CLEANUP_INTERVAL_MS = 10 * 1000
+const IMAGE_UPSTREAM_TIMEOUT_MS = 5 * 60 * 1000
 const uploadLocks = new Set()
 let storageQueue = Promise.resolve()
 
@@ -619,35 +620,42 @@ async function createImage(token, args) {
   if (refs.length > 4) return mcpToolError('reference_material_ids supports at most 4 images')
 
   let result
-  if (refs.length) {
-    const form = new FormData()
-    form.append('model', model)
-    form.append('prompt', prompt)
-    form.append('n', String(n))
-    form.append('response_format', 'b64_json')
-    if (args.size) form.append('size', String(args.size))
-    if (args.quality) form.append('quality', String(args.quality))
-    for (const id of refs) {
-      const material = await materialFor(token, id)
-      const bytes = await fs.readFile(material.file)
-      const actual = detectImageType(bytes)
-      if (actual !== material.meta.contentType) throw new Error('uploaded material content does not match its declared type')
-      form.append('image', new Blob([bytes], { type: material.meta.contentType }), material.meta.fileName)
+  try {
+    if (refs.length) {
+      const form = new FormData()
+      form.append('model', model)
+      form.append('prompt', prompt)
+      form.append('n', String(n))
+      form.append('response_format', 'b64_json')
+      if (args.size) form.append('size', String(args.size))
+      if (args.quality) form.append('quality', String(args.quality))
+      for (const id of refs) {
+        const material = await materialFor(token, id)
+        const bytes = await fs.readFile(material.file)
+        const actual = detectImageType(bytes)
+        if (actual !== material.meta.contentType) throw new Error('uploaded material content does not match its declared type')
+        form.append('image', new Blob([bytes], { type: material.meta.contentType }), material.meta.fileName)
+      }
+      const response = await fetch(`${SUB2API_URL}/v1/images/edits`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, body: form,
+        signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
+      })
+      const buffer = Buffer.from(await response.arrayBuffer())
+      result = { response, buffer, data: parseJSON(buffer) }
+    } else {
+      result = await upstreamJSON('/v1/images/generations', token, {
+        method: 'POST', body: {
+          model, prompt, n, response_format: 'b64_json',
+          ...(args.size ? { size: String(args.size) } : {}),
+          ...(args.quality ? { quality: String(args.quality) } : {}),
+        }, timeoutMs: IMAGE_UPSTREAM_TIMEOUT_MS,
+      })
     }
-    const response = await fetch(`${SUB2API_URL}/v1/images/edits`, {
-      method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, body: form,
-      signal: AbortSignal.timeout(120000),
-    })
-    const buffer = Buffer.from(await response.arrayBuffer())
-    result = { response, buffer, data: parseJSON(buffer) }
-  } else {
-    result = await upstreamJSON('/v1/images/generations', token, {
-      method: 'POST', body: {
-        model, prompt, n, response_format: 'b64_json',
-        ...(args.size ? { size: String(args.size) } : {}),
-        ...(args.quality ? { quality: String(args.quality) } : {}),
-      }, timeoutMs: 120000,
-    })
+  } catch (error) {
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+      return mcpToolError('Image request timed out while waiting for Sub2API. It may still complete and be billed; do not retry automatically.')
+    }
+    throw error
   }
   if (!result.response.ok) return mcpToolError(`Sub2API image request returned HTTP ${result.response.status}: ${String(result.buffer).slice(0, 800)}`)
   const rows = Array.isArray(result.data?.data) ? result.data.data : []
