@@ -4,7 +4,7 @@
   const API_BASE = window.location.origin.replace(/\/$/, "");
   const state = {
     image: { key: "", models: [], busy: false, history: [], objectUrls: [], scope: "", restoreEpoch: 0 },
-    video: { key: "", models: [], busy: false, taskId: "", history: [], polling: new Set(), pollEpoch: 0, objectUrls: new Map(), scope: "" },
+    video: { key: "", models: [], busy: false, taskId: "", history: [], polling: new Set(), pollEpoch: 0, objectUrls: new Map(), scope: "", pricingKey: "", pricingQuote: null, pricingError: "", pricingFetchedAt: 0, pricingPending: false, pricingRetryAt: 0 },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -154,6 +154,12 @@
 
   async function loadModels(kind) {
     const key = selectedKey(kind);
+    if (kind === "video" && key !== state.video.key) {
+      state.video.pricingKey = "";
+      state.video.pricingQuote = null;
+      state.video.pricingError = "";
+      state.video.pricingFetchedAt = 0;
+    }
     if (!key) {
       state[kind].models = [];
       setOptions($(`${kind}-model`), []);
@@ -241,6 +247,10 @@
       setOptions($(`${kind}-model`), []);
       setBusy(kind, state[kind].busy);
       if (kind === "video") {
+        state.video.pricingKey = "";
+        state.video.pricingQuote = null;
+        state.video.pricingError = "";
+        state.video.pricingFetchedAt = 0;
         updateVideoOptions();
         $("video-key-hint").firstChild.textContent = "只显示当前账号有效的视频分组密钥。";
       }
@@ -454,18 +464,78 @@
   function currentVideoQuote() {
     const model = $("video-model").value;
     if (!state.video.models.includes(model)) return null;
+    if (model.startsWith("doubao-seedance-")) return state.video.pricingQuote;
     return MeteorVideoPricing.quote(
       accountKeys.getGroup("video", $("video-key").value),
       model, $("video-resolution").value, Number($("video-duration").value),
     );
   }
 
+  function videoPricingInputVideo() {
+    return parseLines($("video-reference-urls").value).some((value) => {
+      try {
+        const raw = value.replace(/^[^:]+:(?=https?:\/\/)/i, "");
+        const url = new URL(raw);
+        return /\.mp4$/i.test(url.searchParams.get("name") || url.searchParams.get("filename") || url.pathname);
+      } catch { return false; }
+    });
+  }
+
+  function refreshVideoTokenPricing() {
+    const model = $("video-model").value;
+    if (!model.startsWith("doubao-seedance-") || !state.video.models.includes(model)) return;
+    const key = selectedKey("video");
+    if (!key) return;
+    const params = new URLSearchParams({
+      model, resolution: $("video-resolution").value,
+      duration: $("video-duration").value, audio: String($("video-audio").checked),
+      input_video: String(videoPricingInputVideo()),
+    });
+    const requestKey = `${$("video-key").value}:${params}`;
+    if (requestKey === state.video.pricingKey && (state.video.pricingPending ||
+      (state.video.pricingQuote && Date.now() - state.video.pricingFetchedAt < 60000) ||
+      (!state.video.pricingQuote && Date.now() < state.video.pricingRetryAt))) return;
+    state.video.pricingKey = requestKey;
+    state.video.pricingQuote = null;
+    state.video.pricingError = "";
+    state.video.pricingPending = true;
+    void request(`/v1/videos/pricing?${params}`, {}, key).then(({ data }) => {
+      if (state.video.pricingKey !== requestKey) return;
+      state.video.pricingQuote = MeteorVideoPricing.tokenQuote(data);
+      state.video.pricingError = state.video.pricingQuote ? "" : "上游价格格式无效";
+      state.video.pricingFetchedAt = state.video.pricingQuote ? Date.now() : 0;
+      state.video.pricingPending = false;
+      state.video.pricingRetryAt = state.video.pricingQuote ? 0 : Date.now() + 5000;
+      updateVideoPricing();
+    }).catch((error) => {
+      if (state.video.pricingKey !== requestKey) return;
+      state.video.pricingError = error.message || "上游价格暂不可用";
+      state.video.pricingFetchedAt = 0;
+      state.video.pricingPending = false;
+      state.video.pricingRetryAt = Date.now() + 5000;
+      updateVideoPricing();
+    });
+  }
+
   function updateVideoPricing() {
+    const model = $("video-model").value;
+    if (model.startsWith("doubao-seedance-") && state.video.models.includes(model)) {
+      refreshVideoTokenPricing();
+      const quote = state.video.pricingQuote;
+      $("video-estimated-label").textContent = "创建时预扣";
+      $("video-unit-price").textContent = quote ? `${MeteorVideoPricing.providerMoney(quote.salePerMillion, quote.currency)}/百万 Token` : "读取中…";
+      $("video-rate-discount").textContent = quote ? `官方 ${MeteorVideoPricing.discount(quote.saleRateToOfficial)}` : "—";
+      $("video-estimated-cost").textContent = quote ? MeteorVideoPricing.money(quote.prechargeAmount) : "—";
+      $("video-pricing-note").textContent = quote
+        ? `${quote.sceneName}：官方 ${MeteorVideoPricing.providerMoney(quote.officialPerMillion, quote.currency)}、上游折后 ${MeteorVideoPricing.providerMoney(quote.upstreamPerMillion, quote.currency)}、本站 ${MeteorVideoPricing.providerMoney(quote.salePerMillion, quote.currency)}/百万 Token。¥1 按本站余额 $1 计算；最终按实际输出 Token 多退少补，失败退款。`
+        : state.video.pricingError || "正在读取该密钥的上游场景价格；无法取得价格时不会提交付费任务。";
+      return;
+    }
     const quote = currentVideoQuote();
+    $("video-estimated-label").textContent = "预计扣费";
     $("video-unit-price").textContent = quote ? `${MeteorVideoPricing.money(quote.unitPrice)}/秒` : "—";
     $("video-rate-discount").textContent = quote ? MeteorVideoPricing.discount(quote.rate) : "—";
     $("video-estimated-cost").textContent = quote ? MeteorVideoPricing.money(quote.estimatedCost) : "—";
-    const model = $("video-model").value;
     const duration = Number($("video-duration").value);
     const resolution = $("video-resolution").value;
     $("video-pricing-note").textContent = !model || !state.video.models.includes(model)
@@ -478,6 +548,16 @@
   }
 
   function parseLines(value) { return value.split("\n").map((line) => line.trim()).filter(Boolean); }
+
+  function videoBillingHeader(response) {
+    try {
+      const encoded = response?.headers?.get("x-meteor-video-billing");
+      if (!encoded || encoded.length > 4096) return null;
+      const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(encoded.length / 4) * 4, "=");
+      const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+      return JSON.parse(new TextDecoder().decode(bytes));
+    } catch { return null; }
+  }
 
   async function uploadMaterial(file, key) {
     const result = await mcpCall("video", "create_material_upload", { file_name: file.name, content_type: file.type, size_bytes: file.size }, key);
@@ -606,11 +686,19 @@
         node.append(bold);
         grid.append(node);
       };
-      if (quote) item("本站规则", `${MeteorVideoPricing.money(quote.unitPrice)}/秒 × ${quote.duration} 秒`);
+      if (quote?.mode === "token") {
+        item("官方单价", `${MeteorVideoPricing.providerMoney(quote.officialPerMillion, quote.currency)}/百万 Token`);
+        item("上游折后价", `${MeteorVideoPricing.providerMoney(quote.upstreamPerMillion, quote.currency)}/百万 Token`);
+        item("本站售价", `${MeteorVideoPricing.providerMoney(quote.salePerMillion, quote.currency)}/百万 Token`);
+        item("相对官方折扣", MeteorVideoPricing.discount(quote.saleRateToOfficial));
+        item("创建时预扣", MeteorVideoPricing.money(quote.prechargeAmount));
+      } else if (quote) item("本站规则", `${MeteorVideoPricing.money(quote.unitPrice)}/秒 × ${quote.duration} 秒`);
       if (settled) {
         item("实际余额消耗", MeteorVideoPricing.money(settled.actualCost));
-        item("实际倍率 / 折扣", settled.discount);
+        item("实际倍率 / 折扣", quote?.mode === "token" ? MeteorVideoPricing.discount(quote.saleRateToOfficial) : settled.discount);
         if (settled.balanceAfter !== null) item("结算后账户余额", MeteorVideoPricing.money(settled.balanceAfter));
+      } else if (quote?.mode === "token") {
+        if (info.status === "success") item("实际余额消耗", "待账单同步");
       } else if (quote) {
         item("预计消耗", MeteorVideoPricing.money(quote.estimatedCost));
         if (info.status === "success") item("实际余额消耗", "待账单同步");
@@ -622,7 +710,9 @@
       }
       billing.append(title, grid);
       const note = document.createElement("small");
-      note.textContent = "本站按视频秒数计费，实际扣费与折扣以本站账单为准。盈合任务仅返回生成 Token 数；上游 Token 单价及授权折扣须以盈合后台账单核对。";
+      note.textContent = quote?.mode === "token"
+        ? "豆包 Seedance 按上游实际输出 Token × 本站场景售价结算；预扣多退少补，失败退款。¥1 按本站余额 $1 计算。"
+        : "本站按视频秒数计费，实际扣费与折扣以本站账单为准。";
       billing.append(note);
       card.append(billing);
     }
@@ -776,6 +866,14 @@
     if (!key) return setStatus("video", "请先读取并选择视频密钥", "error");
     if (!scope) return setStatus("video", "登录状态无效，请重新登录", "error");
     if (!state.video.models.includes(model)) return setStatus("video", "请先读取该密钥可用的视频模型", "error");
+    if (model.startsWith("doubao-seedance-") && !state.video.pricingQuote) {
+      refreshVideoTokenPricing();
+      return setStatus("video", "请先等待上游 Token 价格读取完成", "error");
+    }
+    if (model.startsWith("doubao-seedance-") && Date.now() - state.video.pricingFetchedAt >= 60000) {
+      refreshVideoTokenPricing();
+      return setStatus("video", "正在刷新上游 Token 价格，请稍后重新提交", "error");
+    }
     if (!prompt) return setStatus("video", "提示词不能为空", "error");
     if (prompt.length > 1300) return setStatus("video", "提示词不能超过 1,300 个字符", "error");
     if (!Number.isInteger(duration) || duration < min || duration > max) return setStatus("video", `当前模型时长必须为 ${min}–${max} 秒`, "error");
@@ -791,6 +889,7 @@
       const audio = $("video-audio").checked;
       const payload = { model, prompt, duration, resolution, aspect_ratio: aspectRatio, mode, audio };
       let data;
+      let creationQuote = null;
       const materialIds = [];
       if (generalFiles.length || startFile || endFile) {
         for (const file of generalFiles) {
@@ -808,18 +907,21 @@
         else if (endUrl) args.end_image_url = endUrl;
         const tool = await mcpCall("video", "create_video", args, key);
         data = tool.structuredContent || tool;
+        creationQuote = MeteorVideoPricing.tokenQuote(data.billing);
       } else {
         if (referenceUrls.length) payload.reference_images = referenceUrls;
         if (startUrl) payload.start_image_url = startUrl;
         if (endUrl) payload.end_image_url = endUrl;
-        data = (await request("/v1/videos/generations", { method: "POST", body: JSON.stringify(payload) }, key)).data;
+        const created = await request("/v1/videos/generations", { method: "POST", body: JSON.stringify(payload) }, key);
+        data = created.data;
+        creationQuote = MeteorVideoPricing.tokenQuote(videoBillingHeader(created.response));
       }
       const taskId = taskIdFrom(data);
       if (!taskId) throw new ApiError("接口已响应，但没有返回任务 ID");
       if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return;
       state.video.taskId = taskId;
       const createdAt = Date.now();
-      rememberVideo({ ...videoInfo(data, taskId), keyId, prompt, model, createdAt, quote: currentVideoQuote() }, scope, epoch);
+      rememberVideo({ ...videoInfo(data, taskId), keyId, prompt, model, createdAt, quote: creationQuote || currentVideoQuote() }, scope, epoch);
       setStatus("video", `任务已提交：${taskId}`, "success");
       const final = await pollVideo(taskId, key, keyId, prompt, model, createdAt, scope, epoch);
       if (final?.status === "success") setStatus("video", "视频生成完成", "success");
@@ -881,6 +983,8 @@
     $("video-model").addEventListener("change", updateVideoOptions);
     $("video-duration").addEventListener("input", updateVideoPricing);
     $("video-resolution").addEventListener("change", updateVideoPricing);
+    $("video-audio").addEventListener("change", updateVideoPricing);
+    $("video-reference-urls").addEventListener("input", updateVideoPricing);
     $("image-load-models").addEventListener("click", () => void loadModels("image"));
     $("video-load-models").addEventListener("click", () => void loadModels("video"));
     $("image-form").addEventListener("submit", (event) => void submitImage(event));

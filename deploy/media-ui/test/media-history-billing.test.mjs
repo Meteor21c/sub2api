@@ -29,3 +29,17 @@ test('video quote, final balance cost, discount and upstream tokens survive page
   assert.equal(record.tokenUsage.completionTokens, 40594)
   assert.equal(JSON.stringify(record).includes('sk-'), false)
 })
+
+test('FZY token tariff and precharge survive page reload without secrets', () => {
+  const history = globalThis.MeteorMediaHistory
+  const scope = history.userScope()
+  history.upsertVideo({
+    id: 'fzy-token-task', model: 'doubao-seedance-2.0-mini', createdAt: Date.now(), status: 'pending', keyId: '123',
+    quote: { mode: 'token', currency: 'CNY', sceneName: '无输入视频', officialPerMillion: 23, upstreamPerMillion: 6.9, salePerMillion: 7.935, prechargeAmount: 0.2, saleRateToOfficial: 0.345, providerDiscountRate: 0.3, apiKey: 'must-not-persist' },
+  }, scope)
+  const record = history.readVideos(scope).find(item => item.id === 'fzy-token-task')
+  assert.equal(record.quote.mode, 'token')
+  assert.equal(record.quote.salePerMillion, 7.935)
+  assert.equal(record.quote.prechargeAmount, 0.2)
+  assert.equal(JSON.stringify(record).includes('must-not-persist'), false)
+})

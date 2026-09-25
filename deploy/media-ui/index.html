@@ -163,10 +163,10 @@
               <div class="video-pricing-grid">
                 <span>本站单价 <b id="video-unit-price">—</b></span>
                 <span>适用倍率 / 折扣 <b id="video-rate-discount">—</b></span>
-                <span>预计扣费 <b id="video-estimated-cost">—</b></span>
+                <span><span id="video-estimated-label">预计扣费</span> <b id="video-estimated-cost">—</b></span>
               </div>
               <small id="video-pricing-note">选择视频密钥和模型后显示。最终以任务完成后的本站用量记录为准。</small>
-              <small>盈合 V3 按任务回传生成 Token 用量；其 Token 单价与授权折扣以盈合后台为准，任务接口未提供这两个数值。本站独立按视频秒数计费。</small>
+              <small>豆包 Seedance 使用盈合密钥专属 Token 价格：先预扣，完成后读取上游实际生成 Token 多退少补；失败退款。可灵与 Grok 保持原有计费规则。</small>
             </div>
 
             <div class="field full">

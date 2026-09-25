@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -369,6 +371,36 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
+		var fzyReservation *service.FZYVideoBillingJob
+		if endpoint == service.GrokMediaEndpointVideosGenerations && service.IsFZYTokenVideoAccount(account, requestModel) {
+			fzyReservation, err = h.gatewayService.PrepareFZYVideoBilling(requestCtx, account, apiKey, apiKey.User, requestModel, body)
+			if err != nil {
+				reqLog.Error("fzy_video.price_snapshot_failed", zap.Error(err))
+				h.errorResponse(c, http.StatusServiceUnavailable, "video_pricing_unavailable", "Video token pricing is temporarily unavailable")
+				return
+			}
+			if failoverClientGone(c) {
+				return
+			}
+			if err = h.gatewayService.ReserveFZYVideoBilling(requestCtx, fzyReservation); err != nil {
+				if errors.Is(err, service.ErrFZYVideoInsufficientBalance) {
+					h.errorResponse(c, http.StatusPaymentRequired, "insufficient_balance", "Insufficient balance for video reservation")
+				} else {
+					reqLog.Error("fzy_video.reserve_failed", zap.Error(err))
+					h.errorResponse(c, http.StatusServiceUnavailable, "video_billing_unavailable", "Video reservation is temporarily unavailable")
+				}
+				return
+			}
+			if failoverClientGone(c) {
+				if releaseErr := h.gatewayService.ReleaseFZYVideoBilling(requestCtx, fzyReservation.ID, subject.UserID); releaseErr != nil {
+					reqLog.Error("fzy_video.release_after_client_disconnect_failed", zap.String("reservation_id", fzyReservation.ID), zap.Error(releaseErr))
+				}
+				return
+			}
+			if preview, marshalErr := json.Marshal(fzyReservation.PricingPreview()); marshalErr == nil {
+				c.Header("X-Meteor-Video-Billing", base64.RawURLEncoding.EncodeToString(preview))
+			}
+		}
 		forwardStart := time.Now()
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
@@ -388,6 +420,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
 
 		if err != nil {
+			if fzyReservation != nil {
+				if releaseErr := h.gatewayService.ReleaseFZYVideoBilling(requestCtx, fzyReservation.ID, subject.UserID); releaseErr != nil {
+					reqLog.Error("fzy_video.release_after_create_failure_failed", zap.String("reservation_id", fzyReservation.ID), zap.Error(releaseErr))
+				}
+			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if failoverClientGone(c) {
@@ -462,6 +499,21 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			)
 			return
 		}
+		if fzyReservation != nil {
+			if result == nil || strings.TrimSpace(result.ResponseID) == "" {
+				if releaseErr := h.gatewayService.ReleaseFZYVideoBilling(requestCtx, fzyReservation.ID, subject.UserID); releaseErr != nil {
+					reqLog.Error("fzy_video.release_missing_task_id_failed", zap.String("reservation_id", fzyReservation.ID), zap.Error(releaseErr))
+				}
+				reqLog.Error("fzy_video.create_missing_task_id")
+				return
+			}
+			if bindErr := h.gatewayService.BindFZYVideoBilling(requestCtx, fzyReservation.ID, result.ResponseID); bindErr != nil {
+				// The provider may have accepted a paid task. Preserve the hold for
+				// reconciliation; never refund it and then bill the task again.
+				reqLog.Error("fzy_video.bind_failed", zap.String("reservation_id", fzyReservation.ID), zap.String("task_id", result.ResponseID), zap.Error(bindErr))
+				return
+			}
+		}
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account, grokMediaScheduleModel(account, routingModel, result), true, nil)
 		if isGrokVideoCreateEndpoint(endpoint) && strings.TrimSpace(result.ResponseID) != "" {
@@ -512,7 +564,28 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			}
 		} else if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
 			taskID := strings.TrimSpace(requestID)
-			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
+			if service.IsFZYVideoBridgeAccount(account) {
+				job, loadErr := h.gatewayService.LoadFZYVideoBilling(requestCtx, taskID, subject.UserID, apiKey.ID, account.ID)
+				if loadErr != nil || job == nil {
+					reqLog.Error("fzy_video.reservation_missing", zap.String("task_id", taskID), zap.Error(loadErr))
+				} else if result.VideoTaskFailed {
+					if releaseErr := h.gatewayService.ReleaseFZYVideoBilling(requestCtx, job.ID, subject.UserID); releaseErr != nil {
+						reqLog.Error("fzy_video.release_failed_task_failed", zap.String("task_id", taskID), zap.Error(releaseErr))
+					}
+				} else if result.VideoCount > 0 && job.Status == "pending" {
+					if result.Usage.OutputTokens <= 0 {
+						reqLog.Error("fzy_video.completed_without_provider_tokens", zap.String("task_id", taskID))
+					} else {
+						billResult := *result
+						billResult.FZYVideoBill = job
+						billResult.Model = job.Price.Model
+						billResult.BillingModel = job.Price.Model
+						billResult.ResponseID = taskID
+						billResult.RequestID = service.StableGrokVideoBillingRequestID(taskID)
+						recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, &billResult, billResult.Model, body, taskID)
+					}
+				}
+			} else if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {

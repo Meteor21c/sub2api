@@ -14,6 +14,27 @@
     return `$${number.toFixed(6).replace(/(\.\d{2,}?)0+$/, "$1")}`;
   }
 
+  function providerMoney(value, currency = "CNY") {
+    const number = nonnegative(value);
+    if (number === null) return "—";
+    return `${currency === "CNY" ? "¥" : "$"}${number.toFixed(6).replace(/(\.\d{2,}?)0+$/, "$1")}`;
+  }
+
+  function tokenQuote(raw) {
+    if (!raw || raw.billing_mode !== "token") return null;
+    const officialPerMillion = nonnegative(raw.official_per_million);
+    const upstreamPerMillion = nonnegative(raw.upstream_per_million);
+    const salePerMillion = nonnegative(raw.sale_per_million);
+    const prechargeAmount = nonnegative(raw.precharge_amount);
+    const saleRateToOfficial = nonnegative(raw.sale_rate_to_official);
+    if ([officialPerMillion, upstreamPerMillion, salePerMillion, prechargeAmount, saleRateToOfficial].some(item => item === null)) return null;
+    return {
+      mode: "token", currency: raw.currency || "CNY", sceneName: String(raw.scene_name || ""),
+      officialPerMillion, upstreamPerMillion, salePerMillion, prechargeAmount,
+      saleRateToOfficial, providerDiscountRate: nonnegative(raw.provider_discount_rate),
+    };
+  }
+
   function multiplier(group) {
     if (!group) return null;
     if (group.videoRateIndependent) return nonnegative(group.videoRateMultiplier);
@@ -42,7 +63,12 @@
     const rate = nonnegative(value);
     if (rate === null) return "未提供";
     if (Math.abs(rate - 1) < 0.000001) return "无折扣（1.00×）";
-    if (rate < 1) return `${(rate * 10).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")} 折（${rate.toFixed(2)}×）`;
+    if (rate < 1) {
+      const folds = Number((rate * 10).toFixed(4));
+      const multiplierText = Math.abs(rate * 100 - Math.round(rate * 100)) < 1e-8
+        ? rate.toFixed(2) : rate.toFixed(4).replace(/0+$/, "");
+      return `${folds} 折（${multiplierText}×）`;
+    }
     return `加价 ${((rate - 1) * 100).toFixed(1)}%（${rate.toFixed(2)}×）`;
   }
 
@@ -65,5 +91,5 @@
     return { completionTokens, totalTokens, promptTokens };
   }
 
-  globalThis.MeteorVideoPricing = { money, multiplier, quote, discount, settlement, tokenUsage };
+  globalThis.MeteorVideoPricing = { money, providerMoney, tokenQuote, multiplier, quote, discount, settlement, tokenUsage };
 })();

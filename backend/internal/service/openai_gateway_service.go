@@ -284,7 +284,11 @@ type OpenAIForwardResult struct {
 	ImageSizeSource       string
 	ImageSizeBreakdown    map[string]int
 	VideoCount            int
-	VideoResolution       string
+	// FZYVideoBill is a create-time, key-specific token tariff reservation.
+	// It is only populated for the FZY Doubao bridge, never for xAI or Kling.
+	FZYVideoBill    *FZYVideoBillingJob
+	VideoTaskFailed bool
+	VideoResolution string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
 	// WebSearchCalls 是 Codex alpha/search 网页搜索调用次数（每次成功请求为 1）。
@@ -584,6 +588,9 @@ func NewOpenAIGatewayService(
 		openAITokenProvider.SetAccountRuntimeBlocker(svc)
 	}
 	svc.logOpenAIWSModeBootstrap()
+	if _, ok := usageBillingRepo.(FZYVideoBillingRepository); ok && accountRepo != nil && userRepo != nil && usageLogRepo != nil && cfg != nil && cfg.RunMode != config.RunModeSimple {
+		go svc.runFZYVideoReconciler()
+	}
 	return svc
 }
 

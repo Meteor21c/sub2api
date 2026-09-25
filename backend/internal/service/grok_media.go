@@ -818,6 +818,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		VideoCount:           usage.VideoCount,
 		VideoResolution:      usage.VideoResolution,
 		VideoDurationSeconds: usage.VideoDurationSeconds,
+		VideoTaskFailed:      usage.VideoTaskFailed,
 	}, nil
 }
 
@@ -1231,6 +1232,7 @@ type grokMediaUsageMetadata struct {
 	VideoCount           int
 	VideoResolution      string
 	VideoDurationSeconds int
+	VideoTaskFailed      bool
 }
 
 func grokMediaUsageFromResponse(endpoint GrokMediaEndpoint, requestInfo GrokMediaRequestInfo, responseBody []byte) grokMediaUsageMetadata {
@@ -1249,6 +1251,8 @@ func grokMediaUsageFromResponse(endpoint GrokMediaEndpoint, requestInfo GrokMedi
 		meta.VideoResolution = requestInfo.Resolution
 		meta.VideoDurationSeconds = requestInfo.DurationSeconds
 	case GrokMediaEndpointVideoStatus:
+		status := strings.ToLower(strings.TrimSpace(gjson.GetBytes(responseBody, "status").String()))
+		meta.VideoTaskFailed = status == "failed" || status == "expired" || status == "cancelled" || status == "canceled"
 		// Prefer status-body URL success + upstream duration/resolution when present.
 		if IsGrokVideoStatusBillable(responseBody) {
 			// provisional units; handler merges with pending snapshot before RecordUsage.

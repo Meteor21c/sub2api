@@ -255,6 +255,20 @@
 
   function safeQuote(value) {
     if (!value || typeof value !== "object") return null;
+    if (value.mode === "token") {
+      const officialPerMillion = safeNumber(value.officialPerMillion);
+      const upstreamPerMillion = safeNumber(value.upstreamPerMillion);
+      const salePerMillion = safeNumber(value.salePerMillion);
+      const prechargeAmount = safeNumber(value.prechargeAmount);
+      const saleRateToOfficial = safeNumber(value.saleRateToOfficial);
+      if ([officialPerMillion, upstreamPerMillion, salePerMillion, prechargeAmount, saleRateToOfficial].some(number => number === null)) return null;
+      return {
+        mode: "token", currency: value.currency === "USD" ? "USD" : "CNY",
+        sceneName: String(value.sceneName || "").slice(0, 80), officialPerMillion,
+        upstreamPerMillion, salePerMillion, prechargeAmount, saleRateToOfficial,
+        providerDiscountRate: safeNumber(value.providerDiscountRate),
+      };
+    }
     const unitPrice = safeNumber(value.unitPrice);
     const duration = safeNumber(value.duration);
     const rate = safeNumber(value.rate);

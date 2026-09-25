@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import http from 'node:http'
-import { mkdtemp, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -240,7 +240,8 @@ test('video MCP uses the official Sub2API video task and status endpoints', asyn
   const mock = await startMock(async (req, res) => {
     const body = await readBody(req)
     requests.push({ method: req.method, url: req.url, auth: req.headers.authorization, body: body.toString('utf8') })
-    res.writeHead(200, { 'Content-Type': 'application/json' })
+    const billing = { billing_mode: 'token', sale_per_million: '7.935', precharge_amount: 0.2 }
+    res.writeHead(200, { 'Content-Type': 'application/json', ...(req.method === 'POST' ? { 'X-Meteor-Video-Billing': Buffer.from(JSON.stringify(billing)).toString('base64url') } : {}) })
     if (req.method === 'POST') res.end(JSON.stringify({ id: 'sub-video-1', status: 'pending' }))
     else res.end(JSON.stringify({ id: 'sub-video-1', status: 'completed', video: { url: 'https://cdn.example/video.mp4' }, provider_token_usage: { completion_tokens: 40594, total_tokens: 40594 } }))
   })
@@ -250,6 +251,7 @@ test('video MCP uses the official Sub2API video task and status endpoints', asyn
       name: 'create_video', arguments: { model: 'doubao-seedance-2.0-fast', prompt: 'a test clip' },
     }, 'sk-user-video')
     assert.equal(created.body.result.structuredContent.task_id, 'sub-video-1')
+    assert.equal(created.body.result.structuredContent.billing.sale_per_million, '7.935')
     const status = await rpc(bridge.base, '/mcp/video', 'tools/call', {
       name: 'get_video', arguments: { task_id: 'sub-video-1' },
     }, 'sk-user-video')
@@ -433,6 +435,37 @@ test('FZYinghe authorized Doubao 1.5 Pro uses V3 for creation and successful sta
     assert.equal(result.video.url, 'https://cdn.example/video.mp4')
     assert.deepEqual(result.provider_token_usage, { completion_tokens: 40594, total_tokens: 40594 })
     assert.deepEqual(seenURLs, ['/v3/video/tasks', '/v3/video/tasks/doubao-task-1'])
+  } finally {
+    await stopBridge(bridge)
+    await stopMock(mock)
+  }
+})
+
+test('billing-only FZY status returns tokens without staging the video file', async () => {
+  const mock = await startMock(async (req, res) => {
+    await readBody(req)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    if (req.method === 'POST') res.end(JSON.stringify({ id: 'billing-only-task', status: 'queued' }))
+    else res.end(JSON.stringify({ id: 'billing-only-task', status: 'succeeded', content: { video_url: 'https://cdn.example/video.mp4' }, usage: { completion_tokens: 40594 } }))
+  })
+  const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
+  try {
+    const headers = { Authorization: 'Bearer sk-fzy-provider' }
+    const created = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
+      method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'doubao-seedance-2.0-mini', prompt: 'billing test' }),
+    })
+    assert.equal(created.status, 200)
+    const status = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/billing-only-task`, {
+      headers: { ...headers, 'X-Meteor-Billing-Only': '1' },
+    })
+    assert.equal(status.status, 200)
+    const result = await status.json()
+    assert.equal(result.status, 'done')
+    assert.equal(result.provider_token_usage.completion_tokens, 40594)
+    const metaPath = path.join(bridge.dir, 'tasks', `${crypto.createHash('sha256').update('billing-only-task').digest('hex')}.json`)
+    const meta = JSON.parse(await readFile(metaPath, 'utf8'))
+    assert.equal(meta.deliveryURL, undefined)
   } finally {
     await stopBridge(bridge)
     await stopMock(mock)

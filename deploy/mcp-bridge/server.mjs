@@ -750,7 +750,12 @@ async function createVideo(token, args) {
   if (!result.response.ok) return mcpToolError(`Sub2API video request returned HTTP ${result.response.status}: ${String(result.buffer).slice(0, 800)}`)
   const taskID = first(result.data?.id, result.data?.request_id, result.data?.task_id, result.data?.data?.id, result.data?.data?.request_id)
   if (!taskID) return mcpToolError('Sub2API accepted the request but returned no task id; do not retry automatically')
-  const structured = { task_id: taskID, id: taskID, status: 'PENDING', model, raw: result.data }
+  let billing = null
+  try {
+    const encoded = result.response.headers.get('x-meteor-video-billing') || ''
+    if (encoded && encoded.length < 4096) billing = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
+  } catch { /* Older Sub2API releases do not provide a pricing snapshot. */ }
+  const structured = { task_id: taskID, id: taskID, status: 'PENDING', model, raw: result.data, ...(billing ? { billing } : {}) }
   return mcpToolResult([{ type: 'text', text: JSON.stringify(structured) }], structured)
 }
 
@@ -1092,7 +1097,7 @@ async function handleFzyProvider(req, res, parsed) {
     const task = extractTask(raw)
     const tokenUsage = videoTokenUsage(raw)
     const success = ['success', 'succeeded', 'succeed', 'completed', 'done'].includes(String(task.status).toLowerCase()) || Boolean(task.resultURL)
-    const failure = ['failed', 'failure', 'cancelled', 'canceled', 'error'].includes(String(task.status).toLowerCase())
+    const failure = ['failed', 'failure', 'expired', 'cancelled', 'canceled', 'error'].includes(String(task.status).toLowerCase())
     if (statusMatch[2] === '/content') {
       if (!success || !task.resultURL) { json(res, 409, { error: { message: 'video is not complete' } }); return }
       const resultURL = await checkedPublicURL(task.resultURL)
@@ -1102,7 +1107,10 @@ async function handleFzyProvider(req, res, parsed) {
       await streamRemote(res, remote, MAX_REMOTE_VIDEO, 'video/mp4', false)
       return
     }
-    if (success && task.resultURL) {
+    // The backend's low-frequency billing reconciler only needs status and
+    // usage. Never download a potentially large video for this read-only poll.
+    const billingOnly = req.headers['x-meteor-billing-only'] === '1'
+    if (success && task.resultURL && !billingOnly) {
       if (!taskMeta?.deliveryURL) {
         try {
           const delivery = await storeRemoteVideo(task.resultURL, ownerHash(token))
@@ -1111,7 +1119,7 @@ async function handleFzyProvider(req, res, parsed) {
         } catch (error) { log('video_delivery_store_failed', { task_id: taskID, error: error.message }) }
       }
     }
-    const url = first(taskMeta?.deliveryURL, task.resultURL)
+    const url = billingOnly ? task.resultURL : first(taskMeta?.deliveryURL, task.resultURL)
     json(res, 200, failure ? { id: taskID, status: 'failed', model, error: { message: task.reason || 'video generation failed' } } : success ? { id: taskID, status: 'done', model, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}) } : { id: taskID, status: 'pending', model })
     return
   }

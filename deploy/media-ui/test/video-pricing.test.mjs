@@ -38,3 +38,17 @@ test('final cost and discount use settled usage amounts, not the estimate', () =
     completionTokens: 40594, totalTokens: 40594, promptTokens: null,
   })
 })
+
+test('FZY token quote distinguishes official, upstream, sale and refundable hold', () => {
+  const quote = pricing.tokenQuote({
+    billing_mode: 'token', currency: 'CNY', scene_name: '无输入视频',
+    official_per_million: '23', upstream_per_million: '6.9',
+    sale_per_million: '7.935', sale_rate_to_official: '0.345',
+    provider_discount_rate: '0.3', precharge_amount: 0.2,
+  })
+  assert.equal(quote.salePerMillion, 7.935)
+  assert.equal(quote.prechargeAmount, 0.2)
+  assert.equal(pricing.providerMoney(quote.salePerMillion, quote.currency), '¥7.935')
+  assert.equal(pricing.discount(quote.saleRateToOfficial), '3.45 折（0.345×）')
+  assert.equal(pricing.tokenQuote({ billing_mode: 'token', sale_per_million: null }), null)
+})

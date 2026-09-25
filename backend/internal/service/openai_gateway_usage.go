@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
 
@@ -236,20 +237,24 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
 	}
 	longContextBillingGate := openAILongContextBillingGate(billingAccount)
-	cost, err = s.calculateOpenAIRecordUsageCost(
-		ctx,
-		result,
-		apiKey,
-		billingModels,
-		multiplier,
-		imageMultiplier,
-		videoMultiplier,
-		baseMultiplier,
-		tokens,
-		serviceTier,
-		longContextBillingGate,
-		pricingAt,
-	)
+	if result.FZYVideoBill != nil {
+		cost, err = calculateFZYVideoTokenCost(result.FZYVideoBill, result.Usage.OutputTokens)
+	} else {
+		cost, err = s.calculateOpenAIRecordUsageCost(
+			ctx,
+			result,
+			apiKey,
+			billingModels,
+			multiplier,
+			imageMultiplier,
+			videoMultiplier,
+			baseMultiplier,
+			tokens,
+			serviceTier,
+			longContextBillingGate,
+			pricingAt,
+		)
+	}
 	if err != nil {
 		if !isUsagePricingUnavailableError(err) {
 			return err
@@ -299,7 +304,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// Free Fast changes only the customer charge. Keep priority TotalCost and
 	// service_tier for upstream accounting, but evaluate ActualCost once more at
 	// the Standard tier using the same channel, peak, and long-context policy.
-	if groupBillsOpenAIFastAtStandard(apiKey, billingAccount, serviceTier) {
+	if result.FZYVideoBill == nil && groupBillsOpenAIFastAtStandard(apiKey, billingAccount, serviceTier) {
 		standardCost, standardErr := s.calculateOpenAIRecordUsageCost(
 			ctx,
 			result,
@@ -423,7 +428,14 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.ActualCost = cost.ActualCost
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
 	}
-	if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
+	if result.FZYVideoBill != nil && cost != nil && cost.TotalCost > 0 {
+		usageLog.RateMultiplier = cost.ActualCost / cost.TotalCost
+		if discount, discountErr := decimal.NewFromString(result.FZYVideoBill.Price.DiscountRate); discountErr == nil {
+			if markup, markupErr := decimal.NewFromString(result.FZYVideoBill.Price.MarkupRate); markupErr == nil {
+				usageLog.RateMultiplier = discount.Mul(markup).InexactFloat64()
+			}
+		}
+	} else if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = videoMultiplier
 	} else if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
@@ -479,9 +491,17 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
+		accountStatsBaseCost := cost.TotalCost
+		if result.FZYVideoBill != nil {
+			providerCost, providerErr := result.FZYVideoBill.Price.ProviderCostForOutputTokens(result.Usage.OutputTokens)
+			if providerErr != nil {
+				return providerErr
+			}
+			accountStatsBaseCost = providerCost
+		}
 		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
-			tokens, cost.TotalCost, pricingAt,
+			tokens, accountStatsBaseCost, pricingAt,
 		)
 	}
 
@@ -500,7 +520,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 
 	billingErr := func() error {
-		_, err := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
+		params := &postUsageBillingParams{
 			Cost:                  cost,
 			User:                  user,
 			APIKey:                apiKey,
@@ -511,7 +531,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			AccountRateMultiplier: accountRateMultiplier,
 			APIKeyService:         input.APIKeyService,
 			Platform:              quotaPlatform,
-		}, s.billingDeps(), s.usageBillingRepo)
+		}
+		if result.FZYVideoBill != nil {
+			return s.applyFZYVideoUsageBilling(ctx, requestID, usageLog, params, result.FZYVideoBill, result.Usage.OutputTokens)
+		}
+		_, err := applyUsageBilling(ctx, requestID, usageLog, params, s.billingDeps(), s.usageBillingRepo)
 		return err
 	}()
 
