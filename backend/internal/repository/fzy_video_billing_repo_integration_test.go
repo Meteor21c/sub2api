@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,7 +49,7 @@ func TestFZYVideoBillingReserveSettleReleaseAndDeduplicate(t *testing.T) {
 	loaded, err := repo.GetFZYVideoByTask(ctx, "fzy-task-"+job.ID, user.ID, key.ID, account.ID)
 	require.NoError(t, err)
 	require.NotNil(t, loaded)
-	require.Equal(t, "7.935", loaded.Price.SalePerMillion)
+	require.True(t, decimal.RequireFromString("7.935").Equal(decimal.RequireFromString(loaded.Price.SalePerMillion)))
 	require.Equal(t, "pending", loaded.Status)
 
 	const actual = 0.32211339
