@@ -117,6 +117,7 @@ type poolSettings struct {
 
 type openAIHTTP2Settings struct {
 	enabled                   bool
+	forceHTTP1AccountID       int64
 	allowProxyFallbackToHTTP1 bool
 	fallbackErrorThreshold    int
 	fallbackWindow            time.Duration
@@ -669,7 +670,7 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 		return nil, err
 	}
 	// 根据请求 profile（例如 OpenAI）选择协议模式
-	protocolMode := s.resolveProtocolMode(profile, proxyKey, parsedProxy)
+	protocolMode := s.resolveProtocolMode(profile, proxyKey, parsedProxy, accountID)
 	settings := s.resolvePoolSettings(isolation, accountConcurrency)
 	settings = s.applyProfilePoolSettings(settings, profile)
 	// 构建缓存键（根据隔离策略不同）
@@ -994,6 +995,7 @@ func (s *httpUpstreamService) resolveOpenAIHTTP2Settings() openAIHTTP2Settings {
 	}
 	cfg := s.cfg.Gateway.OpenAIHTTP2
 	settings.enabled = cfg.Enabled
+	settings.forceHTTP1AccountID = cfg.ForceHTTP1AccountID
 	settings.allowProxyFallbackToHTTP1 = cfg.AllowProxyFallbackToHTTP1
 	if cfg.FallbackErrorThreshold > 0 {
 		settings.fallbackErrorThreshold = cfg.FallbackErrorThreshold
@@ -1007,7 +1009,7 @@ func (s *httpUpstreamService) resolveOpenAIHTTP2Settings() openAIHTTP2Settings {
 	return settings
 }
 
-func (s *httpUpstreamService) resolveProtocolMode(profile service.HTTPUpstreamProfile, proxyKey string, parsedProxy *url.URL) string {
+func (s *httpUpstreamService) resolveProtocolMode(profile service.HTTPUpstreamProfile, proxyKey string, parsedProxy *url.URL, accountID int64) string {
 	if profile == service.HTTPUpstreamProfileLongStream {
 		return upstreamProtocolModeLongStreamH2
 	}
@@ -1018,7 +1020,7 @@ func (s *httpUpstreamService) resolveProtocolMode(profile service.HTTPUpstreamPr
 		return upstreamProtocolModeDefault
 	}
 	settings := s.resolveOpenAIHTTP2Settings()
-	if !settings.enabled {
+	if !settings.enabled || (settings.forceHTTP1AccountID > 0 && accountID == settings.forceHTTP1AccountID) {
 		return upstreamProtocolModeOpenAIH1
 	}
 	if parsedProxy == nil {

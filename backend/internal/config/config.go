@@ -1153,6 +1153,8 @@ type GatewayLiveConfig struct {
 type GatewayOpenAIHTTP2Config struct {
 	// Enabled: 是否启用 OpenAI HTTP/2 优先策略
 	Enabled bool `mapstructure:"enabled"`
+	// ForceHTTP1AccountID: 仅对指定账号使用 HTTP/1.1；0 表示关闭灰度
+	ForceHTTP1AccountID int64 `mapstructure:"force_http1_account_id"`
 	// AllowProxyFallbackToHTTP1: HTTP/HTTPS 代理出现明确 H2 兼容错误时，临时回退 HTTP/1.1
 	AllowProxyFallbackToHTTP1 bool `mapstructure:"allow_proxy_fallback_to_http1"`
 	// FallbackErrorThreshold: 回退窗口内累计多少次兼容错误后触发回退
@@ -2441,6 +2443,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.openai_ws.scheduler_score_weights.session_sticky", 3.0)
 	// OpenAI HTTP upstream protocol strategy
 	viper.SetDefault("gateway.openai_http2.enabled", true)
+	viper.SetDefault("gateway.openai_http2.force_http1_account_id", 0)
 	viper.SetDefault("gateway.openai_http2.allow_proxy_fallback_to_http1", true)
 	viper.SetDefault("gateway.openai_http2.fallback_error_threshold", 2)
 	viper.SetDefault("gateway.openai_http2.fallback_window_seconds", 60)
@@ -3509,6 +3512,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.OpenAIHTTP2.FallbackErrorThreshold < 0 {
 		return fmt.Errorf("gateway.openai_http2.fallback_error_threshold must be non-negative")
+	}
+	if c.Gateway.OpenAIHTTP2.ForceHTTP1AccountID < 0 {
+		return fmt.Errorf("gateway.openai_http2.force_http1_account_id must be non-negative")
 	}
 	if c.Gateway.OpenAIHTTP2.FallbackWindowSeconds < 0 {
 		return fmt.Errorf("gateway.openai_http2.fallback_window_seconds must be non-negative")
