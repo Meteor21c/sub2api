@@ -78,6 +78,19 @@ func TestExtractGrokVideoBillingFromStatusBodyPrefersUpstreamParams(t *testing.T
 	require.Equal(t, 12, result.VideoDurationSeconds)
 }
 
+func TestExtractGrokVideoBillingPreservesProviderTokens(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{"status":"done","model":"doubao-seedance-2.0-mini","video":{"url":"https://example.com/signed.mp4"},"provider_token_usage":{"prompt_tokens":120,"completion_tokens":40594,"total_tokens":40714}}`)
+	result := ExtractGrokVideoBillingFromStatusBody(body, nil, "fzy-task")
+	require.NotNil(t, result)
+	require.Equal(t, 120, result.Usage.InputTokens)
+	require.Equal(t, 40594, result.Usage.OutputTokens)
+
+	meta := grokMediaUsageFromResponse(GrokMediaEndpointVideoStatus, GrokMediaRequestInfo{}, body)
+	require.Equal(t, result.Usage, meta.Usage)
+	require.Zero(t, providerTokenUsageFromGrokStatus([]byte(`{"status":"pending","provider_token_usage":{"completion_tokens":40594}}`)).OutputTokens)
+}
+
 func TestExtractGrokVideoBillingFromStatusBodyFallsBackToPending(t *testing.T) {
 	t.Parallel()
 	pending := &GrokVideoPendingBilling{
