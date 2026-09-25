@@ -10,9 +10,7 @@
     const value = groups?.[kind];
     if (value === undefined || value === null || value === '') return [];
     const values = Array.isArray(value) ? value : [value];
-    return values
-      .map(id => Number(id))
-      .filter(id => Number.isInteger(id) && id > 0);
+    return values.map(id => Number(id)).filter(id => Number.isInteger(id) && id > 0);
   }
 
   function hasConfiguredPrice(group, fields) {
@@ -22,16 +20,15 @@
   function supportsMediaKind(group, kind) {
     if (!group || group.status === 'inactive') return false;
     if (kind === 'image') return group.allow_image_generation === true;
-    return group.allow_video_generation === true || group.video_enabled === true || hasConfiguredPrice(group, [
-      'video_price_480p',
-      'video_price_720p',
-      'video_price_1080p',
-    ]);
+    return group.allow_video_generation === true || group.video_enabled === true ||
+      Object.keys(group.video_model_prices || {}).length > 0 || hasConfiguredPrice(group, [
+        'video_price_480p', 'video_price_720p', 'video_price_1080p',
+      ]);
   }
 
   function createClient({ readToken, fetchJSON, groups = {} }) {
-    let session = '', rows = [], availableGroups = [], userId = null;
-    const clear = () => { session = ''; rows = []; availableGroups = []; userId = null; };
+    let session = '', rows = [], availableGroups = [], groupRates = {}, userId = null;
+    const clear = () => { session = ''; rows = []; availableGroups = []; groupRates = {}; userId = null; };
     const current = () => session && readToken() === session;
     const allowedGroupIds = kind => {
       const configured = normalizedConfiguredGroupIds(groups, kind);
@@ -43,9 +40,10 @@
       clear();
       const token = readToken();
       if (!token) throw new Error('请先登录，再使用图片或视频生成。');
-      const [me, visibleGroups] = await Promise.all([
+      const [me, visibleGroups, rates] = await Promise.all([
         fetchJSON('/api/v1/auth/me', token),
         fetchJSON('/api/v1/groups/available', token),
+        fetchJSON('/api/v1/groups/rates', token).catch(() => ({})),
       ]);
       const found = [];
       for (let page = 1; page <= 100; page++) {
@@ -59,6 +57,7 @@
       userId = me.id;
       rows = found;
       availableGroups = Array.isArray(visibleGroups) ? visibleGroups : [];
+      groupRates = rates && typeof rates === 'object' ? rates : {};
       session = token;
     }
     function list(kind) {
@@ -89,6 +88,16 @@
           '2K': group.image_price_2k,
           '4K': group.image_price_4k,
         },
+        videoPrices: group.video_model_prices || {},
+        videoFallbackPrices: {
+          '480p': group.video_price_480p,
+          '720p': group.video_price_720p,
+          '1080p': group.video_price_1080p,
+        },
+        rateMultiplier: group.rate_multiplier,
+        userRateMultiplier: groupRates[String(info.groupId)],
+        videoRateIndependent: group.video_rate_independent === true,
+        videoRateMultiplier: group.video_rate_multiplier,
       };
     }
     function owns(kind, secret) {

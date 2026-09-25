@@ -247,22 +247,70 @@
     return scope ? `${VIDEO_STORAGE_PREFIX}:${scope}` : "";
   }
 
+  function safeNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : null;
+  }
+
+  function safeQuote(value) {
+    if (!value || typeof value !== "object") return null;
+    const unitPrice = safeNumber(value.unitPrice);
+    const duration = safeNumber(value.duration);
+    const rate = safeNumber(value.rate);
+    const standardCost = safeNumber(value.standardCost);
+    const estimatedCost = safeNumber(value.estimatedCost);
+    return [unitPrice, duration, rate, standardCost, estimatedCost].some((number) => number === null)
+      ? null : { unitPrice, duration, rate, standardCost, estimatedCost };
+  }
+
+  function safeSettlement(value) {
+    if (!value || typeof value !== "object") return null;
+    const actualCost = safeNumber(value.actualCost);
+    if (actualCost === null) return null;
+    return {
+      actualCost,
+      standardCost: safeNumber(value.standardCost),
+      effectiveRate: safeNumber(value.effectiveRate),
+      discount: String(value.discount || "").slice(0, 80),
+      balanceAfter: safeNumber(value.balanceAfter),
+    };
+  }
+
+  function safeTokenUsage(value) {
+    if (!value || typeof value !== "object") return null;
+    const result = {
+      promptTokens: safeNumber(value.promptTokens),
+      completionTokens: safeNumber(value.completionTokens),
+      totalTokens: safeNumber(value.totalTokens),
+    };
+    return Object.values(result).every((number) => number === null) ? null : result;
+  }
+
   function pruneVideos(records, now = Date.now()) {
     return (Array.isArray(records) ? records : [])
       .filter((record) => record && Number.isFinite(Number(record.createdAt)) && now - Number(record.createdAt) <= RESULT_TTL_MS)
       .sort((left, right) => Number(right.createdAt) - Number(left.createdAt))
       .slice(0, HISTORY_LIMIT)
-      .map((record) => ({
-        id: String(record.id || ""),
-        createdAt: Number(record.createdAt),
-        updatedAt: Number(record.updatedAt) || Number(record.createdAt),
-        keyId: String(record.keyId || ""),
-        model: String(record.model || ""),
-        prompt: String(record.prompt || ""),
-        status: ["success", "failure"].includes(record.status) ? record.status : "pending",
-        url: safeRemoteUrl(record.url),
-        reason: String(record.reason || ""),
-      }))
+      .map((record) => {
+        const quote = safeQuote(record.quote);
+        const settlement = safeSettlement(record.settlement);
+        const tokenUsage = safeTokenUsage(record.tokenUsage);
+        return {
+          id: String(record.id || ""),
+          createdAt: Number(record.createdAt),
+          updatedAt: Number(record.updatedAt) || Number(record.createdAt),
+          keyId: String(record.keyId || ""),
+          model: String(record.model || ""),
+          prompt: String(record.prompt || ""),
+          status: ["success", "failure"].includes(record.status) ? record.status : "pending",
+          url: safeRemoteUrl(record.url),
+          reason: String(record.reason || ""),
+          ...(quote ? { quote } : {}),
+          ...(settlement ? { settlement } : {}),
+          ...(tokenUsage ? { tokenUsage } : {}),
+        };
+      })
       .filter((record) => record.id);
   }
 
@@ -308,6 +356,9 @@
       status: ["success", "failure"].includes(entry.status) ? entry.status : (entry.status === "pending" ? "pending" : existing.status || "pending"),
       url: typeof entry.url === "string" ? safeRemoteUrl(entry.url) : String(existing.url || ""),
       reason: String(entry.reason ?? existing.reason ?? ""),
+      quote: safeQuote(entry.quote ?? existing.quote),
+      settlement: safeSettlement(entry.settlement ?? existing.settlement),
+      tokenUsage: safeTokenUsage(entry.tokenUsage ?? existing.tokenUsage),
     });
     return writeVideos(records, expectedScope);
   }

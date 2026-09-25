@@ -2,12 +2,6 @@
   "use strict";
 
   const API_BASE = window.location.origin.replace(/\/$/, "");
-  const IMAGE_FALLBACK = ["gpt-image-2", "gpt-image-2-pro"];
-  const VIDEO_FALLBACK = [
-    "cheap-seedance-2.0", "cheap-seedance-2.0-fast", "cheap-seedance-2.0-mini",
-    "doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini", "doubao-seedance-2.5",
-    "kling-v3", "kling-v3-omni",
-  ];
   const state = {
     image: { key: "", models: [], busy: false, history: [], objectUrls: [], scope: "", restoreEpoch: 0 },
     video: { key: "", models: [], busy: false, taskId: "", history: [], polling: new Set(), pollEpoch: 0, objectUrls: new Map(), scope: "" },
@@ -135,7 +129,7 @@
 
   function setBusy(kind, busy) {
     state[kind].busy = busy;
-    $(`${kind}-submit`).disabled = busy;
+    $(`${kind}-submit`).disabled = busy || !state[kind].models.length;
     $(`${kind}-submit`).classList.toggle("loading", busy);
   }
 
@@ -161,28 +155,36 @@
   async function loadModels(kind) {
     const key = selectedKey(kind);
     if (!key) {
+      state[kind].models = [];
+      setOptions($(`${kind}-model`), []);
+      setBusy(kind, state[kind].busy);
       setStatus(kind, "请选择可用密钥；没有密钥时请前往 API Keys 创建。", "error");
       return;
     }
     state[kind].key = key;
+    state[kind].models = [];
+    setOptions($(`${kind}-model`), []);
+    setBusy(kind, state[kind].busy);
     setStatus(kind, "正在读取模型…");
     try {
       const result = await request("/v1/models", {}, key);
       const all = modelIds(result.data);
       const filtered = all.filter(kind === "image" ? isImageModel : isVideoModel);
-      state[kind].models = filtered.length ? filtered : all;
-      if (!state[kind].models.length) throw new ApiError("该 API Key 没有可用模型");
+      state[kind].models = filtered;
+      if (!state[kind].models.length) throw new ApiError(`该 API Key 没有可用${kind === "video" ? "视频" : "图片"}模型`);
       setOptions($(`${kind}-model`), state[kind].models);
+      setBusy(kind, state[kind].busy);
       if (kind === "image") updateImageOptions();
       else updateVideoOptions();
       $(`${kind}-model-hint`).textContent = `已读取 ${state[kind].models.length} 个可用模型。`;
       setStatus(kind, "模型读取成功", "success");
     } catch (error) {
       state[kind].models = [];
-      setOptions($(`${kind}-model`), kind === "image" ? IMAGE_FALLBACK : VIDEO_FALLBACK);
+      setOptions($(`${kind}-model`), []);
+      setBusy(kind, state[kind].busy);
       if (kind === "image") updateImageOptions();
       else updateVideoOptions();
-      $(`${kind}-model-hint`).textContent = "读取失败；下拉框仅保留示例模型，不代表该 Key 可用。";
+      $(`${kind}-model-hint`).textContent = `未读取到可用${kind === "video" ? "视频" : "图片"}模型，请检查密钥分组后重试。`;
       setStatus(kind, error.message || "模型读取失败", "error");
     }
   }
@@ -201,8 +203,13 @@
           select.append(option);
         }
         if (!choices.length) {
+          state[kind].models = [];
+          setOptions($(`${kind}-model`), []);
+          setBusy(kind, state[kind].busy);
+          if (kind === "video") $("video-key-hint").firstChild.textContent = "当前账号没有有效的视频分组密钥。";
           setStatus(kind, "暂无可用密钥，请前往 API Keys 创建对应分组密钥。", "error");
         } else {
+          if (kind === "video") $("video-key-hint").firstChild.textContent = "只显示当前账号有效的视频分组密钥。";
           if (kind === "image") updateImageOptions();
           await loadModels(kind);
         }
@@ -211,14 +218,17 @@
     } catch (error) {
       clearKeys();
       for (const kind of ["image", "video"]) setStatus(kind, error.message, "error");
+      $("video-key-hint").firstChild.textContent = `${error.message} `;
     }
   }
 
   function initKeys() {
     ["image", "video"].forEach((kind) => {
       sessionStorage.removeItem(`meteor-media-${kind}-key`);
-      setOptions($(`${kind}-model`), kind === "image" ? IMAGE_FALLBACK : VIDEO_FALLBACK);
+      setOptions($(`${kind}-model`), []);
     });
+    setBusy("image", false);
+    setBusy("video", false);
   }
 
   function clearKeys() {
@@ -226,7 +236,14 @@
     ["image", "video"].forEach((kind) => {
       sessionStorage.removeItem(`meteor-media-${kind}-key`);
       state[kind].key = "";
+      state[kind].models = [];
       $(`${kind}-key`).replaceChildren();
+      setOptions($(`${kind}-model`), []);
+      setBusy(kind, state[kind].busy);
+      if (kind === "video") {
+        updateVideoOptions();
+        $("video-key-hint").firstChild.textContent = "只显示当前账号有效的视频分组密钥。";
+      }
       if (kind === "image") updateImageOptions();
       setStatus(kind, "本页密钥已清除");
     });
@@ -408,19 +425,56 @@
     return "seedance";
   }
 
+  function videoDurationRange(model) {
+    if (model === "doubao-seedance-2.5") return { min: 4, max: 30 };
+    if (model === "doubao-seedance-1.5-pro") return { min: 4, max: 12 };
+    const family = videoFamily(model);
+    return { min: family === "kling" || family === "grok" ? 3 : 4, max: 15 };
+  }
+
   function updateVideoOptions() {
-    const family = videoFamily($("video-model").value);
+    const model = $("video-model").value;
+    const family = videoFamily(model);
     const resolution = family === "kling" ? ["720p", "1080p", "4K"] : family === "grok" ? ["480p", "720p"] : ["480p", "720p"];
     const ratios = family === "kling" ? ["16:9", "9:16", "1:1"] : family === "grok" ? ["16:9", "9:16", "1:1", "4:3", "3:4"] : ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
     const currentResolution = $("video-resolution").value;
     const currentRatio = $("video-ratio").value;
     setOptions($("video-resolution"), resolution, currentResolution);
     setOptions($("video-ratio"), ratios, currentRatio);
-    const min = family === "kling" || family === "grok" ? 3 : 4;
+    const { min, max } = videoDurationRange(model);
     $("video-duration").min = String(min);
+    $("video-duration").max = String(max);
     if (Number($("video-duration").value) < min) $("video-duration").value = String(min);
-    $("video-duration-hint").textContent = `${family === "kling" || family === "grok" ? "当前模型" : "Seedance / Doubao"}允许 ${min}–15 秒。`;
+    if (Number($("video-duration").value) > max) $("video-duration").value = String(max);
+    $("video-duration-hint").textContent = model ? `当前模型允许 ${min}–${max} 秒。` : "选择模型后显示时长范围。";
     if (family === "kling" && $("video-mode").value === "text_with_reference") $("video-mode").value = "text_with_reference";
+    updateVideoPricing();
+  }
+
+  function currentVideoQuote() {
+    const model = $("video-model").value;
+    if (!state.video.models.includes(model)) return null;
+    return MeteorVideoPricing.quote(
+      accountKeys.getGroup("video", $("video-key").value),
+      model, $("video-resolution").value, Number($("video-duration").value),
+    );
+  }
+
+  function updateVideoPricing() {
+    const quote = currentVideoQuote();
+    $("video-unit-price").textContent = quote ? `${MeteorVideoPricing.money(quote.unitPrice)}/秒` : "—";
+    $("video-rate-discount").textContent = quote ? MeteorVideoPricing.discount(quote.rate) : "—";
+    $("video-estimated-cost").textContent = quote ? MeteorVideoPricing.money(quote.estimatedCost) : "—";
+    const model = $("video-model").value;
+    const duration = Number($("video-duration").value);
+    const resolution = $("video-resolution").value;
+    $("video-pricing-note").textContent = !model || !state.video.models.includes(model)
+      ? "请先读取该密钥可用的视频模型。"
+      : duration > 15 || resolution === "4K"
+        ? "当前本站计费规则不能可靠预估超过 15 秒或 4K 的价格；最终以结算记录为准。"
+        : quote
+          ? `${MeteorVideoPricing.money(quote.unitPrice)}/秒 × ${quote.duration} 秒 × ${quote.rate.toFixed(2)} 倍；实际扣费以完成后的账单为准。`
+          : "该模型与分辨率未配置可验证的本站单价；最终以结算记录为准。";
   }
 
   function parseLines(value) { return value.split("\n").map((line) => line.trim()).filter(Boolean); }
@@ -447,17 +501,49 @@
     let status = "";
     let url = "";
     let reason = "";
+    let tokenUsage = null;
     let id = fallbackId;
     for (const item of candidates) {
       if (!status && item.status) status = String(item.status).toLowerCase();
       if (!id) id = String(item.id || item.task_id || item.request_id || "").trim();
       url ||= safeRemoteUrl(item.result_url || item.video_url || item.url || item.video?.url || item.result?.url);
       reason ||= String(item.fail_reason || item.error?.message || item.message || "").trim();
+      tokenUsage ||= MeteorVideoPricing.tokenUsage(item.provider_token_usage || item.token_usage);
     }
     if (["success", "succeeded", "completed", "complete", "done", "succeed"].includes(status) || url) status = "success";
     else if (["failure", "failed", "error", "cancelled", "canceled"].includes(status)) status = "failure";
     else status = "pending";
-    return { id, status, url, reason };
+    return { id, status, url, reason, tokenUsage };
+  }
+
+  async function userJSON(path, scope) {
+    const token = localStorage.getItem("auth_token") || "";
+    if (!token || !scope || mediaHistory.userScope() !== scope) throw new ApiError("登录状态已变化，请重新登录。");
+    const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store", signal: AbortSignal.timeout(15000) });
+    if (localStorage.getItem("auth_token") !== token || mediaHistory.userScope() !== scope) throw new ApiError("登录状态已变化，请重新登录。");
+    if (!response.ok) throw new ApiError(response.status === 401 ? "登录已过期，请重新登录。" : `账单读取失败（HTTP ${response.status}）`);
+    const body = await response.json();
+    if (body.code !== 0) throw new ApiError(body.message || "账单读取失败");
+    return body.data;
+  }
+
+  async function videoSettlement(taskId, keyId, model, scope) {
+    if (!/^[-_A-Za-z0-9]{8,128}$/.test(String(taskId)) || !/^\d+$/.test(String(keyId))) return null;
+    const expectedRequestId = `grok-video:${taskId}`;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const params = new URLSearchParams({ api_key_id: String(keyId), model, page: "1", page_size: "100", sort_by: "created_at", sort_order: "desc" });
+      const page = await userJSON(`/api/v1/usage?${params}`, scope);
+      const log = (page?.items || []).find((item) => item.request_id === expectedRequestId && String(item.api_key_id) === String(keyId));
+      if (log) {
+        const settlement = MeteorVideoPricing.settlement(log);
+        if (!settlement) return null;
+        const me = await userJSON("/api/v1/auth/me", scope);
+        const balance = me?.balance;
+        return { ...settlement, balanceAfter: balance !== null && balance !== undefined && Number.isFinite(Number(balance)) ? Number(balance) : null };
+      }
+      if (attempt < 3) await sleep(1000 * (attempt + 1));
+    }
+    return null;
   }
 
   async function statusRequest(taskId, key) {
@@ -502,6 +588,44 @@
     promptNode.className = "task-prompt";
     promptNode.textContent = prompt;
     card.append(head, status, promptNode);
+    const quote = info.quote;
+    const settled = info.settlement;
+    const tokens = info.tokenUsage;
+    if (quote || settled || tokens) {
+      const billing = document.createElement("div");
+      billing.className = "video-billing";
+      const title = document.createElement("strong");
+      title.textContent = "本次计费与上游用量";
+      const grid = document.createElement("div");
+      grid.className = "video-billing-grid";
+      const item = (label, value) => {
+        const node = document.createElement("span");
+        const bold = document.createElement("b");
+        node.textContent = label;
+        bold.textContent = value;
+        node.append(bold);
+        grid.append(node);
+      };
+      if (quote) item("本站规则", `${MeteorVideoPricing.money(quote.unitPrice)}/秒 × ${quote.duration} 秒`);
+      if (settled) {
+        item("实际余额消耗", MeteorVideoPricing.money(settled.actualCost));
+        item("实际倍率 / 折扣", settled.discount);
+        if (settled.balanceAfter !== null) item("结算后账户余额", MeteorVideoPricing.money(settled.balanceAfter));
+      } else if (quote) {
+        item("预计消耗", MeteorVideoPricing.money(quote.estimatedCost));
+        if (info.status === "success") item("实际余额消耗", "待账单同步");
+      }
+      if (tokens) {
+        if (tokens.promptTokens !== null) item("上游输入 Token", tokens.promptTokens.toLocaleString("zh-CN"));
+        if (tokens.completionTokens !== null) item("上游输出 Token", tokens.completionTokens.toLocaleString("zh-CN"));
+        if (tokens.totalTokens !== null) item("上游合计 Token", tokens.totalTokens.toLocaleString("zh-CN"));
+      }
+      billing.append(title, grid);
+      const note = document.createElement("small");
+      note.textContent = "本站按视频秒数计费，实际扣费与折扣以本站账单为准。盈合任务仅返回生成 Token 数；上游 Token 单价及授权折扣须以盈合后台账单核对。";
+      billing.append(note);
+      card.append(billing);
+    }
     if (info.reason) {
       const reason = document.createElement("p");
       reason.className = "task-prompt";
@@ -585,11 +709,22 @@
           if (info.url?.startsWith("blob:")) mediaHistory.revokeObjectUrls([info.url]);
           return null;
         }
-        if (!rememberVideo({ ...info, keyId, prompt, model, createdAt }, scope, epoch)) {
+        const previous = state.video.history.find((item) => item.id === taskId);
+        const quote = previous?.quote || (
+          $("video-key").value === String(keyId) && $("video-model").value === model
+            ? currentVideoQuote() : null
+        );
+        if (!rememberVideo({ ...info, keyId, prompt, model, createdAt, quote, tokenUsage: info.tokenUsage || previous?.tokenUsage }, scope, epoch)) {
           if (info.url?.startsWith("blob:")) mediaHistory.revokeObjectUrls([info.url]);
           return null;
         }
-        if (info.status === "success") return info;
+        if (info.status === "success") {
+          try {
+            const settlement = await videoSettlement(taskId, keyId, model, scope);
+            if (settlement) rememberVideo({ ...info, keyId, prompt, model, createdAt, quote, tokenUsage: info.tokenUsage || previous?.tokenUsage, settlement }, scope, epoch);
+          } catch { /* The task is still successful if the billing read is temporarily unavailable. */ }
+          return info;
+        }
         if (info.status === "failure") throw new ApiError(info.reason || "视频任务失败");
         if (Date.now() >= deadline) return info;
         await sleep(5000);
@@ -605,7 +740,14 @@
     if (!scope) return;
     for (const record of state.video.history) {
       const key = accountKeys.get("video", record.keyId);
-      if (!key) continue;
+      if (!key) {
+        if (record.status === "success" && !record.settlement) {
+          void videoSettlement(record.id, record.keyId, record.model, scope).then((settlement) => {
+            if (settlement) rememberVideo({ id: record.id, settlement }, scope, epoch);
+          }).catch(() => {});
+        }
+        continue;
+      }
       if (record.status === "pending" || record.status === "success") {
         void pollVideo(record.id, key, record.keyId, record.prompt, record.model, record.createdAt, scope, epoch).catch((error) => {
           setStatus("video", error.message || "视频任务状态读取失败", "error");
@@ -630,13 +772,13 @@
     const scope = mediaHistory.userScope();
     const epoch = state.video.pollEpoch;
     const keyId = $("video-key").value;
-    const family = videoFamily(model);
-    const min = family === "kling" || family === "grok" ? 3 : 4;
+    const { min, max } = videoDurationRange(model);
     if (!key) return setStatus("video", "请先读取并选择视频密钥", "error");
     if (!scope) return setStatus("video", "登录状态无效，请重新登录", "error");
-    if (!model || !prompt) return setStatus("video", "模型和提示词不能为空", "error");
+    if (!state.video.models.includes(model)) return setStatus("video", "请先读取该密钥可用的视频模型", "error");
+    if (!prompt) return setStatus("video", "提示词不能为空", "error");
     if (prompt.length > 1300) return setStatus("video", "提示词不能超过 1,300 个字符", "error");
-    if (!Number.isInteger(duration) || duration < min || duration > 15) return setStatus("video", `当前模型时长必须为 ${min}–15 秒`, "error");
+    if (!Number.isInteger(duration) || duration < min || duration > max) return setStatus("video", `当前模型时长必须为 ${min}–${max} 秒`, "error");
     if (generalFiles.length > 9) return setStatus("video", "参考素材最多 9 个", "error");
     if ([...generalFiles, startFile, endFile].filter(Boolean).some((file) => file.size > 10 * 1024 * 1024)) return setStatus("video", "单个本地素材不能超过 10 MB", "error");
     state.video.key = key;
@@ -677,7 +819,7 @@
       if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return;
       state.video.taskId = taskId;
       const createdAt = Date.now();
-      rememberVideo({ ...videoInfo(data, taskId), keyId, prompt, model, createdAt }, scope, epoch);
+      rememberVideo({ ...videoInfo(data, taskId), keyId, prompt, model, createdAt, quote: currentVideoQuote() }, scope, epoch);
       setStatus("video", `任务已提交：${taskId}`, "success");
       const final = await pollVideo(taskId, key, keyId, prompt, model, createdAt, scope, epoch);
       if (final?.status === "success") setStatus("video", "视频生成完成", "success");
@@ -737,6 +879,8 @@
     bindCounters();
     $("image-tier").addEventListener("change", updateImageOrientations);
     $("video-model").addEventListener("change", updateVideoOptions);
+    $("video-duration").addEventListener("input", updateVideoPricing);
+    $("video-resolution").addEventListener("change", updateVideoPricing);
     $("image-load-models").addEventListener("click", () => void loadModels("image"));
     $("video-load-models").addEventListener("click", () => void loadModels("video"));
     $("image-form").addEventListener("submit", (event) => void submitImage(event));

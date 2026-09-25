@@ -242,7 +242,7 @@ test('video MCP uses the official Sub2API video task and status endpoints', asyn
     requests.push({ method: req.method, url: req.url, auth: req.headers.authorization, body: body.toString('utf8') })
     res.writeHead(200, { 'Content-Type': 'application/json' })
     if (req.method === 'POST') res.end(JSON.stringify({ id: 'sub-video-1', status: 'pending' }))
-    else res.end(JSON.stringify({ id: 'sub-video-1', status: 'completed', video: { url: 'https://cdn.example/video.mp4' } }))
+    else res.end(JSON.stringify({ id: 'sub-video-1', status: 'completed', video: { url: 'https://cdn.example/video.mp4' }, provider_token_usage: { completion_tokens: 40594, total_tokens: 40594 } }))
   })
   const bridge = await startBridge({ SUB2API_URL: mock.base })
   try {
@@ -254,6 +254,7 @@ test('video MCP uses the official Sub2API video task and status endpoints', asyn
       name: 'get_video', arguments: { task_id: 'sub-video-1' },
     }, 'sk-user-video')
     assert.equal(status.body.result.structuredContent.status, 'SUCCESS')
+    assert.deepEqual(status.body.result.structuredContent.data.token_usage, { completion_tokens: 40594, total_tokens: 40594 })
     assert.equal(requests[0].url, '/v1/videos/generations')
     assert.equal(requests[1].url, '/v1/videos/generations/sub-video-1')
     assert.ok(requests.every((request) => request.auth === 'Bearer sk-user-video'))
@@ -413,7 +414,7 @@ test('FZYinghe authorized Doubao 1.5 Pro uses V3 for creation and successful sta
     await readBody(req)
     res.writeHead(200, { 'Content-Type': 'application/json' })
     if (req.method === 'POST') res.end(JSON.stringify({ id: 'doubao-task-1', status: 'queued' }))
-    else res.end(JSON.stringify({ id: 'doubao-task-1', status: 'succeeded', content: { video_url: 'https://cdn.example/video.mp4' } }))
+    else res.end(JSON.stringify({ id: 'doubao-task-1', status: 'succeeded', content: { video_url: 'https://cdn.example/video.mp4' }, usage: { completion_tokens: 40594, total_tokens: 40594 } }))
   })
   const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
   try {
@@ -430,6 +431,7 @@ test('FZYinghe authorized Doubao 1.5 Pro uses V3 for creation and successful sta
     const result = await status.json()
     assert.equal(result.status, 'done')
     assert.equal(result.video.url, 'https://cdn.example/video.mp4')
+    assert.deepEqual(result.provider_token_usage, { completion_tokens: 40594, total_tokens: 40594 })
     assert.deepEqual(seenURLs, ['/v3/video/tasks', '/v3/video/tasks/doubao-task-1'])
   } finally {
     await stopBridge(bridge)

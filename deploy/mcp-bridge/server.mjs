@@ -758,12 +758,13 @@ function mapVideoStatus(taskID, raw) {
   const rawStatus = String(first(raw?.status, raw?.data?.status, raw?.task_status, raw?.data?.task_status)).toLowerCase()
   const url = first(raw?.video?.url, raw?.data?.video?.url, raw?.result_url, raw?.data?.result_url, raw?.url, raw?.data?.url)
   const failure = first(raw?.error?.message, raw?.data?.error?.message, raw?.fail_reason, raw?.data?.fail_reason, raw?.message)
+  const tokenUsage = videoTokenUsage(raw)
   let status = 'IN_PROGRESS'
   if (['done', 'success', 'succeeded', 'completed', 'succeed'].includes(rawStatus) || url) status = 'SUCCESS'
   if (['failed', 'failure', 'cancelled', 'canceled', 'error'].includes(rawStatus)) status = 'FAILURE'
   return {
     task_id: taskID, id: taskID, status,
-    data: { task_id: taskID, id: taskID, status, result_url: url || undefined, video_url: url || undefined, fail_reason: failure || undefined, raw },
+    data: { task_id: taskID, id: taskID, status, result_url: url || undefined, video_url: url || undefined, fail_reason: failure || undefined, token_usage: tokenUsage, raw },
     raw,
   }
 }
@@ -1029,6 +1030,17 @@ function extractTask(raw) {
   }
 }
 
+function videoTokenUsage(raw) {
+  const source = raw?.provider_token_usage || raw?.data?.provider_token_usage || raw?.usage || raw?.data?.usage || raw?.token_usage || raw?.data?.token_usage
+  if (!source || typeof source !== 'object') return undefined
+  const usage = {}
+  for (const field of ['prompt_tokens', 'completion_tokens', 'total_tokens']) {
+    const value = Number(source[field])
+    if (Number.isSafeInteger(value) && value >= 0) usage[field] = value
+  }
+  return Object.keys(usage).length ? usage : undefined
+}
+
 function fzyEnvelopeStatus(raw, transportStatus = 200) {
   const status = Number(transportStatus)
   if (!Number.isFinite(status) || status < 400) {
@@ -1078,6 +1090,7 @@ async function handleFzyProvider(req, res, parsed) {
       return
     }
     const task = extractTask(raw)
+    const tokenUsage = videoTokenUsage(raw)
     const success = ['success', 'succeeded', 'succeed', 'completed', 'done'].includes(String(task.status).toLowerCase()) || Boolean(task.resultURL)
     const failure = ['failed', 'failure', 'cancelled', 'canceled', 'error'].includes(String(task.status).toLowerCase())
     if (statusMatch[2] === '/content') {
@@ -1099,7 +1112,7 @@ async function handleFzyProvider(req, res, parsed) {
       }
     }
     const url = first(taskMeta?.deliveryURL, task.resultURL)
-    json(res, 200, failure ? { id: taskID, status: 'failed', model, error: { message: task.reason || 'video generation failed' } } : success ? { id: taskID, status: 'done', model, video: { url, duration: task.duration || undefined } } : { id: taskID, status: 'pending', model })
+    json(res, 200, failure ? { id: taskID, status: 'failed', model, error: { message: task.reason || 'video generation failed' } } : success ? { id: taskID, status: 'done', model, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}) } : { id: taskID, status: 'pending', model })
     return
   }
   if (req.method === 'POST' && (relative === '/videos/generations' || relative === '/videos')) {

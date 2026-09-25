@@ -19,6 +19,7 @@ test('media UI is self-contained and points at official routes', async () => {
   assert.match(html, /account-keys\.js/)
   assert.match(html, /image-options\.js/)
   assert.match(html, /media-history\.js/)
+  assert.match(html, /video-pricing\.js/)
   assert.match(js, /getGroup\("image"/)
   assert.match(js, /request\("\/v1\/images\/generations"/)
   assert.match(js, /request\("\/v1\/videos\/generations"/)
@@ -70,8 +71,8 @@ test('native sidebar wrappers contain no token interpolation', async () => {
 })
 
 test('no API key is embedded in static assets', async () => {
-  const [html, js, options, history, css] = await Promise.all([readFile(file('index.html'), 'utf8'), readFile(file('app.js'), 'utf8'), readFile(file('image-options.js'), 'utf8'), readFile(file('media-history.js'), 'utf8'), readFile(file('styles.css'), 'utf8')])
-  for (const source of [html, js, options, history, css]) {
+  const [html, js, options, history, pricing, css] = await Promise.all([readFile(file('index.html'), 'utf8'), readFile(file('app.js'), 'utf8'), readFile(file('image-options.js'), 'utf8'), readFile(file('media-history.js'), 'utf8'), readFile(file('video-pricing.js'), 'utf8'), readFile(file('styles.css'), 'utf8')])
+  for (const source of [html, js, options, history, pricing, css]) {
     assert.doesNotMatch(source, /20020816Lzr@|MCP_ASSET_SIGNING_SECRET|Bearer\s+[A-Za-z0-9_-]{24,}/)
   }
 })
