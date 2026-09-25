@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -62,6 +63,9 @@ func TestFZYVideoPriceSnapshotFailsClosedOnMissingPricing(t *testing.T) {
 	_, err := ParseFZYVideoPriceSnapshot([]byte(fzyPricingFixture), "doubao-seedance-2.0-mini", []byte(`{"resolution":"4K"}`))
 	require.Error(t, err)
 	_, err = ParseFZYVideoPriceSnapshot([]byte(`{"code":200,"data":[{"innerCode":"doubao-seedance-2.0-mini","discount":null}]}`), "doubao-seedance-2.0-mini", nil)
+	require.Error(t, err)
+	withSurcharge := strings.Replace(fzyPricingFixture, `"outputPricePerMillion":"23"`, `"outputPricePerMillion":"23","surcharges":[{"unitPrice":"1"}]`, 1)
+	_, err = ParseFZYVideoPriceSnapshot([]byte(withSurcharge), "doubao-seedance-2.0-mini", []byte(`{"resolution":"720p"}`))
 	require.Error(t, err)
 }
 

@@ -72,14 +72,17 @@ func ParseFZYVideoPriceSnapshot(body []byte, model string, requestBody []byte) (
 				PricingCurrency string `json:"pricingCurrency"`
 				TokenUnitSize   int    `json:"tokenUnitSize"`
 				ScenarioRules   []struct {
-					SceneCode             string      `json:"sceneCode"`
-					SceneName             string      `json:"sceneName"`
-					InputMode             string      `json:"inputMode"`
-					Resolution            string      `json:"resolution"`
-					OutputPricePerMillion json.Number `json:"outputPricePerMillion"`
-					PricePerSecond        json.Number `json:"pricePerSecond"`
-					PricingCurrency       string      `json:"pricingCurrency"`
-					TokenUnitSize         int         `json:"tokenUnitSize"`
+					SceneCode             string            `json:"sceneCode"`
+					SceneName             string            `json:"sceneName"`
+					InputMode             string            `json:"inputMode"`
+					Resolution            string            `json:"resolution"`
+					OutputPricePerMillion json.Number       `json:"outputPricePerMillion"`
+					InputPricePerMillion  json.Number       `json:"inputPricePerMillion"`
+					MinPrice              json.Number       `json:"minPrice"`
+					Surcharges            []json.RawMessage `json:"surcharges"`
+					PricePerSecond        json.Number       `json:"pricePerSecond"`
+					PricingCurrency       string            `json:"pricingCurrency"`
+					TokenUnitSize         int               `json:"tokenUnitSize"`
 				} `json:"scenarioRules"`
 			} `json:"billingRule"`
 		} `json:"data"`
@@ -122,6 +125,9 @@ func ParseFZYVideoPriceSnapshot(body []byte, model string, requestBody []byte) (
 			}
 			if scene.PricePerSecond != "" {
 				return empty, errors.New("provider scenario is priced per second, not by token")
+			}
+			if scene.InputPricePerMillion != "" || scene.MinPrice != "" || len(scene.Surcharges) != 0 {
+				return empty, errors.New("provider scenario has additional charges that are not supported")
 			}
 			unitSize := scene.TokenUnitSize
 			if unitSize == 0 {
