@@ -6,6 +6,6 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/bridge.test.mjs"
+    "test": "node --test test/*.test.mjs"
   }
 }
