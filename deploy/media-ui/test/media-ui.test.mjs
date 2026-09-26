@@ -19,6 +19,7 @@ test('media UI is self-contained and points at official routes', async () => {
   assert.match(html, /account-keys\.js/)
   assert.match(html, /image-options\.js/)
   assert.match(html, /media-history\.js/)
+  assert.ok(html.indexOf('image-results.js') < html.indexOf('app.js'))
   assert.match(html, /video-pricing\.js/)
   assert.match(js, /getGroup\("image"/)
   assert.match(js, /request\("\/v1\/images\/generations"/)
@@ -36,6 +37,7 @@ test('media history is wired before the app and supports restore, resume, and ex
   assert.match(html, /id="image-clear-history"/)
   assert.match(html, /id="video-clear-history"/)
   assert.match(js, /MeteorMediaHistory/)
+  assert.match(js, /MeteorMediaImageResults\.rows\(result\)/)
   assert.match(js, /saveImages\(entry, scope\)/)
   assert.match(js, /readImages\(scope\)/)
   assert.match(js, /readVideos\(scope\)/)
@@ -43,6 +45,18 @@ test('media history is wired before the app and supports restore, resume, and ex
   assert.match(js, /resumeVideoTasks\(\)/)
   assert.match(js, /clearImages\(\)/)
   assert.match(js, /clearVideos\(scope\)/)
+})
+
+test('image results normalize both native Gemini and OpenAI-compatible response shapes', async () => {
+  globalThis.window = {}
+  await import('../image-results.js')
+  const results = globalThis.window.MeteorMediaImageResults
+  const geminiRows = [{ b64_json: 'data:image/png;base64,AA==' }]
+  const openAiRows = [{ url: 'https://example.test/image.png' }]
+  assert.deepEqual(results.rows({ data: geminiRows }), geminiRows)
+  assert.deepEqual(results.rows({ data: { data: openAiRows } }), openAiRows)
+  assert.deepEqual(results.rows({ data: {} }), [])
+  delete globalThis.window
 })
 
 test('image tiers follow selected key group pricing and resolve tier plus orientation', async () => {

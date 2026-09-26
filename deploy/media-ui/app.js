@@ -487,7 +487,7 @@
         createdAt: Date.now(),
         model,
         prompt,
-        images: Array.isArray(result.data?.data) ? result.data.data : [],
+        images: MeteorMediaImageResults.rows(result),
       };
       if (mediaHistory.userScope() !== scope) return;
       try {
