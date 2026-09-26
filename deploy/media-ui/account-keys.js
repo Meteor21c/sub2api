@@ -100,11 +100,17 @@
         videoRateMultiplier: group.video_rate_multiplier,
       };
     }
+    function getPlatform(kind, id) {
+      const info = getInfo(kind, id);
+      if (!info) return "";
+      const group = availableGroups.find(item => Number(item.id) === info.groupId);
+      return String(group?.platform || "");
+    }
     function owns(kind, secret) {
       if (!current() || !secret) { clear(); return false; }
       return rows.some(k => k.key === secret && keyMatchesKind(k, kind) && usable(k, userId, k.group_id));
     }
-    return { refresh, list, get, getInfo, getGroup, owns, clear };
+    return { refresh, list, get, getInfo, getGroup, getPlatform, owns, clear };
   }
   globalThis.MeteorAccountKeys = { createClient, usable };
 })();

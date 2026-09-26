@@ -51,6 +51,10 @@
     }
     if (tiers.includes(selected)) select.value = selected;
     updateImageOrientations();
+    const geminiImage = isGeminiImageRequest();
+    $("image-quality").disabled = geminiImage;
+    const qualityLabel = document.querySelector('label[for="image-quality"]');
+    if (qualityLabel) qualityLabel.textContent = geminiImage ? "质量（由 Gemini 档位控制）" : "质量";
   }
 
   class ApiError extends Error {
@@ -150,7 +154,77 @@
   }
 
   function isImageModel(id) { return /image|imagine-image/i.test(id); }
+  function isGeminiImageModel(id) { return /^gemini-.*image/i.test(String(id || "").trim()); }
+  function isGeminiImageRequest() {
+    return accountKeys.getPlatform("image", $("image-key").value) === "gemini" && isGeminiImageModel($("image-model").value);
+  }
   function isVideoModel(id) { return /seedance|seedace|doubao|kling|grok-imagine-video|grok-video/i.test(id); }
+
+  async function geminiImageFilePart(file) {
+    const mimeType = String(file.type || "").toLowerCase();
+    if (!["image/png", "image/jpeg", "image/webp"].includes(mimeType)) {
+      throw new ApiError("Gemini 参考图只支持 PNG、JPEG 或 WebP");
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+    }
+    return { inlineData: { mimeType, data: btoa(binary) } };
+  }
+
+  function geminiImageRows(response) {
+    const rows = [];
+    for (const candidate of Array.isArray(response?.candidates) ? response.candidates : []) {
+      for (const part of Array.isArray(candidate?.content?.parts) ? candidate.content.parts : []) {
+        const inline = part?.inlineData || part?.inline_data;
+        const mimeType = String(inline?.mimeType || inline?.mime_type || "").toLowerCase();
+        const data = String(inline?.data || "").trim();
+        if (["image/png", "image/jpeg", "image/webp", "image/avif"].includes(mimeType) && data) {
+          rows.push({ b64_json: `data:${mimeType};base64,${data}` });
+        }
+      }
+    }
+    return rows;
+  }
+
+  async function generateGeminiImages(key, model, prompt, referenceFiles, tier, orientation, count) {
+    const referenceBytes = referenceFiles.reduce((total, file) => total + file.size, 0);
+    if (referenceBytes > 15 * 1024 * 1024) throw new ApiError("Gemini 参考图总大小不能超过 15 MB");
+    const aspectRatio = { square: "1:1", landscape: "16:9", portrait: "9:16" }[orientation] || "1:1";
+    const parts = [{ text: prompt }];
+    for (const file of referenceFiles) parts.push(await geminiImageFilePart(file));
+    const body = {
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: { imageSize: tier, aspectRatio },
+      },
+    };
+    const images = [];
+    let partialError = "";
+    for (let index = 0; index < count; index += 1) {
+      setStatus("image", `正在调用 Gemini 原生生图接口（${index + 1}/${count}）…`);
+      try {
+        const response = await request(`/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+          method: "POST", body: JSON.stringify(body),
+        }, key);
+        const generated = geminiImageRows(response.data);
+        if (!generated.length) {
+          const reason = response.data?.promptFeedback?.blockReason ||
+            response.data?.candidates?.map(candidate => candidate?.finishReason).filter(Boolean).join(", ");
+          throw new ApiError(reason ? `Gemini 未返回图片（${reason}）` : "Gemini 响应中没有 inlineData 图片结果", 502, response.data);
+        }
+        images.push(...generated);
+      } catch (error) {
+        if (!images.length) throw error;
+        partialError = error.message || "后续图片生成失败";
+        break;
+      }
+    }
+    return { images: images.slice(0, count), partialError };
+  }
 
   async function loadModels(kind) {
     const key = selectedKey(kind);
@@ -182,7 +256,9 @@
       setBusy(kind, state[kind].busy);
       if (kind === "image") updateImageOptions();
       else updateVideoOptions();
-      $(`${kind}-model-hint`).textContent = `已读取 ${state[kind].models.length} 个可用模型。`;
+      $(`${kind}-model-hint`).textContent = kind === "image" && isGeminiImageRequest()
+        ? `已读取 ${state[kind].models.length} 个可用模型。Gemini 生图使用原生 generateContent 接口，数量按张逐次提交。`
+        : `已读取 ${state[kind].models.length} 个可用模型。`;
       setStatus(kind, "模型读取成功", "success");
     } catch (error) {
       state[kind].models = [];
@@ -387,10 +463,17 @@
     setStatus("image", "正在生成图片…");
     try {
       let result;
+      let partialError = "";
       const payload = { model, prompt, n, response_format: "b64_json", size };
       const quality = $("image-quality").value;
       if (quality !== "auto") payload.quality = quality;
-      if (refs.length) {
+      if (isGeminiImageRequest()) {
+        const generated = await generateGeminiImages(
+          key, model, prompt, refs, $("image-tier").value, $("image-orientation").value, n,
+        );
+        result = { data: generated.images };
+        partialError = generated.partialError;
+      } else if (refs.length) {
         const form = new FormData();
         Object.entries(payload).forEach(([name, value]) => form.append(name, String(value)));
         const field = refs.length === 1 ? "image" : "image[]";
@@ -420,7 +503,7 @@
         state.image.history = [entry, ...state.image.history].slice(0, mediaHistory.HISTORY_LIMIT);
         renderImageHistory(state.image.history);
       }
-      setStatus("image", "图片生成完成", "success");
+      setStatus("image", partialError ? `已生成 ${entry.images.length} 张，剩余请求失败：${partialError}` : "图片生成完成", partialError ? "error" : "success");
     } catch (error) {
       setStatus("image", error.message || "图片生成失败", "error");
     } finally {
@@ -979,6 +1062,7 @@
     initKeys();
     bindTabs();
     bindCounters();
+    $("image-model").addEventListener("change", updateImageOptions);
     $("image-tier").addEventListener("change", updateImageOrientations);
     $("video-model").addEventListener("change", updateVideoOptions);
     $("video-duration").addEventListener("input", updateVideoPricing);

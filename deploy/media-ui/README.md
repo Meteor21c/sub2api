@@ -4,7 +4,7 @@
 
 ## 设计边界
 
-- 图片提交使用 Sub2API 官方 `POST /v1/images/generations` 或 `POST /v1/images/edits`。
+- OpenAI/Grok 图片提交使用 Sub2API `POST /v1/images/generations` 或 `POST /v1/images/edits`；Gemini 图片模型改走 Gemini 原生 `POST /v1beta/models/{model}:generateContent`，把提示词和本地参考图转换为 Gemini `contents[].parts`，并将 `inlineData` 图片结果转换为页面可展示格式。Gemini 的“图片数量”按张顺序调用，避免依赖模型不一定支持的 `candidateCount`。
 - 视频提交使用 Sub2API 官方 `POST /v1/videos/generations`，状态使用官方 `GET /v1/videos/generations/{id}`。
 - API Key、分组调度、倍率、亲合度、扣费都由 Sub2API 负责；页面不实现第二套计费规则。
 - 视频计价预览读取分组 `video_model_prices` 和当前用户倍率；完成后的实扣、实际折扣从本人 `/api/v1/usage` 记录按任务 ID 核对，预计金额不冒充最终账单。
