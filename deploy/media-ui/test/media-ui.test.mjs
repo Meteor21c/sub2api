@@ -25,6 +25,7 @@ test('media UI is self-contained and points at official routes', async () => {
   assert.match(js, /getGroup\("image"/)
   assert.match(js, /request\("\/v1\/images\/generations"/)
   assert.match(js, /request\("\/v1\/videos\/generations"/)
+  assert.match(js, /accountKeys\.syncSession\(\)/)
   assert.match(js, /mcpCall\("video", "create_material_upload"/)
   assert.match(js, /syncEmbeddedTheme\(\)/)
   assert.match(css, /:root\.embedded-dark/)

@@ -11,8 +11,9 @@ test('only own active unexpired keys in the matching media group are usable', ()
 })
 test('pagination, secret-free choices, and logout/account-change invalidation', async () => {
   let token = 'session-a'
+  let activeUserId = 7
   const paths = []
-  const client = createClient({readToken:()=>token, fetchJSON:async (path,t)=>{
+  const client = createClient({readToken:()=>token, readUserId:()=>activeUserId, fetchJSON:async (path,t)=>{
     assert.equal(t,token); paths.push(path)
     if (path.endsWith('/me')) return {id:7}
     if (path.endsWith('/groups/rates')) return {'24':0.8}
@@ -49,6 +50,11 @@ test('pagination, secret-free choices, and logout/account-change invalidation', 
   })
   assert.equal(client.get('video','1'),'')
   token='session-b'
+  assert.equal(client.get('image','1'),'test-secret')
+  assert.equal(client.syncSession(),true)
+  assert.deepEqual(client.list('image'),[{id:'1',name:'绘图'}])
+  activeUserId=8
+  token='session-c'
   assert.equal(client.get('image','1'),'')
   assert.deepEqual(client.list('image'),[])
 })

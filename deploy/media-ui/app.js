@@ -10,6 +10,13 @@
   const $ = (id) => document.getElementById(id);
   const accountKeys = MeteorAccountKeys.createClient({
     readToken: () => localStorage.getItem("auth_token") || "",
+    readUserId: () => {
+      try {
+        return JSON.parse(localStorage.getItem("auth_user") || "null")?.id ?? null;
+      } catch {
+        return null;
+      }
+    },
     fetchJSON: async (path, token) => {
       const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
       if (!response.ok) throw new Error(response.status === 401 ? "登录已过期，请重新登录。" : "读取密钥失败，请稍后重试。");
@@ -1133,6 +1140,7 @@
     });
     window.addEventListener("storage", event => {
       if (event.key === "auth_token" || event.key === "auth_user" || event.key === null) {
+        if (event.key !== null && accountKeys.syncSession()) return;
         clearKeys();
         setBusy("image", false);
         setBusy("video", false);

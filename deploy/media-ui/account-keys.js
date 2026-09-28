@@ -26,10 +26,21 @@
       ]);
   }
 
-  function createClient({ readToken, fetchJSON, groups = {} }) {
+  function createClient({ readToken, readUserId, fetchJSON, groups = {} }) {
     let session = '', rows = [], availableGroups = [], groupRates = {}, userId = null;
     const clear = () => { session = ''; rows = []; availableGroups = []; groupRates = {}; userId = null; };
-    const current = () => session && readToken() === session;
+    const current = () => {
+      const token = readToken();
+      const activeUserId = readUserId ? readUserId() : userId;
+      if (!session || !token || Number(activeUserId) !== Number(userId)) {
+        clear();
+        return false;
+      }
+      // Sub2API rotates auth_token during normal session refreshes. Keep the
+      // in-memory API keys when the authenticated user is unchanged.
+      session = token;
+      return true;
+    };
     const allowedGroupIds = kind => {
       const configured = normalizedConfiguredGroupIds(groups, kind);
       if (configured.length) return configured;
@@ -110,7 +121,7 @@
       if (!current() || !secret) { clear(); return false; }
       return rows.some(k => k.key === secret && keyMatchesKind(k, kind) && usable(k, userId, k.group_id));
     }
-    return { refresh, list, get, getInfo, getGroup, getPlatform, owns, clear };
+    return { refresh, list, get, getInfo, getGroup, getPlatform, owns, syncSession: current, clear };
   }
   globalThis.MeteorAccountKeys = { createClient, usable };
 })();
