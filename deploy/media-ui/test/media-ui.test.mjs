@@ -10,6 +10,7 @@ const file = (name) => path.join(root, '..', name)
 test('media UI is self-contained and points at official routes', async () => {
   const html = await readFile(file('index.html'), 'utf8')
   const js = await readFile(file('app.js'), 'utf8')
+  const css = await readFile(file('styles.css'), 'utf8')
   assert.doesNotMatch(html, /Sub2API|官方|桥接|迁移|轮询|\/v1\//)
   assert.match(html, /单张不超过 10 MB/)
   assert.match(html, /id="image-tier"/)
@@ -25,6 +26,10 @@ test('media UI is self-contained and points at official routes', async () => {
   assert.match(js, /request\("\/v1\/images\/generations"/)
   assert.match(js, /request\("\/v1\/videos\/generations"/)
   assert.match(js, /mcpCall\("video", "create_material_upload"/)
+  assert.match(js, /syncEmbeddedTheme\(\)/)
+  assert.match(css, /:root\.embedded-dark/)
+  assert.match(css, /body\.embedded \{[^}]*background: transparent/s)
+  assert.match(css, /body\.embedded \.panel-heading > div \{ display: none; \}/)
   assert.doesNotMatch(js, /\/pg\/(?:images|video|materials)/)
   assert.doesNotMatch(js, /groupRatio|GroupRatio|affinity|亲合度|倍率中心/)
   assert.doesNotMatch(js, /console\.log\(.*key/i)
@@ -56,6 +61,9 @@ test('image results normalize both native Gemini and OpenAI-compatible response 
   assert.deepEqual(results.rows({ data: geminiRows }), geminiRows)
   assert.deepEqual(results.rows({ data: { data: openAiRows } }), openAiRows)
   assert.deepEqual(results.rows({ data: {} }), [])
+  assert.deepEqual(results.rows({ data: { data: [{}, { url: '/relative.png' }, ...openAiRows] } }), openAiRows)
+  assert.equal(results.displayUrl({ b64_json: 'data:image/jpeg;base64,AA==' }), 'data:image/jpeg;base64,AA==')
+  assert.equal(results.displayUrl({ url: 'javascript:alert(1)' }), '')
   delete globalThis.window
 })
 

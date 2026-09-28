@@ -81,9 +81,18 @@
     const timer = window.setTimeout(() => controller.abort(), options.timeoutMs || 120000);
     try {
       const response = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: controller.signal });
-      const type = response.headers.get("content-type") || "";
-      const data = type.includes("json") ? await response.json().catch(() => null) : await response.text();
+      const raw = await response.text();
+      let data = raw;
+      if (raw.length) {
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          if (response.ok) throw new ApiError("服务端返回的 JSON 不完整；如已扣费，请联系管理员核对请求记录", 502);
+        }
+      }
       if (!response.ok) throw new ApiError(errorMessage(data, `HTTP ${response.status}`), response.status, data);
+      if (typeof data === "string") throw new ApiError("服务端未返回有效的 JSON 结果；如已扣费，请联系管理员核对请求记录", 502);
+      if (data?.error) throw new ApiError(errorMessage(data, "上游返回错误"), response.status, data);
       return { response, data };
     } catch (error) {
       if (error?.name === "AbortError") throw new ApiError("请求超时，请检查上游状态后再重试");
@@ -336,12 +345,7 @@
   }
 
   function dataUrl(row) {
-    if (typeof row?.b64_json === "string" && row.b64_json) {
-      if (row.b64_json.startsWith("data:")) return /^data:image\/(?:png|jpeg|webp|avif);/i.test(row.b64_json) ? row.b64_json : "";
-      return `data:image/png;base64,${row.b64_json}`;
-    }
-    if (typeof row?.url === "string" && /^(?:https?:|blob:)/i.test(row.url)) return row.url;
-    return "";
+    return MeteorMediaImageResults.displayUrl(row);
   }
 
   function emptyResult(kind, title) {
@@ -381,6 +385,12 @@
         image.src = src;
         image.alt = row.revised_prompt || entry.prompt || `生成图片 ${index + 1}`;
         image.loading = "lazy";
+        image.addEventListener("error", () => {
+          const warning = document.createElement("div");
+          warning.className = "image-preview-error";
+          warning.textContent = "图片无法预览。请尝试打开 / 下载；若仍失败，请联系管理员核查。";
+          image.replaceWith(warning);
+        }, { once: true });
         const tools = document.createElement("div");
         tools.className = "image-tools";
         const label = document.createElement("small");
@@ -482,12 +492,16 @@
       } else {
         result = await request("/v1/images/generations", { method: "POST", body: JSON.stringify(payload) }, key);
       }
+      const images = MeteorMediaImageResults.rows(result);
+      if (!images.length) {
+        throw new ApiError("上游未返回可显示的图片。如已扣费，请联系管理员核对请求记录，勿直接重复提交。", 502, result.data);
+      }
       const entry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         createdAt: Date.now(),
         model,
         prompt,
-        images: MeteorMediaImageResults.rows(result),
+        images,
       };
       if (mediaHistory.userScope() !== scope) return;
       try {
@@ -1039,9 +1053,37 @@
     });
   }
 
+  function syncEmbeddedTheme() {
+    if (!document.body.classList.contains("embedded")) return;
+
+    let parentRoot = null;
+    try {
+      if (window.parent !== window) parentRoot = window.parent.document.documentElement;
+    } catch {
+      // A cross-origin parent cannot be inspected; fall back to the OS theme.
+    }
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const isDark = parentRoot ? parentRoot.classList.contains("dark") : media.matches;
+      document.documentElement.classList.toggle("embedded-dark", isDark);
+    };
+    apply();
+
+    if (parentRoot && typeof MutationObserver !== "undefined") {
+      const observer = new MutationObserver(apply);
+      observer.observe(parentRoot, { attributes: true, attributeFilter: ["class"] });
+      window.addEventListener("pagehide", () => observer.disconnect(), { once: true });
+    } else if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", apply);
+      window.addEventListener("pagehide", () => media.removeEventListener("change", apply), { once: true });
+    }
+  }
+
   function init() {
     if (new URLSearchParams(window.location.search).get("embedded") === "1") {
       document.body.classList.add("embedded");
+      syncEmbeddedTheme();
       // Same-origin native Markdown wrapper: scope layout fixes to our frames.
       // No token-bearing external-menu URL or official bundle modification.
       try {

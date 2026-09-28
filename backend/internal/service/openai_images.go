@@ -969,6 +969,19 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		return OpenAIUsage{}, 0, nil, err
 	}
 	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
+	dataCounter := newOpenAIImageOutputCounter()
+	dataCounter.addDataArray(gjson.GetBytes(body, "data"))
+	if dataCounter.Count() == 0 {
+		upstreamErr := &OpenAIImagesUpstreamError{
+			StatusCode:        http.StatusBadGateway,
+			ErrorType:         "upstream_error",
+			Code:              "image_output_missing",
+			Message:           "Images API returned no image output",
+			UpstreamRequestID: resp.Header.Get("x-request-id"),
+		}
+		writeOpenAIImagesUpstreamErrorResponse(c, upstreamErr)
+		return OpenAIUsage{}, 0, nil, upstreamErr
+	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"
 	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
@@ -979,7 +992,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	c.Data(resp.StatusCode, contentType, body)
 
 	usage, _ := extractOpenAIUsageFromJSONBytes(body)
-	return usage, extractOpenAIImageCountFromJSONBytes(body), collectOpenAIResponseImageOutputSizesFromJSONBytes(body), nil
+	return usage, dataCounter.Count(), dataCounter.Sizes(), nil
 }
 
 func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
