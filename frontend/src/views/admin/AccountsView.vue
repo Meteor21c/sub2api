@@ -4,6 +4,7 @@
       <template #filters>
         <div class="flex flex-wrap-reverse items-start justify-between gap-3">
           <AccountTableFilters
+            class="lg:w-auto lg:flex-1"
             v-model:searchQuery="params.search"
             :filters="params"
             :groups="groups"
@@ -379,29 +380,11 @@
             />
           </template>
           <template #cell-priority="{ row }">
-            <div class="inline-flex items-center gap-1">
-              <input
-                :value="inlineAccountFieldValue(row, 'priority')"
-                type="number"
-                min="0"
-                step="1"
-                class="w-20 rounded-md border border-gray-300 bg-white px-2 py-1 text-right text-sm font-mono text-gray-700 shadow-sm outline-none transition focus:border-primary-500 focus:ring-1 focus:ring-primary-500 disabled:cursor-wait disabled:opacity-60 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200"
-                :disabled="isInlineAccountFieldSaving(row.id, 'priority')"
-                :aria-label="t('admin.accounts.priority')"
-                @click.stop
-                @input="handleInlineAccountFieldInput(row, 'priority', $event)"
-                @blur="commitInlineAccountField(row, 'priority')"
-                @keydown.enter.prevent="commitInlineAccountField(row, 'priority')"
-                @keydown.esc="cancelInlineAccountField(row, 'priority')"
-              />
-              <Icon
-                v-if="isInlineAccountFieldSaving(row.id, 'priority')"
-                name="refresh"
-                size="xs"
-                class="animate-spin text-gray-400"
-                aria-hidden="true"
-              />
-            </div>
+            <AccountPriorityCell
+              :account="row"
+              @updated="handleAccountUpdated"
+              @error="(message: string) => appStore.showError(message)"
+            />
           </template>
           <template #cell-load_factor="{ row }">
             <div class="inline-flex items-center gap-1">
@@ -569,6 +552,7 @@ import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vu
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
+import AccountPriorityCell from '@/components/account/AccountPriorityCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'

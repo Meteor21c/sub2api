@@ -26,6 +26,8 @@ vi.mock('@/api/admin', () => ({
   }
 }))
 
+vi.mock('@/api/admin/accounts', () => ({ update: updateAccount }))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn(), showInfo: vi.fn() })
 }))
@@ -176,9 +178,10 @@ describe('admin AccountsView priority column preferences', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    const priority = wrapper.get('input[aria-label="admin.accounts.priority"]')
+    await wrapper.get('[data-testid="account-priority-value"]').trigger('click')
+    const priority = wrapper.get('[data-testid="account-priority-input"]')
     await priority.setValue('7')
-    await priority.trigger('blur')
+    await priority.trigger('keydown', { key: 'Enter' })
     await flushPromises()
     expect(updateAccount).toHaveBeenNthCalledWith(1, 12, { priority: 7 })
 
