@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -301,13 +302,22 @@ func (e *EasyPay) upstreamPaymentType(paymentType string) string {
 }
 
 func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
+	resp, _, err := e.queryOrder(ctx, tradeNo)
+	return resp, err
+}
+
+// queryOrder returns both the public query result and the upstream trade number
+// exactly as supplied by EasyPay. QueryOrder preserves its legacy fallback to
+// out_trade_no for callers that only need a usable reference; webhook
+// verification must distinguish that fallback from a real upstream trade ID.
+func (e *EasyPay) queryOrder(ctx context.Context, outTradeNo string) (*payment.QueryOrderResponse, string, error) {
 	params := map[string]string{
 		"act": "order", "pid": e.config["pid"],
-		"key": e.config["pkey"], "out_trade_no": tradeNo,
+		"key": e.config["pkey"], "out_trade_no": outTradeNo,
 	}
 	body, err := e.post(ctx, e.apiBase()+"/api.php", params)
 	if err != nil {
-		return nil, fmt.Errorf("easypay query: %w", err)
+		return nil, "", fmt.Errorf("easypay query: %w", err)
 	}
 	type easyPayQueryData struct {
 		TradeStatus *string `json:"trade_status"`
@@ -325,22 +335,22 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		Data        easyPayQueryData `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("easypay parse query: %w", err)
+		return nil, "", fmt.Errorf("easypay parse query: %w", err)
 	}
 	status := payment.ProviderStatusPending
-	if resp.TradeStatus != nil {
+	if resp.Code == easypayCodeSuccess && resp.TradeStatus != nil {
 		if *resp.TradeStatus == tradeStatusSuccess {
 			status = payment.ProviderStatusPaid
 		}
-	} else if resp.Data.TradeStatus != nil {
+	} else if resp.Code == easypayCodeSuccess && resp.Data.TradeStatus != nil {
 		if *resp.Data.TradeStatus == tradeStatusSuccess {
 			status = payment.ProviderStatusPaid
 		}
-	} else if resp.Status != nil {
+	} else if resp.Code == easypayCodeSuccess && resp.Status != nil {
 		if *resp.Status == easypayStatusPaid {
 			status = payment.ProviderStatusPaid
 		}
-	} else if resp.Data.Status != nil && *resp.Data.Status == easypayStatusPaid {
+	} else if resp.Code == easypayCodeSuccess && resp.Data.Status != nil && *resp.Data.Status == easypayStatusPaid {
 		status = payment.ProviderStatusPaid
 	}
 
@@ -350,56 +360,95 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 	} else if resp.Data.Money != nil {
 		money = *resp.Data.Money
 	}
-	responseTradeNo := tradeNo
-	if resp.TradeNo != nil {
-		if *resp.TradeNo != "" {
-			responseTradeNo = *resp.TradeNo
-		}
-	} else if resp.Data.TradeNo != nil && *resp.Data.TradeNo != "" {
-		responseTradeNo = *resp.Data.TradeNo
+	upstreamTradeNo := ""
+	if resp.TradeNo != nil && strings.TrimSpace(*resp.TradeNo) != "" {
+		upstreamTradeNo = strings.TrimSpace(*resp.TradeNo)
+	} else if resp.Data.TradeNo != nil && strings.TrimSpace(*resp.Data.TradeNo) != "" {
+		upstreamTradeNo = strings.TrimSpace(*resp.Data.TradeNo)
 	}
 
 	amount, _ := strconv.ParseFloat(money, 64)
+	responseTradeNo := upstreamTradeNo
+	if responseTradeNo == "" {
+		responseTradeNo = outTradeNo
+	}
 	return &payment.QueryOrderResponse{
 		TradeNo:  responseTradeNo,
 		Status:   status,
 		Amount:   amount,
 		Metadata: e.MerchantIdentityMetadata(),
-	}, nil
+	}, upstreamTradeNo, nil
 }
 
-func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[string]string) (*payment.PaymentNotification, error) {
+func (e *EasyPay) VerifyNotification(ctx context.Context, rawBody string, _ map[string]string) (*payment.PaymentNotification, error) {
 	values, err := url.ParseQuery(rawBody)
 	if err != nil {
 		return nil, fmt.Errorf("parse notify: %w", err)
 	}
 	// url.ParseQuery already decodes values — no additional decode needed.
 	params := make(map[string]string)
-	for k := range values {
+	for k, entries := range values {
+		if len(entries) != 1 {
+			return nil, fmt.Errorf("duplicate notification parameter: %s", k)
+		}
 		params[k] = values.Get(k)
 	}
-	sign := params["sign"]
+	sign := strings.TrimSpace(params["sign"])
 	if sign == "" {
 		return nil, fmt.Errorf("missing sign")
 	}
 	if !easyPayVerifySign(params, e.config["pkey"], sign) {
 		return nil, fmt.Errorf("invalid signature")
 	}
+	if !strings.EqualFold(strings.TrimSpace(params["sign_type"]), signTypeMD5) {
+		return nil, fmt.Errorf("unsupported sign_type")
+	}
+	pid := strings.TrimSpace(params["pid"])
+	if pid == "" || pid != strings.TrimSpace(e.config["pid"]) {
+		return nil, fmt.Errorf("easypay pid missing or mismatched")
+	}
+	orderID := strings.TrimSpace(params["out_trade_no"])
+	if orderID == "" {
+		return nil, fmt.Errorf("missing out_trade_no")
+	}
 	status := payment.ProviderStatusFailed
 	if params["trade_status"] == tradeStatusSuccess {
 		status = payment.ProviderStatusSuccess
 	}
-	amount, _ := strconv.ParseFloat(params["money"], 64)
+	amount, _ := strconv.ParseFloat(strings.TrimSpace(params["money"]), 64)
+	tradeNo := strings.TrimSpace(params["trade_no"])
+	if status == payment.ProviderStatusSuccess {
+		if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+			return nil, fmt.Errorf("invalid notification amount")
+		}
+		query, upstreamTradeNo, queryErr := e.queryOrder(ctx, orderID)
+		if queryErr != nil {
+			return nil, fmt.Errorf("verify easypay order: %w", queryErr)
+		}
+		if query == nil || query.Status != payment.ProviderStatusPaid {
+			return nil, fmt.Errorf("easypay order is not paid upstream")
+		}
+		if query.Amount <= 0 || math.IsNaN(query.Amount) || math.IsInf(query.Amount, 0) || math.Abs(query.Amount-amount) > 0.000001 {
+			return nil, fmt.Errorf("easypay callback amount does not match upstream order")
+		}
+		if tradeNo != "" && upstreamTradeNo != "" && tradeNo != upstreamTradeNo {
+			return nil, fmt.Errorf("easypay trade_no does not match upstream order")
+		}
+		if tradeNo == "" {
+			tradeNo = upstreamTradeNo
+		}
+		if tradeNo == "" {
+			return nil, fmt.Errorf("missing upstream trade_no")
+		}
+	}
 
 	metadata := e.MerchantIdentityMetadata()
-	if pid := strings.TrimSpace(params["pid"]); pid != "" {
-		if metadata == nil {
-			metadata = map[string]string{}
-		}
-		metadata["pid"] = pid
+	if metadata == nil {
+		metadata = map[string]string{}
 	}
+	metadata["pid"] = pid
 	return &payment.PaymentNotification{
-		TradeNo: params["trade_no"], OrderID: params["out_trade_no"],
+		TradeNo: tradeNo, OrderID: orderID,
 		Amount: amount, Status: status, RawData: rawBody, Metadata: metadata,
 	}, nil
 }
