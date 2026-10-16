@@ -415,7 +415,8 @@
                         <span>{{ t('admin.channelTest.assistant') }}</span>
                         <span v-if="turn.status === 'running'">{{ t('admin.channelTest.output') }}</span>
                       </div>
-                      <div v-if="turn.content" class="whitespace-pre-wrap break-words">{{ turn.content }}</div>
+                      <QuickTestResult v-if="isBenchmarkPrompt(turn.prompt)" :turn="turn" />
+                      <div v-else-if="turn.content" class="whitespace-pre-wrap break-words">{{ turn.content }}</div>
                       <div v-else-if="turn.status === 'running'" class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.sending') }}</div>
                       <div v-else class="text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.noResponse') }}</div>
                     </div>
@@ -437,6 +438,23 @@
             </div>
 
             <form class="border-t border-gray-200 bg-gray-50/70 p-3 dark:border-dark-700 dark:bg-dark-900/30" @submit.prevent="sendTurn">
+              <div class="mb-2 flex flex-wrap items-center gap-2" role="group" :aria-label="t('admin.channelTest.quickTests')">
+                <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.quickTests') }}</span>
+                <button
+                  v-for="preset in quickTestOptions"
+                  :key="preset.id"
+                  type="button"
+                  :data-testid="`availability-preset-${preset.id}`"
+                  class="rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50"
+                  :class="getQuickTestPreset(prompt) === preset.id
+                    ? 'border-indigo-400 bg-indigo-50 text-indigo-700 dark:border-indigo-500 dark:bg-indigo-900/30 dark:text-indigo-200'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300'"
+                  :aria-pressed="getQuickTestPreset(prompt) === preset.id"
+                  :disabled="running || sendPending || conversationLoading"
+                  @click="selectQuickTest(preset.id)"
+                >{{ t(preset.label) }}</button>
+                <span v-if="isBenchmarkPrompt(prompt)" class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('admin.channelTest.quickTestFreshContext') }}</span>
+              </div>
               <label for="availability-prompt" class="input-label">{{ t('admin.channelTest.prompt') }}</label>
               <textarea
                 id="availability-prompt"
@@ -686,9 +704,11 @@ import type {
   TurnStatus
 } from '@/api/admin/availability'
 import Icon from '@/components/icons/Icon.vue'
+import QuickTestResult from '@/components/admin/availability/QuickTestResult.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useAppStore } from '@/stores'
 import type { AdminGroup, UpdateAccountRequest } from '@/types'
+import { QUICK_TEST_PROMPTS, getQuickTestPreset, type QuickTestPresetId } from '@/utils/availabilityQuickTests'
 
 type AccountField = 'priority' | 'load_factor'
 type AccountFieldState = 'idle' | 'saving' | 'saved' | 'error'
@@ -715,8 +735,14 @@ const conversationLoading = ref(false)
 const loadingMoreTurns = ref(false)
 const conversationTurnTotal = ref(0)
 const conversationTurnPage = ref(1)
-const defaultPrompt = 'Hello'
-const prompt = ref(defaultPrompt)
+const quickTestOptions: { id: QuickTestPresetId; label: string }[] = [
+  { id: 'hello', label: 'admin.channelTest.quickTestHello' },
+  { id: 'pelican', label: 'admin.channelTest.quickTestPelican' },
+  { id: 'candy', label: 'admin.channelTest.quickTestCandy' }
+]
+const quickTestPreset = ref<QuickTestPresetId>('hello')
+const defaultPrompt = computed(() => QUICK_TEST_PROMPTS[quickTestPreset.value])
+const prompt = ref(defaultPrompt.value)
 const liveEvents = ref<AvailabilityEvent[]>([])
 const streamError = ref('')
 const streamStatus = ref<StreamStatus>('idle')
@@ -787,6 +813,7 @@ const historyPages = computed(() => Math.max(1, Math.ceil(historyTotal.value / h
 const canSend = computed(() => (
   !running.value &&
   !sendPending.value &&
+  !conversationLoading.value &&
   selectedGroupId.value != null &&
   selectedModelId.value.trim().length > 0 &&
   selectedModel.value != null &&
@@ -899,6 +926,17 @@ async function refreshAll(): Promise<void> {
   await loadHistory({ silent: true })
 }
 
+function isBenchmarkPrompt(value: string): boolean {
+  const preset = getQuickTestPreset(value)
+  return preset === 'pelican' || preset === 'candy'
+}
+
+function selectQuickTest(preset: QuickTestPresetId): void {
+  if (running.value || sendPending.value || conversationLoading.value) return
+  quickTestPreset.value = preset
+  prompt.value = defaultPrompt.value
+}
+
 function resetConversation(): void {
   if (running.value) return
   pendingStreamRequest.value = null
@@ -910,7 +948,7 @@ function resetConversation(): void {
   streamError.value = ''
   streamStatus.value = 'idle'
   lastStreamSeq.value = null
-  prompt.value = defaultPrompt
+  prompt.value = defaultPrompt.value
 }
 
 function startFreshConversation(): void {
@@ -1467,7 +1505,7 @@ async function runStreamRequest(request: PendingStreamRequest): Promise<void> {
 }
 
 async function sendTurn(): Promise<void> {
-  if (running.value || sendPending.value) return
+  if (running.value || sendPending.value || conversationLoading.value) return
   if (!selectedModelId.value || selectedModel.value == null) {
     appStore.showError(t('admin.channelTest.selectModelToChat'))
     return
@@ -1482,6 +1520,7 @@ async function sendTurn(): Promise<void> {
     return
   }
 
+  if (isBenchmarkPrompt(text)) startFreshConversation()
   sendPending.value = true
   let activeConversation: AvailabilityConversation
   try {
@@ -1509,7 +1548,7 @@ async function sendTurn(): Promise<void> {
     clientRequestId: newClientRequestId()
   }
   pendingStreamRequest.value = request
-  prompt.value = defaultPrompt
+  prompt.value = defaultPrompt.value
   sendPending.value = false
   await runStreamRequest(request)
 }
@@ -1676,7 +1715,7 @@ watch(selectedModelId, (next, previous) => {
     restoreRequestVersion += 1
     resetConversation()
   }
-})
+}, { flush: 'sync' })
 
 watch(historySearch, () => {
   historyPage.value = 1

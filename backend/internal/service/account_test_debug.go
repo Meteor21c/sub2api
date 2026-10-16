@@ -847,6 +847,10 @@ func (s *AccountTestService) TestAccountDebug(c *gin.Context, accountID int64, m
 	if prompt == "" {
 		prompt = "hello"
 	}
+	if !strings.EqualFold(prompt, "hello") && !strings.EqualFold(prompt, "hi") {
+		restoreOutputBudget := scopeAccountTestOutputBudget(c, accountTestDebugOutputBudget)
+		defer restoreOutputBudget()
+	}
 	requestedModel := strings.TrimSpace(modelID)
 	accountName := ""
 	endpointHint := ""

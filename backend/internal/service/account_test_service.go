@@ -589,6 +589,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
+	applyAccountTestOutputBudget(c, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// Send test_start event
@@ -667,6 +668,7 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
+	applyAccountTestOutputBudget(c, payload)
 	payloadBytes, _ := json.Marshal(payload)
 	vertexBody, err := buildVertexAnthropicRequestBody(payloadBytes)
 	if err != nil {
@@ -755,6 +757,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 		"max_tokens":  256,
 		"temperature": 1,
 	}
+	applyAccountTestOutputBudget(c, bedrockPayload)
 	bedrockBody, _ := json.Marshal(bedrockPayload)
 
 	// Use non-streaming endpoint (response is standard Claude JSON)
@@ -807,6 +810,7 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 		Content []struct {
 			Text string `json:"text"`
 		} `json:"content"`
+		StopReason string `json:"stop_reason"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Failed to parse response: %s", err.Error()))
@@ -821,6 +825,9 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 	}
 
 	s.sendEvent(c, TestEvent{Type: "content", Text: text})
+	if result.StopReason == "max_tokens" {
+		return s.sendErrorAndEnd(c, accountTestTruncatedOutputError)
+	}
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
 }
@@ -2901,6 +2908,10 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 				if text, ok := delta["text"].(string); ok {
 					s.sendEvent(c, TestEvent{Type: "content", Text: text})
 				}
+			}
+		case "message_delta":
+			if delta, ok := data["delta"].(map[string]any); ok && delta["stop_reason"] == "max_tokens" {
+				return s.sendErrorAndEnd(c, accountTestTruncatedOutputError)
 			}
 		case "message_stop":
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})

@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChannelTestView from '../ChannelTestView.vue'
+import { QUICK_TEST_PROMPTS } from '@/utils/availabilityQuickTests'
 
 const { getAll, getCatalog, createConversation, listConversations, getConversation, streamTurn, update, setSchedulable, showError, showSuccess } = vi.hoisted(() => ({
   getAll: vi.fn(),
@@ -271,6 +272,86 @@ describe('Availability V2 administrator page', () => {
     expect(update).toHaveBeenCalledWith(7, { priority: 42 })
     expect((input.element as HTMLInputElement).value).toBe('10')
     expect(wrapper.text()).toContain('validation failed')
+    wrapper.unmount()
+  })
+
+  it('fills a quick-test prompt without sending or changing the selected route', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('[data-testid="availability-model-gpt-test"]').trigger('click')
+    await wrapper.get('[data-testid="availability-preset-candy"]').trigger('click')
+
+    const textarea = wrapper.get('[data-testid="availability-prompt"]')
+    expect((textarea.element as HTMLTextAreaElement).value).toBe(QUICK_TEST_PROMPTS.candy)
+    expect(wrapper.get('[data-testid="availability-preset-candy"]').attributes('aria-pressed')).toBe('true')
+    expect(createConversation).not.toHaveBeenCalled()
+    expect(streamTurn).not.toHaveBeenCalled()
+
+    await textarea.setValue('my custom question')
+    expect(wrapper.get('[data-testid="availability-preset-candy"]').attributes('aria-pressed')).toBe('false')
+    await wrapper.get('[data-testid="availability-preset-hello"]').trigger('click')
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('Hello')
+    wrapper.unmount()
+  })
+
+  it('sends the pelican preset through the selected account and displays the returned SVG', async () => {
+    streamTurn.mockImplementationOnce(async (id, payload, options) => {
+      const turn = { ...makeTurn(), conversation_id: id, prompt: payload.prompt, content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400"><circle cx="40" cy="40" r="20" /></svg>' }
+      options.onEvent({ type: 'turn_completed', conversation_id: id, turn_id: turn.id, seq: 1, at: turn.completed_at, turn })
+      return { receivedTerminalEvent: true, lastSeq: 1 }
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('[data-testid="availability-account-7"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="availability-model-gpt-test"]').trigger('click')
+    await wrapper.get('[data-testid="availability-preset-pelican"]').trigger('click')
+    await wrapper.get('[data-testid="availability-send"]').trigger('submit')
+    await flushPromises()
+
+    expect(createConversation).toHaveBeenCalledWith({ group_id: 12, account_id: 7, model: 'gpt-test', title: QUICK_TEST_PROMPTS.pelican.slice(0, 80) })
+    expect(streamTurn.mock.calls[0][1]).toEqual({ prompt: QUICK_TEST_PROMPTS.pelican, client_request_id: expect.any(String) })
+    expect(wrapper.get('[data-testid="availability-svg-preview"]').attributes('src')).toMatch(/^data:image\/svg\+xml/)
+    expect((wrapper.get('[data-testid="availability-prompt"]').element as HTMLTextAreaElement).value).toBe(QUICK_TEST_PROMPTS.pelican)
+    wrapper.unmount()
+  })
+
+  it('starts a fresh durable conversation for each candy test to exclude previous answers', async () => {
+    createConversation.mockResolvedValueOnce(conversation).mockResolvedValueOnce({ ...conversation, id: 100 })
+    streamTurn.mockImplementation(async (id, payload, options) => {
+      const turn = { ...makeTurn(), conversation_id: id, prompt: payload.prompt, content: '9 round and 12 stars.\nFINAL_ANSWER: 21' }
+      options.onEvent({ type: 'turn_completed', conversation_id: id, turn_id: turn.id, seq: 1, at: turn.completed_at, turn })
+      return { receivedTerminalEvent: true, lastSeq: 1 }
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('[data-testid="availability-model-gpt-test"]').trigger('click')
+    await wrapper.get('[data-testid="availability-preset-candy"]').trigger('click')
+    await wrapper.get('[data-testid="availability-send"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="availability-candy-verdict"]').text()).toBe('admin.channelTest.candyCorrect')
+
+    await wrapper.get('[data-testid="availability-send"]').trigger('submit')
+    await flushPromises()
+    expect(createConversation).toHaveBeenCalledTimes(2)
+    expect(streamTurn.mock.calls.map(call => call[0])).toEqual([99, 100])
+    expect(streamTurn.mock.calls.every(call => call[1].prompt === QUICK_TEST_PROMPTS.candy)).toBe(true)
+    expect(wrapper.get('[data-testid="availability-preset-candy"]').attributes('aria-pressed')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('restores a saved candy result and keeps its verdict when the next preset changes', async () => {
+    listConversations.mockResolvedValue({ items: [conversation], total: 1 })
+    getConversation.mockResolvedValue({ conversation, turns: [{ ...makeTurn(), prompt: QUICK_TEST_PROMPTS.candy, content: 'FINAL_ANSWER: 29' }], total: 1, page: 1, page_size: 50 })
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('[data-testid="availability-history-restore-99"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="availability-candy-verdict"]').text()).toBe('admin.channelTest.candyIncorrect')
+    await wrapper.get('[data-testid="availability-preset-pelican"]').trigger('click')
+    expect(wrapper.get('[data-testid="availability-candy-verdict"]').text()).toBe('admin.channelTest.candyIncorrect')
+    expect(streamTurn).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

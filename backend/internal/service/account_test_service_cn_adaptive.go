@@ -67,6 +67,7 @@ func (s *AccountTestService) testCNProviderAdaptiveAnthropicConnection(c *gin.Co
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create adaptive Anthropic test payload")
 	}
+	applyAccountTestOutputBudget(c, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过原生 /v1/messages 测试自适应 Anthropic 端点"})
@@ -142,6 +143,10 @@ func (s *AccountTestService) processCNProviderAdaptiveAnthropicStream(c *gin.Con
 				if text, ok := delta["text"].(string); ok && text != "" {
 					s.sendEvent(c, TestEvent{Type: "content", Text: text})
 				}
+			}
+		case "message_delta":
+			if delta, ok := data["delta"].(map[string]any); ok && delta["stop_reason"] == "max_tokens" {
+				return s.sendErrorAndEnd(c, accountTestTruncatedOutputError)
 			}
 		case "message_stop":
 			return nil
@@ -255,6 +260,7 @@ func (s *AccountTestService) testCNProviderAnthropicConnection(c *gin.Context, a
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create Anthropic test payload")
 	}
+	applyAccountTestOutputBudget(c, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
