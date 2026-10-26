@@ -3,8 +3,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountsView from '../AccountsView.vue'
 
-const { listAccounts } = vi.hoisted(() => ({
-  listAccounts: vi.fn()
+const { listAccounts, updateAccount } = vi.hoisted(() => ({
+  listAccounts: vi.fn(),
+  updateAccount: vi.fn()
 }))
 
 vi.mock('@/api/admin', () => ({
@@ -14,6 +15,7 @@ vi.mock('@/api/admin', () => ({
       listWithEtag: vi.fn(),
       getBatchTodayStats: vi.fn().mockResolvedValue({ stats: {} }),
       getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: true, interval_minutes: 30 }),
+      update: updateAccount,
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
@@ -23,6 +25,8 @@ vi.mock('@/api/admin', () => ({
     groups: { getAll: vi.fn().mockResolvedValue([]) }
   }
 }))
+
+vi.mock('@/api/admin/accounts', () => ({ update: updateAccount }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn(), showInfo: vi.fn() })
@@ -41,7 +45,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 const DataTableStub = {
-  props: ['columns'],
+  props: ['columns', 'data'],
   emits: ['sort'],
   template: `
     <div data-test="data-table">
@@ -49,6 +53,10 @@ const DataTableStub = {
         {{ column.sortable ? 'sortable' : 'fixed' }}
       </span>
       <button data-test="sort-priority" @click="$emit('sort', 'priority', 'desc')" />
+      <div v-if="data?.[0]">
+        <slot name="cell-priority" :row="data[0]" :value="data[0].priority" />
+        <slot name="cell-load_factor" :row="data[0]" :value="data[0].load_factor" />
+      </div>
     </div>
   `
 }
@@ -104,6 +112,7 @@ describe('admin AccountsView priority column preferences', () => {
       page_size: 20,
       pages: 0
     })
+    updateAccount.mockReset()
   })
 
   it('shows priority as a sortable column for fresh preferences', async () => {
@@ -148,5 +157,38 @@ describe('admin AccountsView priority column preferences', () => {
       expect.arrayContaining(['today_stats', 'scheduler_score'])
     )
     expect(JSON.parse(localStorage.getItem('account-hidden-columns') || '[]')).not.toContain('priority')
+  })
+
+  it('saves priority and load factor directly from the account table', async () => {
+    const row = {
+      id: 12,
+      name: 'inline account',
+      platform: 'openai',
+      type: 'api-key',
+      status: 'active',
+      priority: 3,
+      load_factor: 5,
+      concurrency: 0
+    }
+    listAccounts.mockResolvedValue({ items: [row], total: 1, page: 1, page_size: 20, pages: 1 })
+    updateAccount
+      .mockResolvedValueOnce({ ...row, priority: 7 })
+      .mockResolvedValueOnce({ ...row, priority: 7, load_factor: 9 })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="account-priority-value"]').trigger('click')
+    const priority = wrapper.get('[data-testid="account-priority-input"]')
+    await priority.setValue('7')
+    await priority.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(updateAccount).toHaveBeenNthCalledWith(1, 12, { priority: 7 })
+
+    const loadFactor = wrapper.get('input[aria-label="admin.accounts.loadFactor"]')
+    await loadFactor.setValue('9')
+    await loadFactor.trigger('blur')
+    await flushPromises()
+    expect(updateAccount).toHaveBeenNthCalledWith(2, 12, { load_factor: 9 })
   })
 })

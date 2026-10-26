@@ -634,6 +634,7 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 	}
 	return &OpenAIForwardResult{
 		ResponseID:           responseID,
+		Usage:                providerTokenUsageFromGrokStatus(statusBody),
 		Model:                model,
 		BillingModel:         billingModel,
 		UpstreamModel:        upstreamModel,
@@ -641,6 +642,30 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 		VideoResolution:      resolution,
 		VideoDurationSeconds: durationSeconds,
 	}
+}
+
+// The FZY video adapter exposes the provider's V3 task usage separately from
+// OpenAI's usage field. Preserve it in the durable usage log without changing
+// the current video billing mode; only successful task status is accepted.
+func providerTokenUsageFromGrokStatus(statusBody []byte) OpenAIUsage {
+	var usage OpenAIUsage
+	if !IsGrokVideoStatusBillable(statusBody) {
+		return usage
+	}
+	for _, source := range []string{"provider_token_usage", "data.provider_token_usage"} {
+		value := gjson.GetBytes(statusBody, source)
+		if !value.IsObject() {
+			continue
+		}
+		if input := value.Get("prompt_tokens"); input.Type == gjson.Number && input.Int() >= 0 {
+			usage.InputTokens = int(input.Int())
+		}
+		if output := value.Get("completion_tokens"); output.Type == gjson.Number && output.Int() >= 0 {
+			usage.OutputTokens = int(output.Int())
+		}
+		return usage
+	}
+	return usage
 }
 
 func (s *OpenAIGatewayService) ForwardGrokMedia(
@@ -793,6 +818,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		VideoCount:           usage.VideoCount,
 		VideoResolution:      usage.VideoResolution,
 		VideoDurationSeconds: usage.VideoDurationSeconds,
+		VideoTaskFailed:      usage.VideoTaskFailed,
 	}, nil
 }
 
@@ -919,6 +945,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	}
 	if billed := ExtractGrokVideoBillingFromStatusBody(statusBody, nil, requestID); billed != nil {
 		result.ResponseID = firstNonEmpty(billed.ResponseID, strings.TrimSpace(requestID))
+		result.Usage = billed.Usage
 		result.Model = billed.Model
 		result.BillingModel = billed.BillingModel
 		result.UpstreamModel = billed.UpstreamModel
@@ -1205,6 +1232,7 @@ type grokMediaUsageMetadata struct {
 	VideoCount           int
 	VideoResolution      string
 	VideoDurationSeconds int
+	VideoTaskFailed      bool
 }
 
 func grokMediaUsageFromResponse(endpoint GrokMediaEndpoint, requestInfo GrokMediaRequestInfo, responseBody []byte) grokMediaUsageMetadata {
@@ -1223,10 +1251,13 @@ func grokMediaUsageFromResponse(endpoint GrokMediaEndpoint, requestInfo GrokMedi
 		meta.VideoResolution = requestInfo.Resolution
 		meta.VideoDurationSeconds = requestInfo.DurationSeconds
 	case GrokMediaEndpointVideoStatus:
+		status := strings.ToLower(strings.TrimSpace(gjson.GetBytes(responseBody, "status").String()))
+		meta.VideoTaskFailed = status == "failed" || status == "expired" || status == "cancelled" || status == "canceled"
 		// Prefer status-body URL success + upstream duration/resolution when present.
 		if IsGrokVideoStatusBillable(responseBody) {
 			// provisional units; handler merges with pending snapshot before RecordUsage.
 			if billed := ExtractGrokVideoBillingFromStatusBody(responseBody, nil, ""); billed != nil {
+				meta.Usage = billed.Usage
 				meta.ResponseID = billed.ResponseID
 				meta.Model = billed.Model
 				meta.BillingModel = billed.BillingModel

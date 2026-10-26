@@ -747,6 +747,13 @@ export default {
         rechargeFeeRate: 'Recharge Fee Rate',
         rechargeFeeRateHint: 'Percentage of service fee charged on top of recharge amount, 0 means no fee',
         rechargeFeePreview: 'Preview: Recharge 100, fee {fee}',
+        rechargeFeeTiers: 'Tiered Fee / Discount',
+        rechargeFeeTiersHint: 'Applied by recharge amount; positive is a fee, negative is a discount.',
+        rechargeFeeTiersEmpty: 'No tiers set; the flat rate above is used.',
+        addRechargeFeeTier: 'Add Tier',
+        removeRechargeFeeTier: 'Remove',
+        rechargeFeeTierMin: 'Starting Amount',
+        rechargeFeeTierRate: 'Rate',
         rechargeBonus: {
           label: 'Recharge Promotion Tiers',
           hint: 'Balance top-ups match a tier by the amount the user enters (highest threshold not above it). Leave empty for no promotion. Subscriptions are not affected.',

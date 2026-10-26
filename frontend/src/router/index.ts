@@ -526,6 +526,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/channel-test',
+    name: 'AdminChannelTest',
+    component: () => import('@/views/admin/ChannelTestView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Availability Test',
+      titleKey: 'admin.channelTest.title',
+      descriptionKey: 'admin.channelTest.description'
+    }
+  },
+  {
     path: '/admin/plugins',
     name: 'AdminPlugins',
     component: () => import('@/views/admin/PluginsView.vue'),

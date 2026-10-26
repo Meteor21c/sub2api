@@ -742,6 +742,13 @@ export default {
         rechargeFeeRate: '充值手续费率',
         rechargeFeeRateHint: '用户充值时额外收取的手续费百分比，0 表示不收取手续费',
         rechargeFeePreview: '预览：充值 100 元，手续费 {fee} 元',
+        rechargeFeeTiers: '分档手续费/优惠',
+        rechargeFeeTiersHint: '按充值金额生效；正数为手续费，负数为优惠。',
+        rechargeFeeTiersEmpty: '未设置分档，使用上面的统一费率。',
+        addRechargeFeeTier: '添加档位',
+        removeRechargeFeeTier: '删除',
+        rechargeFeeTierMin: '起始金额',
+        rechargeFeeTierRate: '费率',
         rechargeBonus: {
           label: '充值优惠阶梯',
           hint: '余额充值按用户输入的金额命中档位（取不超过该金额的最大档）；不配置则无优惠。订阅订单不参与。',

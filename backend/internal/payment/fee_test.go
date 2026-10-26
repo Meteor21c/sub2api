@@ -20,10 +20,10 @@ func TestCalculatePayAmount(t *testing.T) {
 			expected: "100.00",
 		},
 		{
-			name:     "negative fee rate returns same amount",
+			name:     "negative fee rate applies discount",
 			amount:   50.00,
 			feeRate:  -5,
-			expected: "50.00",
+			expected: "47.50",
 		},
 		{
 			name:     "1 percent fee rate",
@@ -78,6 +78,18 @@ func TestCalculatePayAmount(t *testing.T) {
 			amount:   100.00,
 			feeRate:  1.02,
 			expected: "101.02",
+		},
+		{
+			name:     "negative fee rounds final payment upward",
+			amount:   10.01,
+			feeRate:  -1,
+			expected: "9.91", // 10.01 * 0.99 = 9.9099 -> ceil to 9.91
+		},
+		{
+			name:     "large discount remains positive",
+			amount:   500,
+			feeRate:  -10,
+			expected: "450.00",
 		},
 		{
 			name:     "zero amount with positive fee",

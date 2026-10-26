@@ -63,6 +63,14 @@ describe('AppSidebar header styles', () => {
   })
 })
 
+describe('AppSidebar promotion entries', () => {
+  it('shares the bottom promotion area between MeteorAgent and the shop', () => {
+    expect(componentSource).toContain('<MeteorAgentPromo')
+    expect(componentSource).toContain(':compact="!sidebarCollapsed"')
+    expect(componentSource).toContain('<ShopPromo variant="sidebar" :collapsed="sidebarCollapsed" />')
+  })
+})
+
 describe('AppSidebar subscription feature flag', () => {
   it('gates the My Subscriptions entry behind the subscription public-settings flag', () => {
     expect(componentSource).toContain('const flagSubscription = makeSidebarFlag(FeatureFlags.subscription)')

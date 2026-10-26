@@ -26,6 +26,12 @@
         <!-- Announcement Bell -->
         <AnnouncementBell v-if="user" />
 
+        <!-- Compact promotion entries -->
+        <div v-if="user" class="hidden items-center gap-1.5 sm:flex">
+          <MeteorAgentPromo variant="header" />
+          <ShopPromo variant="header" />
+        </div>
+
         <!-- Docs Link -->
         <a
           v-if="docUrl"
@@ -260,6 +266,8 @@ import { useAdminSettingsStore } from '@/stores/adminSettings'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
+import MeteorAgentPromo from '@/components/common/MeteorAgentPromo.vue'
+import ShopPromo from '@/components/common/ShopPromo.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'

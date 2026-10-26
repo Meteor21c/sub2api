@@ -309,6 +309,94 @@ export async function testAccount(id: number): Promise<{
   return data
 }
 
+export interface AccountDebugTestUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cached_tokens?: number
+  cache_creation_tokens?: number
+  reasoning_tokens?: number
+  usage_source?: 'upstream' | 'estimated' | 'mixed' | string
+}
+
+export interface AccountDebugTestResult {
+  content: string
+  raw_response?: string
+  model: string
+  account_id?: number
+  account_name?: string
+  group_id?: number
+  group_name?: string
+  requested_model?: string
+  endpoint?: string
+  status_code?: number
+  error?: string
+  timing: {
+    first_response_ms: number
+    total_ms: number
+  }
+  usage: AccountDebugTestUsage
+  billing: {
+    usd: number
+    cost_source?: string
+  }
+  success: boolean
+  attempts?: AccountDebugTestAttempt[]
+  failover_attempted?: boolean
+  failover_succeeded?: boolean
+}
+
+export interface AccountDebugTestAttempt {
+  account_id: number
+  account_name: string
+  model?: string
+  endpoint?: string
+  status_code?: number
+  error?: string
+  timing: {
+    first_response_ms: number
+    total_ms: number
+  }
+  success: boolean
+}
+
+/**
+ * Run the administrator-only JSON channel debugger. The probe uses the same
+ * upstream path as the regular connection test and never debits a balance.
+ */
+export async function debugTestAccount(
+  id: number,
+  payload: { model_id?: string; prompt?: string } = {},
+  options?: { signal?: AbortSignal }
+): Promise<AccountDebugTestResult> {
+  const { data } = await apiClient.post<AccountDebugTestResult>(
+    `/admin/accounts/${id}/debug-test`,
+    payload,
+    {
+      signal: options?.signal,
+      timeout: 120000
+    }
+  )
+  return data
+}
+
+/** Run the same debugger after selecting an account through group scheduling. */
+export async function debugTestGroup(
+  id: number,
+  payload: { model_id?: string; prompt?: string } = {},
+  options?: { signal?: AbortSignal }
+): Promise<AccountDebugTestResult> {
+  const { data } = await apiClient.post<AccountDebugTestResult>(
+    `/admin/groups/${id}/debug-test`,
+    payload,
+    {
+      signal: options?.signal,
+      timeout: 120000
+    }
+  )
+  return data
+}
+
 /**
  * Refresh account credentials
  * @param id - Account ID
@@ -602,8 +690,10 @@ export async function setSchedulable(id: number, schedulable: boolean): Promise<
  * @param id - Account ID
  * @returns List of available models for this account
  */
-export async function getAvailableModels(id: number): Promise<ClaudeModel[]> {
-  const { data } = await apiClient.get<ClaudeModel[]>(`/admin/accounts/${id}/models`)
+export async function getAvailableModels(id: number, options?: { signal?: AbortSignal }): Promise<ClaudeModel[]> {
+  const { data } = await apiClient.get<ClaudeModel[]>(`/admin/accounts/${id}/models`, {
+    signal: options?.signal
+  })
   return data
 }
 
@@ -1145,6 +1235,8 @@ export const accountsAPI = {
   delete: deleteAccount,
   toggleStatus,
   testAccount,
+  debugTestAccount,
+  debugTestGroup,
   refreshCredentials,
   applyOAuthCredentials,
   getStats,

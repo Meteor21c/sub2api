@@ -303,6 +303,7 @@ export default {
     enterAmount: 'Enter amount',
     paymentMethod: 'Payment Method',
     fee: 'Fee',
+    discount: 'Discount',
     actualPay: 'Actual Payment',
     createOrder: 'Confirm Payment',
     methods: {
@@ -367,6 +368,7 @@ export default {
       bonusAmount: 'Bonus',
       bonusIncluded: 'incl. bonus {amount}',
       fee: 'Fee',
+      discount: 'Discount',
       baseAmount: 'Base Amount',
       includedInPayAmount: 'included in paid amount',
       status: 'Status',

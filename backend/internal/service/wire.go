@@ -254,6 +254,7 @@ func ProvideAccountUsageService(
 
 func ProvideAccountTestService(
 	accountRepo AccountRepository,
+	groupRepo GroupRepository,
 	geminiTokenProvider *GeminiTokenProvider,
 	claudeTokenProvider *ClaudeTokenProvider,
 	grokTokenProvider *GrokTokenProvider,
@@ -262,8 +263,10 @@ func ProvideAccountTestService(
 	cfg *config.Config,
 	tlsFPProfileService *TLSFingerprintProfileService,
 	openAIGatewayService *OpenAIGatewayService,
+	gatewayService *GatewayService,
 	settingService *SettingService,
 	pluginManager *PluginManager,
+	billingService *BillingService,
 ) *AccountTestService {
 	service := NewAccountTestService(
 		accountRepo,
@@ -276,9 +279,12 @@ func ProvideAccountTestService(
 		tlsFPProfileService,
 	)
 	service.agentIdentityWS = openAIGatewayService
+	service.SetGroupTestDependencies(groupRepo, gatewayService)
 	service.SetOpenAIGatewayService(openAIGatewayService)
+	service.SetGatewayService(gatewayService)
 	service.SetSettingService(settingService)
 	service.SetPluginManager(pluginManager)
+	service.SetBillingService(billingService)
 	return service
 }
 
@@ -914,6 +920,7 @@ var ProviderSet = wire.NewSet(
 	ProvideRateLimitService,
 	ProvideAccountUsageService,
 	ProvideAccountTestService,
+	ProvideAvailabilityV2Service,
 	ProvideUpstreamBillingProbeService,
 	ProvideOllamaCloudUsageService,
 	ProvideOpenCodeGoUsageService,

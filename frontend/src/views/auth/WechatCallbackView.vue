@@ -345,6 +345,7 @@ import {
   loadOAuthAffiliateCode,
   oauthAffiliatePayload
 } from '@/utils/oauthAffiliate'
+import { sanitizeRedirectPath as sanitizeRedirectPathForRouter } from '@/router/redirect'
 
 const route = useRoute()
 const router = useRouter()
@@ -471,12 +472,7 @@ function readLegacyFragmentLogin(params: URLSearchParams): OAuthTokenResponse | 
 }
 
 function sanitizeRedirectPath(path: string | null | undefined): string {
-  if (!path) return '/dashboard'
-  if (!path.startsWith('/')) return '/dashboard'
-  if (path.startsWith('//')) return '/dashboard'
-  if (path.includes('://')) return '/dashboard'
-  if (path.includes('\n') || path.includes('\r')) return '/dashboard'
-  return path
+  return sanitizeRedirectPathForRouter(router, path)
 }
 
 async function ensurePublicSettingsLoaded(): Promise<void> {

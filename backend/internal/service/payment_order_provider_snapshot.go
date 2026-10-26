@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,7 @@ type paymentOrderProviderSnapshot struct {
 	MerchantAppID      string
 	MerchantID         string
 	Currency           string
+	RechargeAmount     float64
 }
 
 func psOrderProviderSnapshot(order *dbent.PaymentOrder) *paymentOrderProviderSnapshot {
@@ -33,7 +35,11 @@ func psOrderProviderSnapshot(order *dbent.PaymentOrder) *paymentOrderProviderSna
 		MerchantAppID:      psSnapshotStringValue(order.ProviderSnapshot["merchant_app_id"]),
 		MerchantID:         psSnapshotStringValue(order.ProviderSnapshot["merchant_id"]),
 		Currency:           psSnapshotStringValue(order.ProviderSnapshot["currency"]),
+		RechargeAmount:     psSnapshotFloatValue(order.ProviderSnapshot["recharge_amount"]),
 	}
+	// RechargeAmount is deliberately omitted from this condition. Historical
+	// imports may carry only recharge amount metadata and must not become a
+	// pinned provider snapshot as a result.
 	if snapshot.SchemaVersion == 0 &&
 		snapshot.ProviderInstanceID == "" &&
 		snapshot.ProviderKey == "" &&
@@ -44,6 +50,45 @@ func psOrderProviderSnapshot(order *dbent.PaymentOrder) *paymentOrderProviderSna
 		return nil
 	}
 	return snapshot
+}
+
+// paymentOrderSnapshotRechargeAmount reads the original balance recharge
+// amount without treating a legacy amount-only snapshot as a pinned payment
+// provider snapshot. Historical imports intentionally have no provider
+// instance metadata, so adding this field must not change webhook/refund
+// provider resolution semantics.
+func paymentOrderSnapshotRechargeAmount(order *dbent.PaymentOrder) float64 {
+	if order == nil || len(order.ProviderSnapshot) == 0 {
+		return 0
+	}
+	for _, key := range []string{"recharge_amount", "legacy_amount"} {
+		amount := psSnapshotFloatValue(order.ProviderSnapshot[key])
+		if amount > 0 && !math.IsNaN(amount) && !math.IsInf(amount, 0) {
+			return amount
+		}
+	}
+	return 0
+}
+
+func psSnapshotFloatValue(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case string:
+		v, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err == nil {
+			return v
+		}
+	}
+	return 0
 }
 
 func psSnapshotStringValue(value any) string {

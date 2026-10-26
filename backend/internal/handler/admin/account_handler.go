@@ -1272,6 +1272,14 @@ type TestAccountRequest struct {
 	AudioDataURL string `json:"audio_data_url"`
 }
 
+// DebugTestAccountRequest is used by the administrator channel test page.
+// Unlike TestAccountRequest, this endpoint returns one JSON result containing
+// timing, usage and an informational billing estimate instead of an SSE stream.
+type DebugTestAccountRequest struct {
+	ModelID string `json:"model_id"`
+	Prompt  string `json:"prompt"`
+}
+
 type SyncFromCRSRequest struct {
 	BaseURL            string   `json:"base_url" binding:"required"`
 	Username           string   `json:"username" binding:"required"`
@@ -1315,6 +1323,68 @@ func (h *AccountHandler) Test(c *gin.Context) {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// DebugTest runs the same upstream connectivity probe as Test, but captures
+// its safe event stream and returns a compact JSON result for the dedicated
+// administrator channel-test page. No user balance or usage record is changed.
+// POST /api/v1/admin/accounts/:id/debug-test
+func (h *AccountHandler) DebugTest(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if h.accountTestService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Account test service unavailable")
+		return
+	}
+
+	var req DebugTestAccountRequest
+	// Keep the body optional so a direct POST still uses the default hello probe.
+	_ = c.ShouldBindJSON(&req)
+	result, err := h.accountTestService.TestAccountDebug(c, accountID, req.ModelID, req.Prompt)
+	if err != nil {
+		response.Error(c, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	if result.Success && h.rateLimitService != nil {
+		if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID); recoverErr != nil {
+			_ = c.Error(recoverErr)
+		}
+	}
+	response.Success(c, result)
+}
+
+// DebugTestGroup runs the administrator probe after selecting an account via
+// the group's normal scheduler. It does not debit a balance or write usage.
+// POST /api/v1/admin/groups/:id/debug-test
+func (h *AccountHandler) DebugTestGroup(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || groupID <= 0 {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+	if h.accountTestService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Account test service unavailable")
+		return
+	}
+
+	var req DebugTestAccountRequest
+	_ = c.ShouldBindJSON(&req)
+	result, err := h.accountTestService.TestGroupDebug(c, groupID, req.ModelID, req.Prompt)
+	if err != nil {
+		response.Error(c, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	if result.Success && h.rateLimitService != nil && result.AccountID > 0 {
+		if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), result.AccountID); recoverErr != nil {
+			_ = c.Error(recoverErr)
+		}
+	}
+	response.Success(c, result)
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.
@@ -2789,6 +2859,50 @@ func (h *AccountHandler) SetSchedulable(c *gin.Context) {
 	response.Success(c, h.buildAccountResponseWithRuntime(c.Request.Context(), account))
 }
 
+// buildCNAvailableModels returns the smallest useful test catalog for a
+// mainland-China OpenAI-compatible account. CN accounts are not Claude
+// accounts, so the generic fallback must never expose the Claude catalog.
+// Keep the catalog deliberately conservative: an administrator can still
+// configure an explicit model_mapping or sync the upstream model list when a
+// provider exposes a custom model name.
+func buildCNAvailableModels(account *service.Account) []openai.Model {
+	if account == nil || !account.IsCNProvider() {
+		return []openai.Model{}
+	}
+
+	modelIDs := make([]string, 0, 2)
+	switch account.Platform {
+	case service.PlatformKimi:
+		modelIDs = append(modelIDs, "kimi-k2.5")
+		// Kimi's native Responses endpoint also supports the current K2.6
+		// model. Keep it out of chat/Anthropic/adaptive probes because those
+		// paths should use one broadly compatible low-risk test model.
+		if account.GetAPIProtocol() == service.APIProtocolResponses {
+			modelIDs = append(modelIDs, "kimi-k2.6")
+		}
+	case service.PlatformZhipu:
+		modelIDs = append(modelIDs, "glm-4.7")
+	case service.PlatformDeepseek:
+		if account.GetAPIProtocol() == service.APIProtocolResponses {
+			modelIDs = append(modelIDs, "deepseek-v4-pro", "deepseek-v4-flash")
+		} else {
+			modelIDs = append(modelIDs, "deepseek-v4-flash")
+		}
+	}
+
+	models := make([]openai.Model, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		models = append(models, openai.Model{
+			ID:          modelID,
+			Object:      "model",
+			Type:        "model",
+			OwnedBy:     account.Platform,
+			DisplayName: modelID,
+		})
+	}
+	return models
+}
+
 // GetAvailableModels handles getting available models for an account
 // GET /api/v1/admin/accounts/:id/models
 func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
@@ -2943,6 +3057,34 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 				ID:          requestedModel,
 				Object:      "model",
 				OwnedBy:     "xai",
+				DisplayName: requestedModel,
+			})
+		}
+		response.Success(c, models)
+		return
+	}
+
+	// Handle mainland-China OpenAI-compatible accounts. These platforms use
+	// the OpenAI model envelope, but must not fall through to Claude defaults.
+	if account.IsCNProvider() {
+		mapping := account.GetModelMapping()
+		if len(mapping) == 0 {
+			response.Success(c, buildCNAvailableModels(account))
+			return
+		}
+
+		requestedModels := make([]string, 0, len(mapping))
+		for requestedModel := range mapping {
+			requestedModels = append(requestedModels, requestedModel)
+		}
+		sort.Strings(requestedModels)
+		models := make([]openai.Model, 0, len(requestedModels))
+		for _, requestedModel := range requestedModels {
+			models = append(models, openai.Model{
+				ID:          requestedModel,
+				Object:      "model",
+				Type:        "model",
+				OwnedBy:     account.Platform,
 				DisplayName: requestedModel,
 			})
 		}

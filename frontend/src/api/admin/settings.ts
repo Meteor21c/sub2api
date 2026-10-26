@@ -12,6 +12,7 @@ import type {
   LoginAgreementDocument,
   NotifyEmailEntry,
 } from "@/types";
+import type { RechargeFeeTier } from "@/types/payment";
 import type { RechargeBonusTier } from "@/utils/rechargeBonus";
 
 export interface DefaultSubscriptionSetting {
@@ -158,7 +159,7 @@ const AUTH_SOURCE_TYPES: AuthSourceType[] = [
   "dingtalk",
 ];
 const AUTH_SOURCE_DEFAULT_BALANCE = 0;
-const AUTH_SOURCE_DEFAULT_CONCURRENCY = 5;
+const AUTH_SOURCE_DEFAULT_CONCURRENCY = 10;
 const PAYMENT_VISIBLE_METHOD_SOURCE_OPTIONS: Record<
   PaymentVisibleMethod,
   PaymentVisibleMethodSourceOption[]
@@ -675,6 +676,7 @@ export interface SystemSettings {
   payment_balance_recharge_multiplier: number;
   payment_subscription_usd_to_cny_rate: number;
   payment_recharge_fee_rate: number;
+  payment_recharge_fee_tiers: RechargeFeeTier[];
   payment_recharge_bonus_tiers?: RechargeBonusTier[];
   payment_recharge_bonus_mode?: string;
   payment_recharge_bonus_notice?: string;
@@ -999,6 +1001,7 @@ export interface UpdateSettingsRequest {
   payment_balance_recharge_multiplier?: number;
   payment_subscription_usd_to_cny_rate?: number;
   payment_recharge_fee_rate?: number;
+  payment_recharge_fee_tiers?: RechargeFeeTier[];
   payment_recharge_bonus_tiers?: RechargeBonusTier[];
   payment_recharge_bonus_mode?: string;
   payment_recharge_bonus_notice?: string;

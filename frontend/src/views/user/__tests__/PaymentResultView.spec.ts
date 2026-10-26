@@ -511,6 +511,35 @@ describe('PaymentResultView', () => {
     expect(wrapper.text()).toContain(formatPaymentAmount(103, 'HKD'))
   })
 
+  it('shows a tiered discount and reconstructs the base amount on the result page', async () => {
+    routeState.query = {
+      resume_token: 'resume-discount',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: {
+        ...orderFactory('PAID'),
+        amount: 100,
+        pay_amount: 99,
+        fee_rate: -1,
+      },
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('payment.orders.discount')
+    expect(wrapper.text()).toContain('1.00')
+    expect(wrapper.text()).toContain('99.00')
+    expect(wrapper.text()).toContain('100.00')
+  })
+
   it('normalizes aliased payment methods before rendering the label', async () => {
     routeState.query = {
       resume_token: 'resume-88',

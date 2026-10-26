@@ -118,6 +118,9 @@ func RegisterAdminRoutes(
 		// 渠道监控
 		registerChannelMonitorRoutes(admin, h, settingService)
 		registerChannelMonitorV2Routes(admin, h, settingService)
+		if h != nil && h.Admin != nil && h.Admin.AvailabilityV2 != nil {
+			registerAvailabilityV2Routes(admin, h)
+		}
 
 		// 风控中心
 		registerContentModerationRoutes(admin, h)
@@ -130,6 +133,18 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+	}
+}
+
+func registerAvailabilityV2Routes(admin *gin.RouterGroup, h *handler.Handlers) {
+	channelTest := admin.Group("/channel-test")
+	{
+		channelTest.GET("/catalog", h.Admin.AvailabilityV2.Catalog)
+		channelTest.GET("/conversations", h.Admin.AvailabilityV2.ListConversations)
+		channelTest.POST("/conversations", h.Admin.AvailabilityV2.CreateConversation)
+		channelTest.GET("/conversations/:id", h.Admin.AvailabilityV2.GetConversation)
+		channelTest.POST("/conversations/:id/turns/stream", h.Admin.AvailabilityV2.StreamTurn)
+		channelTest.POST("/conversations/:id/turns/:turn_id/cancel", h.Admin.AvailabilityV2.CancelTurn)
 	}
 }
 
@@ -334,6 +349,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.GET("/live-capability", h.Admin.Group.GetLiveCapability)
 		groups.PUT("/sort-order", h.Admin.Group.UpdateSortOrder)
 		groups.GET("/:id/model-allowlist-candidates", h.Admin.Group.GetGroupModelAllowlistCandidates)
+		groups.POST("/:id/debug-test", h.Admin.Account.DebugTestGroup)
 		groups.GET("/:id/composite-routes", h.Admin.Group.ListCompositeRoutes)
 		groups.POST("/:id/composite-routes", h.Admin.Group.CreateCompositeRoute)
 		groups.POST("/:id/composite-routes/preview", h.Admin.Group.PreviewCompositeRoute)
@@ -391,6 +407,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/opencode-go-usage/refresh", h.Admin.Account.RefreshOpenCodeGoUsage)
 		accounts.DELETE("/:id", h.Admin.Account.Delete)
 		accounts.POST("/:id/test", h.Admin.Account.Test)
+		accounts.POST("/:id/debug-test", h.Admin.Account.DebugTest)
 		accounts.POST("/:id/recover-state", h.Admin.Account.RecoverState)
 		accounts.POST("/:id/refresh", h.Admin.Account.Refresh)
 		accounts.POST("/:id/apply-oauth-credentials", h.Admin.Account.ApplyOAuthCredentials)

@@ -149,6 +149,7 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		BalanceRechargeMultiplier:     cfg.BalanceRechargeMultiplier,
 		SubscriptionUSDToCNYRate:      cfg.SubscriptionUSDToCNYRate,
 		RechargeFeeRate:               cfg.RechargeFeeRate,
+		RechargeFeeTiers:              cfg.RechargeFeeTiers,
 		RechargeBonusTiers:            cfg.RechargeBonusTiers,
 		RechargeBonusMode:             cfg.RechargeBonusMode,
 		RechargeBonusNotice:           cfg.RechargeBonusNotice,
@@ -169,6 +170,7 @@ type checkoutInfoResponse struct {
 	BalanceRechargeMultiplier     float64                         `json:"balance_recharge_multiplier"`
 	SubscriptionUSDToCNYRate      float64                         `json:"subscription_usd_to_cny_rate"`
 	RechargeFeeRate               float64                         `json:"recharge_fee_rate"`
+	RechargeFeeTiers              []service.RechargeFeeTier       `json:"recharge_fee_tiers"`
 	RechargeBonusTiers            []service.RechargeBonusTier     `json:"recharge_bonus_tiers"`
 	RechargeBonusMode             string                          `json:"recharge_bonus_mode"`
 	RechargeBonusNotice           string                          `json:"recharge_bonus_notice"`
@@ -486,6 +488,7 @@ type PublicOrderResult struct {
 	ID                  int64      `json:"id"`
 	OutTradeNo          string     `json:"out_trade_no"`
 	Amount              float64    `json:"amount"`
+	RechargeAmount      float64    `json:"recharge_amount,omitempty"`
 	PayAmount           float64    `json:"pay_amount"`
 	FeeRate             float64    `json:"fee_rate"`
 	BonusAmount         float64    `json:"bonus_amount"`
@@ -522,6 +525,7 @@ func buildPublicOrderResult(order *dbent.PaymentOrder) PublicOrderResult {
 		ID:                  order.ID,
 		OutTradeNo:          order.OutTradeNo,
 		Amount:              order.Amount,
+		RechargeAmount:      service.PaymentOrderRechargeAmount(order),
 		PayAmount:           order.PayAmount,
 		FeeRate:             order.FeeRate,
 		BonusAmount:         order.BonusAmount,
@@ -631,6 +635,7 @@ type PaymentOrderResult struct {
 	ID                  int64      `json:"id"`
 	UserID              int64      `json:"user_id"`
 	Amount              float64    `json:"amount"`
+	RechargeAmount      float64    `json:"recharge_amount,omitempty"`
 	PayAmount           float64    `json:"pay_amount"`
 	FeeRate             float64    `json:"fee_rate"`
 	BonusAmount         float64    `json:"bonus_amount"`
@@ -670,6 +675,7 @@ func sanitizePaymentOrderForResponse(order *dbent.PaymentOrder) *PaymentOrderRes
 		ID:                  order.ID,
 		UserID:              order.UserID,
 		Amount:              order.Amount,
+		RechargeAmount:      service.PaymentOrderRechargeAmount(order),
 		PayAmount:           order.PayAmount,
 		FeeRate:             order.FeeRate,
 		BonusAmount:         order.BonusAmount,
