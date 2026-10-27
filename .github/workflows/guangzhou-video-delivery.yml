@@ -23,9 +23,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install dependencies for browser behavior tests
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
       - name: Test existing bridge and media UI with the new relay
         run: |
           node --test deploy/mcp-bridge/test/*.test.mjs
