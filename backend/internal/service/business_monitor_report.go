@@ -79,6 +79,9 @@ func (s *BusinessMonitorService) SetCreditOverride(ctx context.Context, walletKe
 			}
 		}
 		w.Messages = messages
+		if w.CostVersion == 2 && w.ExpectedCost != nil {
+			w.CostVersion = businessCostVersion
+		}
 		if w.CostVersion < businessCostVersion {
 			businessInvalidateLegacyCost(&w)
 		} else {
