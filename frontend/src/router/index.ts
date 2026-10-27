@@ -415,6 +415,19 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/business-monitor',
+    name: 'AdminBusinessMonitor',
+    component: () => import('@/views/admin/BusinessMonitorView.vue'),
+    beforeEnter: async () => {
+      try {
+        const { businessMonitorAPI } = await import('@/api/admin/businessMonitor')
+        const access = await businessMonitorAPI.getAccess()
+        return access.allowed ? true : '/admin/dashboard'
+      } catch { return '/admin/dashboard' }
+    },
+    meta: { requiresAuth: true, requiresAdmin: true, title: '经营监测' }
+  },
+  {
     path: '/admin/ops',
     name: 'AdminOps',
     component: () => import('@/views/admin/ops/OpsDashboard.vue'),

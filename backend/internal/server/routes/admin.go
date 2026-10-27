@@ -36,6 +36,7 @@ func RegisterAdminRoutes(
 
 		// 仪表盘
 		registerDashboardRoutes(admin, h)
+		registerBusinessMonitorRoutes(admin, h)
 
 		// 用户管理
 		registerUserManagementRoutes(admin, h)
@@ -914,4 +915,15 @@ func channelMonitorModeV2Guard(settingService *service.SettingService) gin.Handl
 		}
 		c.Next()
 	}
+}
+
+func registerBusinessMonitorRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if h == nil || h.Admin == nil || h.Admin.BusinessMonitor == nil {
+		return
+	}
+	finance := admin.Group("/business-monitor")
+	finance.GET("/access", h.Admin.BusinessMonitor.Access)
+	finance.GET("/report", h.Admin.BusinessMonitor.Report)
+	finance.POST("/refresh", h.Admin.BusinessMonitor.Refresh)
+	finance.PUT("/credit-override", h.Admin.BusinessMonitor.SetCreditOverride)
 }

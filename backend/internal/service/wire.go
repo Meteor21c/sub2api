@@ -988,6 +988,7 @@ var ProviderSet = wire.NewSet(
 	ProvidePaymentOrderExpiryService,
 	ProvideBalanceNotifyService,
 	ProvideChannelMonitorService,
+	ProvideBusinessMonitorService,
 	ProvideChannelMonitorRunner,
 	NewChannelMonitorQuotaFetcher,
 	ProvideChannelMonitorV2Service,
@@ -1093,4 +1094,11 @@ func ProvideClaudeResetCreditService(accounts AccountRepository, tokens *ClaudeT
 	s := NewClaudeResetCreditService(accounts, tokens, proxies, settings)
 	s.ConfigureRedemption(idem, locks)
 	return s
+}
+
+// ProvideBusinessMonitorService starts the low-frequency owner-only finance sampler.
+func ProvideBusinessMonitorService(db *sql.DB) *BusinessMonitorService {
+	svc := NewBusinessMonitorService(db)
+	svc.Start()
+	return svc
 }
