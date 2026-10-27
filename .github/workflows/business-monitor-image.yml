@@ -45,7 +45,7 @@ jobs:
         working-directory: backend
         env:
           BUSINESS_MONITOR_TEST_DSN: postgres://postgres:business-ci@localhost:5432/business_ci?sslmode=disable
-        run: go test ./internal/service ./internal/handler/admin -run '^TestBusinessMonitor' -count=1 -timeout=5m
+        run: go test -tags unit ./cmd/server ./internal/service ./internal/handler/admin -run '^TestBusinessMonitor|^TestProvideCleanup' -count=1 -timeout=5m
       - uses: pnpm/action-setup@v6
         with:
           version: 9
