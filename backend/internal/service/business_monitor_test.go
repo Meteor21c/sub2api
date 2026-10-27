@@ -136,7 +136,7 @@ func TestBusinessMonitorHistoricalCreditCorrectionPreservesSavedRevenue(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	s := NewBusinessMonitorService(db)
 	defer s.Stop()
 	date := "2026-01-01"

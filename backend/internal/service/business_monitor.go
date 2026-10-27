@@ -155,6 +155,13 @@ func (s *BusinessMonitorService) collect(ctx context.Context, force bool) error 
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
 		return errors.New("invalid business monitor snapshot endpoint")
 	}
+	// This operator setting is never accepted from an HTTP request. Restrict it
+	// to the existing monitor or an explicitly local service; disallow redirects.
+	host := strings.ToLower(u.Hostname())
+	local := host == "127.0.0.1" || host == "::1" || host == "localhost" || host == "meteor-monitor"
+	if (!local && (host != "monitor.meteor21c.fun" || u.Scheme != "https" || u.Port() != "" && u.Port() != "443")) || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("business monitor endpoint is not allowlisted")
+	}
 	// A transaction-scoped lock prevents duplicate sampling across replicas.
 	lock, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -168,16 +175,16 @@ func (s *BusinessMonitorService) collect(ctx context.Context, force bool) error 
 	if !acquired {
 		return nil
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.snapshotURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) // #nosec G704 -- Fixed operator endpoint validated against the host allowlist above; no user input.
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Accept", "application/json")
-	resp, err := s.client.Do(request)
+	resp, err := s.client.Do(request) // #nosec G704 -- Allowlisted endpoint only; redirects disabled by the dedicated client.
 	if err != nil {
 		return errors.New("balance snapshot request failed") // Never log URL credentials or response bodies.
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("balance snapshot returned HTTP %d", resp.StatusCode)
 	}
@@ -266,7 +273,7 @@ func (s *BusinessMonitorService) accountCatalog(ctx context.Context) (map[int64]
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := map[int64]businessAccount{}
 	for rows.Next() {
 		var a businessAccount
