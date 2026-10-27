@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
@@ -171,6 +172,49 @@ func TestOpenAIGatewayServiceRecordUsage_FZYFrozenPriceSurvivesV218Billing(t *te
 			require.Equal(t, string(BillingModeToken), *log.BillingMode)
 			require.NotNil(t, log.UpstreamResponseModel)
 			require.Equal(t, responseModel, *log.UpstreamResponseModel, "retain the response declaration for audit without repricing the frozen job")
+		})
+	}
+}
+
+func TestOpenAIRecordUsageFZYScenarioPreservesModeAndVideoUnits(t *testing.T) {
+	for _, tc := range []struct {
+		model, resolution                string
+		duration, actualDuration, tokens int
+		mode                             string
+	}{
+		{"kling-v3-omni", "4K", 15, 15, 0, string(BillingModeVideo)},
+		{"doubao-seedance-2.0", "4K", 15, 0, 40594, string(BillingModeToken)},
+		{"doubao-seedance-2.5", "1080p", 30, 30, 40594, string(BillingModeToken)},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			price, err := ParseFZYVideoPriceSnapshot(fzyCurrentVideoPricing(t), tc.model, []byte(`{"resolution":"`+tc.resolution+`"}`))
+			require.NoError(t, err)
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+			repo := &openAIFZYMergeBillingRepoStub{settlementDone: true}
+			svc.usageBillingRepo = repo
+			svc.billingCacheService = nil
+			user := &User{ID: 11, Balance: 100}
+			accountRate := 1.7
+			account := &Account{ID: 33, Platform: PlatformGrok, Type: AccountTypeAPIKey, RateMultiplier: &accountRate, Extra: map[string]any{"quota_limit": 100.0}}
+			key := &APIKey{ID: 22, User: user, GroupID: i64p(44), Quota: 100, RateLimit5h: 100, Group: &Group{ID: 44, Platform: PlatformGrok, RateMultiplier: 4}}
+			job := &FZYVideoBillingJob{ID: "frozen-scenario", UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID, TaskID: "scenario-task", Price: price, DurationSeconds: tc.duration, HoldAmount: 50, Status: "pending"}
+			result := &OpenAIForwardResult{RequestID: "scenario-task", ResponseID: "scenario-task", Model: tc.model, BillingModel: tc.model, Usage: OpenAIUsage{OutputTokens: tc.tokens}, VideoCount: 1, VideoDurationSeconds: tc.actualDuration, VideoResolution: "480p", FZYVideoBill: job, Duration: time.Second}
+			err = svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{Result: result, APIKey: key, User: user, Account: account, APIKeyService: &openAIRecordUsageAPIKeyQuotaStub{}})
+			require.NoError(t, err)
+			sale, err := price.CostForUsage(tc.tokens, tc.duration)
+			require.NoError(t, err)
+			provider, err := price.ProviderCostForUsage(tc.tokens, tc.duration)
+			require.NoError(t, err)
+			require.Equal(t, 1, repo.settleCalls)
+			require.Equal(t, tc.tokens, repo.outputTokens)
+			require.Zero(t, repo.applyCalls)
+			require.InDelta(t, sale, repo.amount, 1e-10, "group multiplier must not mark up the frozen sale price again")
+			require.Equal(t, decimal.NewFromFloat(provider).Mul(decimal.NewFromFloat(accountRate)).Round(UsageBillingMonetaryScale).InexactFloat64(), repo.command.AccountQuotaCost)
+			require.InDelta(t, sale, repo.command.BalanceCost, 1e-10)
+			require.Equal(t, tc.mode, *usageRepo.lastLog.BillingMode)
+			require.Equal(t, tc.resolution, *usageRepo.lastLog.VideoResolution)
+			require.Equal(t, tc.duration, *usageRepo.lastLog.VideoDurationSeconds)
 		})
 	}
 }

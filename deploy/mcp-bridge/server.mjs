@@ -979,18 +979,23 @@ async function handleAsset(req, res, parsed) {
 
 function extractReferenceURLs(body) {
   const values = []
-  const add = (value) => {
-    if (Array.isArray(value)) value.forEach(add)
-    else if (typeof value === 'string' && value.trim()) values.push(value.trim())
-    else if (value && typeof value === 'object') add(value.url || value.image_url || value.video_url)
+  const add = (value, kind) => {
+    if (Array.isArray(value)) value.forEach(item => add(item, kind))
+    else if (typeof value === 'string' && value.trim()) values.push(kind ? `${kind}:${value.trim()}` : value.trim())
+    else if (value && typeof value === 'object') add(value.url || value.image_url || value.video_url || value.audio_url, kind)
   }
   add(body?.reference_images); add(body?.images); add(body?.image)
+  add(body?.video_list, 'video')
+  for (const item of Array.isArray(body?.content) ? body.content : []) {
+    const kind = item?.type?.match(/^(image|video|audio)_url$/)?.[1]
+    if (kind) add(item[item.type], item.role === 'first_frame' ? 'start' : item.role === 'last_frame' ? 'end' : kind)
+  }
   return [...new Set(values)]
 }
 
 function splitReference(value) {
   const raw = String(value || '').trim()
-  const match = raw.match(/^(reference|start|end):(.+)$/i)
+  const match = raw.match(/^(reference|start|end|image|video|audio):(.+)$/i)
   if (!match) return { prefix: 'reference', url: raw }
   return { prefix: match[1].toLowerCase(), url: match[2].trim() }
 }
@@ -1008,6 +1013,12 @@ function normalizedReferences(values) {
     const safe = publicURL(url)
     return safe ? { prefix, url: safe } : null
   }).filter(Boolean)
+}
+
+function fzyReferenceKind({ prefix, url }) {
+  if (['image', 'video', 'audio'].includes(prefix)) return prefix
+  const ext = referenceExtension(url)
+  return ['.mp4', '.mov', '.webm', '.m4v'].includes(ext) ? 'video' : ['.mp3', '.wav'].includes(ext) ? 'audio' : 'image'
 }
 
 async function validateFzyReferences(body) {
@@ -1059,8 +1070,7 @@ function buildFzyBody(body) {
     if (start && !media.some((item) => item.prefix === 'start' && item.url === start)) media.push({ prefix: 'start', url: start })
     if (end && !media.some((item) => item.prefix === 'end' && item.url === end)) media.push({ prefix: 'end', url: end })
     for (const { prefix, url } of media) {
-      const ext = referenceExtension(url)
-      const kind = ext === '.mp4' ? 'video' : ['.mp3', '.wav'].includes(ext) ? 'audio' : 'image'
+      const kind = fzyReferenceKind({ prefix, url })
       const role = kind === 'image' && prefix === 'start' ? 'first_frame'
         : kind === 'image' && prefix === 'end' ? 'last_frame' : `reference_${kind}`
       content.push({ type: `${kind}_url`, [`${kind}_url`]: { url }, role })
@@ -1072,8 +1082,8 @@ function buildFzyBody(body) {
     if (model === 'kling-v3-omni') return {
       model_name: model, prompt, duration, mode: ['720p', '1080p', '4K'].includes(resolution) ? (resolution === '720p' ? 'std' : resolution === '1080p' ? 'pro' : '4k') : 'pro',
       aspect_ratio: ratio, sound: audio ? 'on' : 'off',
-      image_list: refs.filter((item) => referenceExtension(item.url) !== '.mp4').map((item) => ({ image_url: item.url, type: item.prefix === 'start' || item.prefix === 'end' ? (item.prefix === 'start' ? 'first_frame' : 'end_frame') : 'reference' })),
-      video_list: refs.filter((item) => referenceExtension(item.url) === '.mp4').map((item) => ({ video_url: item.url, refer_type: 'feature', keep_original_sound: 'yes' })),
+      image_list: refs.filter((item) => fzyReferenceKind(item) === 'image').map((item) => ({ image_url: item.url, type: item.prefix === 'start' || item.prefix === 'end' ? (item.prefix === 'start' ? 'first_frame' : 'end_frame') : 'reference' })),
+      video_list: refs.filter((item) => fzyReferenceKind(item) === 'video').map((item) => ({ video_url: item.url, refer_type: 'feature', keep_original_sound: 'yes' })),
     }
     return { model_name: model, prompt, duration, mode: resolution === '720p' ? 'std' : resolution === '4K' ? '4k' : 'pro', sound: audio ? 'on' : 'off', aspect_ratio: ratio, image: start || refURLs[0] || '', image_tail: end || refURLs[1] || '' }
   }
@@ -1144,7 +1154,8 @@ async function handleFzyProvider(req, res, parsed) {
     if (libraryTask && !libraryJob) { text(res, 404, 'Not found'); return }
     if (libraryJob?.stage === 'failed' && !libraryJob.upstreamTaskID) {
       json(res, 200, { id: taskID, status: 'failed', model: libraryJob.model, ...fzyAssetProgress(libraryJob),
-        error: { message: typeof libraryJob.error === 'string' ? libraryJob.error : libraryJob.error?.message || '素材处理失败，未提交视频生成' } })
+        error: { type: libraryJob.errorType || 'asset_processing_failed', code: libraryJob.errorCode || 'ASSET_PROCESSING_FAILED',
+          message: typeof libraryJob.error === 'string' ? libraryJob.error : libraryJob.error?.message || '素材处理失败，未提交视频生成' } })
       return
     }
     if (libraryJob && !libraryJob.upstreamTaskID) {
@@ -1229,6 +1240,9 @@ async function handleFzyProvider(req, res, parsed) {
       json(res, 400, { error: { message: 'reference URLs must be public HTTP/HTTPS URLs' } }); return
     }
     const requestBody = buildFzyBody(body)
+    if (model === 'kling-v3-omni' && requestBody.video_list.length && requestBody.sound !== 'off') {
+      json(res, 400, { error: { type: 'invalid_video_options', message: '可灵 Omni 使用参考视频时不支持同时生成音频，请关闭“生成音频”后重试' } }); return
+    }
     if (FZY_AUTO_ASSETS_ENABLED && fzyDoubaoModels.has(model) && requestBody.content.some((item) => ['image_url', 'video_url', 'audio_url'].includes(item.type))) {
       const owner = fzyRequestOwner(req)
       if (!owner || !fzyAssetQueue) {

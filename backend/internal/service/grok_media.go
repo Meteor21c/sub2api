@@ -791,6 +791,9 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	}
 	writeGrokMediaResponse(c, resp, respBody, s.responseHeaderFilter)
 	usage := grokMediaUsageFromResponse(endpoint, requestInfo, respBody)
+	if IsFZYVideoBridgeAccount(account) && endpoint == GrokMediaEndpointVideoStatus {
+		usage.VideoDurationSeconds = fzyVideoStatusDuration(respBody)
+	}
 	resultModel := requestModel
 	resultBillingModel := requestModel
 	if endpoint == GrokMediaEndpointVideoStatus {
@@ -961,6 +964,9 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		result.VideoCount = billed.VideoCount
 		result.VideoResolution = billed.VideoResolution
 		result.VideoDurationSeconds = billed.VideoDurationSeconds
+		if IsFZYVideoBridgeAccount(account) {
+			result.VideoDurationSeconds = fzyVideoStatusDuration(statusBody)
+		}
 	}
 	return result, nil
 }
@@ -1575,4 +1581,14 @@ func grokMediaContentProxyURL(c *gin.Context, requestID string) string {
 		pathPrefix = "/v1"
 	}
 	return pathPrefix + "/videos/" + url.PathEscape(strings.Trim(requestID, "/")) + "/content"
+}
+
+// Keep provider media units outside Grok's narrower default 15-second billing
+// normalizer. Missing duration is restored from the durable FZY reservation.
+func fzyVideoStatusDuration(body []byte) int {
+	value := gjson.GetBytes(body, "video.duration")
+	if value.Type == gjson.Number && value.Int() > 0 && value.Int() <= 30 {
+		return int(value.Int())
+	}
+	return 0
 }

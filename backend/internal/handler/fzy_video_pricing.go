@@ -25,11 +25,18 @@ func (h *OpenAIGatewayHandler) FZYVideoPricing(c *gin.Context) {
 		return
 	}
 	model := strings.TrimSpace(c.Query("model"))
-	if !strings.HasPrefix(model, "doubao-seedance-") {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Token pricing is available only for Doubao Seedance video models")
+	if model == "" && c.Query("catalog") == "true" {
+		model = "doubao-seedance-2.0"
+	}
+	if !strings.HasPrefix(model, "doubao-seedance-") && model != "kling-v3" && model != "kling-v3-omni" {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Provider pricing is available only for FZY video models")
 		return
 	}
-	resolution := strings.TrimSpace(c.DefaultQuery("resolution", "720p"))
+	resolutionDefault := "720p"
+	if model == "kling-v3" || model == "kling-v3-omni" {
+		resolutionDefault = "1080p"
+	}
+	resolution := strings.TrimSpace(c.DefaultQuery("resolution", resolutionDefault))
 	if resolution != "480p" && resolution != "720p" && resolution != "1080p" && !strings.EqualFold(resolution, "4K") {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Invalid video resolution")
 		return
@@ -39,7 +46,11 @@ func (h *OpenAIGatewayHandler) FZYVideoPricing(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Invalid video duration")
 		return
 	}
-	audio := c.DefaultQuery("audio", "true") != "false"
+	audioDefault := "true"
+	if model == "kling-v3" || model == "kling-v3-omni" {
+		audioDefault = "false"
+	}
+	audio := c.DefaultQuery("audio", audioDefault) != "false"
 	inputVideo := c.Query("input_video") == "true"
 	request := map[string]any{"model": model, "resolution": resolution, "duration": duration, "audio": audio}
 	if inputVideo {
@@ -58,8 +69,17 @@ func (h *OpenAIGatewayHandler) FZYVideoPricing(c *gin.Context) {
 	if selection.ReleaseFunc != nil {
 		defer selection.ReleaseFunc()
 	}
-	if !service.IsFZYTokenVideoAccount(selection.Account, model) {
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Selected video account does not use FZY token billing")
+	if !service.IsFZYPricedVideoAccount(selection.Account, model) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Selected video account does not use FZY scenario billing")
+		return
+	}
+	if c.Query("catalog") == "true" {
+		catalog, err := h.gatewayService.FZYVideoCatalog(c.Request.Context(), selection.Account, model)
+		if err != nil {
+			h.errorResponse(c, http.StatusServiceUnavailable, "video_pricing_unavailable", "Provider video catalog is temporarily unavailable")
+			return
+		}
+		c.JSON(http.StatusOK, catalog)
 		return
 	}
 	job, err := h.gatewayService.PrepareFZYVideoBilling(c.Request.Context(), selection.Account, apiKey, apiKey.User, model, body)

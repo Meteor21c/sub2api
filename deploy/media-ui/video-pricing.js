@@ -20,19 +20,78 @@
     return `${currency === "CNY" ? "¥" : "$"}${number.toFixed(6).replace(/(\.\d{2,}?)0+$/, "$1")}`;
   }
 
-  function tokenQuote(raw) {
-    if (!raw || raw.billing_mode !== "token") return null;
-    const officialPerMillion = nonnegative(raw.official_per_million);
-    const upstreamPerMillion = nonnegative(raw.upstream_per_million);
-    const salePerMillion = nonnegative(raw.sale_per_million);
+  const PROVIDER_SOURCE = "fzyinghe-marketplace-by-api-key";
+  const isProviderModel = model => /^doubao-seedance-/.test(String(model)) || ["kling-v3", "kling-v3-omni"].includes(model);
+  const resolutionName = value => /^4k$/i.test(String(value)) ? "4K" : String(value || "").toLowerCase();
+  const validResolutions = values => [...new Set((Array.isArray(values) ? values : []).map(resolutionName).filter(value => ["480p", "720p", "1080p", "4K"].includes(value)))];
+  const fetchedAt = value => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : "";
+
+  function providerQuote(raw) {
+    if (!raw || !["token", "second"].includes(raw.billing_mode)) return null;
+    const mode = raw.billing_mode;
+    const official = nonnegative(mode === "token" ? raw.official_per_million : raw.official_per_second);
+    const upstream = nonnegative(mode === "token" ? raw.upstream_per_million : raw.upstream_per_second);
+    const sale = nonnegative(mode === "token" ? raw.sale_per_million : raw.sale_per_second);
     const prechargeAmount = nonnegative(raw.precharge_amount);
     const saleRateToOfficial = nonnegative(raw.sale_rate_to_official);
-    if ([officialPerMillion, upstreamPerMillion, salePerMillion, prechargeAmount, saleRateToOfficial].some(item => item === null)) return null;
+    const duration = nonnegative(raw.duration);
+    if ([official, upstream, sale, prechargeAmount, saleRateToOfficial].some(item => item === null) ||
+        (mode === "second" && (!duration || !Number.isInteger(duration)))) return null;
     return {
-      mode: "token", currency: raw.currency || "CNY", sceneName: String(raw.scene_name || ""),
-      officialPerMillion, upstreamPerMillion, salePerMillion, prechargeAmount,
+      mode, currency: raw.currency === "USD" ? "USD" : "CNY", sceneName: String(raw.scene_name || "").slice(0, 160),
+      ...(mode === "token" ? { officialPerMillion: official, upstreamPerMillion: upstream, salePerMillion: sale }
+        : { officialPerSecond: official, upstreamPerSecond: upstream, salePerSecond: sale, duration }),
+      prechargeAmount, source: raw.source === PROVIDER_SOURCE ? PROVIDER_SOURCE : "", fetchedAt: fetchedAt(raw.fetched_at),
       saleRateToOfficial, providerDiscountRate: nonnegative(raw.provider_discount_rate),
     };
+  }
+
+  // Retained for older callers. New UI accepts both provider billing units.
+  const tokenQuote = raw => raw?.billing_mode === "token" ? providerQuote(raw) : null;
+
+  function providerCatalog(raw, model) {
+    if (raw?.source !== PROVIDER_SOURCE || raw.model !== model || !Array.isArray(raw.scenarios)) return null;
+    const resolutions = validResolutions(raw.resolutions);
+    const scenarios = raw.scenarios.filter(row => row && ["token", "second"].includes(row.billing_mode))
+      .map(row => ({
+        resolutions: validResolutions(row.resolutions),
+        ...(typeof row.audio === "boolean" ? { audio: row.audio } : {}),
+        ...(typeof row.input_video === "boolean" ? { inputVideo: row.input_video } : {}),
+      })).filter(row => row.resolutions.length);
+    return resolutions.length && scenarios.length ? { model, source: PROVIDER_SOURCE, fetchedAt: fetchedAt(raw.fetched_at), resolutions, scenarios } : null;
+  }
+
+  function scenarioResolutions(catalog, { audio, inputVideo } = {}) {
+    if (!catalog) return [];
+    const matches = catalog.scenarios.filter(row =>
+      (typeof row.audio !== "boolean" || row.audio === audio) &&
+      (typeof row.inputVideo !== "boolean" || row.inputVideo === inputVideo));
+    const selected = new Set(matches.flatMap(row => row.resolutions));
+    return catalog.resolutions.filter(value => selected.has(value));
+  }
+
+  function providerDirectory(raw) {
+    if (raw?.source !== PROVIDER_SOURCE || !Array.isArray(raw.models) || !Array.isArray(raw.available_models)) return null;
+    const models = Object.fromEntries(raw.models.filter(row => isProviderModel(row?.model))
+      .map(row => [row.model, providerCatalog({ source: raw.source, fetched_at: raw.fetched_at, ...row }, row.model)])
+      .filter(([, catalog]) => catalog));
+    const availableModels = raw.available_models.filter(model => isProviderModel(model) && models[model]);
+    return availableModels.length ? { models, availableModels } : null;
+  }
+
+  function selectionKey({ keyId, model, resolution, duration, audio, inputVideo }) {
+    return JSON.stringify([String(keyId || ""), String(model || ""), resolutionName(resolution), Number(duration), !!audio, !!inputVideo]);
+  }
+
+  function referenceHasVideo(values) {
+    return (Array.isArray(values) ? values : []).some(value => {
+      try {
+        if (/^video:https?:\/\//i.test(String(value).trim())) return true;
+        const raw = String(value).trim().replace(/^[^:]+:(?=https?:\/\/)/i, "");
+        const url = new URL(raw);
+        return /\.(mp4|mov|webm|m4v)$/i.test(url.searchParams.get("name") || url.searchParams.get("filename") || url.pathname);
+      } catch { return false; }
+    });
   }
 
   function multiplier(group) {
@@ -91,5 +150,6 @@
     return { completionTokens, totalTokens, promptTokens };
   }
 
-  globalThis.MeteorVideoPricing = { money, providerMoney, tokenQuote, multiplier, quote, discount, settlement, tokenUsage };
+  globalThis.MeteorVideoPricing = { money, providerMoney, tokenQuote, providerQuote, providerCatalog, providerDirectory, scenarioResolutions,
+    selectionKey, referenceHasVideo, isProviderModel, multiplier, quote, discount, settlement, tokenUsage };
 })();

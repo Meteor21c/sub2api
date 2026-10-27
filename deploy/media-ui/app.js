@@ -4,7 +4,7 @@
   const API_BASE = window.location.origin.replace(/\/$/, "");
   const state = {
     image: { key: "", models: [], busy: false, history: [], objectUrls: [], scope: "", restoreEpoch: 0 },
-    video: { key: "", models: [], busy: false, taskId: "", history: [], polling: new Set(), pollEpoch: 0, objectUrls: new Map(), scope: "", pricingKey: "", pricingQuote: null, pricingError: "", pricingFetchedAt: 0, pricingPending: false, pricingRetryAt: 0 },
+    video: { key: "", models: [], busy: false, taskId: "", history: [], polling: new Set(), pollEpoch: 0, objectUrls: new Map(), scope: "", pricingKey: "", pricingQuote: null, pricingError: "", pricingFetchedAt: 0, pricingPending: false, pricingRetryAt: 0, catalogKey: "", catalog: null, catalogPending: false, catalogError: "", catalogFetchedAt: 0, catalogRetryAt: 0, pricingEpoch: 0 },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -245,12 +245,7 @@
 
   async function loadModels(kind) {
     const key = selectedKey(kind);
-    if (kind === "video" && key !== state.video.key) {
-      state.video.pricingKey = "";
-      state.video.pricingQuote = null;
-      state.video.pricingError = "";
-      state.video.pricingFetchedAt = 0;
-    }
+    if (kind === "video") resetVideoPricing();
     if (!key) {
       state[kind].models = [];
       setOptions($(`${kind}-model`), []);
@@ -340,10 +335,7 @@
       setOptions($(`${kind}-model`), []);
       setBusy(kind, state[kind].busy);
       if (kind === "video") {
-        state.video.pricingKey = "";
-        state.video.pricingQuote = null;
-        state.video.pricingError = "";
-        state.video.pricingFetchedAt = 0;
+        resetVideoPricing();
         updateVideoOptions();
         $("video-key-hint").firstChild.textContent = "只显示当前账号有效的视频分组密钥。";
       }
@@ -547,14 +539,86 @@
     return { min: family === "kling" || family === "grok" ? 3 : 4, max: 15 };
   }
 
+  function resetVideoPricing() {
+    state.video.pricingEpoch += 1;
+    Object.assign(state.video, {
+      pricingKey: "", pricingQuote: null, pricingError: "", pricingFetchedAt: 0, pricingPending: false, pricingRetryAt: 0,
+      catalogKey: "", catalog: null, catalogPending: false, catalogError: "", catalogFetchedAt: 0, catalogRetryAt: 0,
+    });
+  }
+
+  function videoCatalogKey() {
+    return JSON.stringify([state.video.pricingEpoch, $("video-key").value]);
+  }
+
+  function currentVideoCatalog() {
+    return state.video.catalogKey === videoCatalogKey() ? state.video.catalog?.models[$("video-model").value] || null : null;
+  }
+
+  function refreshVideoCatalog() {
+    const model = $("video-model").value;
+    if (!MeteorVideoPricing.isProviderModel(model) || !state.video.models.includes(model)) return;
+    const key = selectedKey("video");
+    if (!key) return;
+    const contextKey = videoCatalogKey();
+    if (contextKey === state.video.catalogKey && (state.video.catalogPending ||
+      (state.video.catalog && Date.now() - state.video.catalogFetchedAt < 60000) ||
+      (!state.video.catalog && Date.now() < state.video.catalogRetryAt))) return;
+    state.video.catalogKey = contextKey;
+    state.video.catalog = null;
+    state.video.catalogPending = true;
+    state.video.catalogError = "";
+    state.video.pricingKey = "";
+    state.video.pricingQuote = null;
+    state.video.pricingFetchedAt = 0;
+    const params = new URLSearchParams({ catalog: "true", model });
+    void request(`/v1/videos/pricing?${params}`, {}, key).then(({ data }) => {
+      if (state.video.catalogKey !== contextKey || videoCatalogKey() !== contextKey || selectedKey("video") !== key) return;
+      state.video.catalog = MeteorVideoPricing.providerDirectory(data);
+      state.video.catalogError = state.video.catalog ? "" : "该模型暂无可用的上游价格或分辨率，请重新读取模型。";
+      state.video.catalogFetchedAt = state.video.catalog ? Date.now() : 0;
+      state.video.catalogPending = false;
+      state.video.catalogRetryAt = state.video.catalog ? 0 : Date.now() + 5000;
+      if (state.video.catalog) {
+        const selected = $("video-model").value;
+        state.video.models = state.video.models.filter(value => !MeteorVideoPricing.isProviderModel(value) || state.video.catalog.availableModels.includes(value));
+        setOptions($("video-model"), state.video.models, selected);
+        setBusy("video", state.video.busy);
+        $("video-model-hint").textContent = `已读取 ${state.video.models.length} 个可用模型，盈合模型已按当前密钥的上游目录核对。`;
+      }
+      updateVideoOptions();
+    }).catch(error => {
+      if (state.video.catalogKey !== contextKey || videoCatalogKey() !== contextKey || selectedKey("video") !== key) return;
+      state.video.catalog = null;
+      state.video.catalogError = error.message || "无法读取该模型的上游价格和分辨率，请重新读取模型。";
+      state.video.catalogPending = false;
+      state.video.catalogFetchedAt = 0;
+      state.video.catalogRetryAt = Date.now() + 5000;
+      updateVideoOptions();
+    });
+  }
+
   function updateVideoOptions() {
     const model = $("video-model").value;
     const family = videoFamily(model);
-    const resolution = family === "kling" ? ["720p", "1080p", "4K"] : family === "grok" ? ["480p", "720p"] : ["480p", "720p"];
+    const inputVideo = videoPricingInputVideo();
+    const audioDisabled = model === "kling-v3-omni" && inputVideo;
+    $("video-audio").disabled = audioDisabled;
+    if (audioDisabled) $("video-audio").checked = false;
+    $("video-audio-hint").textContent = audioDisabled ? "可灵 Omni 使用参考视频时仅支持无声输出" : "由上游模型决定是否支持";
+    if (MeteorVideoPricing.isProviderModel(model)) refreshVideoCatalog();
+    const catalog = currentVideoCatalog();
+    const resolution = MeteorVideoPricing.isProviderModel(model)
+      ? MeteorVideoPricing.scenarioResolutions(catalog, { audio: $("video-audio").checked, inputVideo })
+      : family === "grok" ? ["480p", "720p"] : [];
     const ratios = family === "kling" ? ["16:9", "9:16", "1:1"] : family === "grok" ? ["16:9", "9:16", "1:1", "4:3", "3:4"] : ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
     const currentResolution = $("video-resolution").value;
     const currentRatio = $("video-ratio").value;
     setOptions($("video-resolution"), resolution, currentResolution);
+    $("video-resolution").disabled = !resolution.length;
+    $("video-resolution-hint").textContent = MeteorVideoPricing.isProviderModel(model)
+      ? catalog ? "分辨率取自当前密钥对应的上游场景。" : state.video.catalogError || "正在读取上游支持的分辨率…"
+      : "";
     setOptions($("video-ratio"), ratios, currentRatio);
     const { min, max } = videoDurationRange(model);
     $("video-duration").min = String(min);
@@ -563,14 +627,22 @@
     if (Number($("video-duration").value) > max) $("video-duration").value = String(max);
     $("video-duration-hint").textContent = model ? `当前模型允许 ${min}–${max} 秒。` : "选择模型后显示时长范围。";
     $("video-asset-hint").hidden = !model.startsWith("doubao-seedance-");
-    if (family === "kling" && $("video-mode").value === "text_with_reference") $("video-mode").value = "text_with_reference";
     updateVideoPricing();
+  }
+
+  function videoPricingSelection() {
+    return { keyId: $("video-key").value, model: $("video-model").value, resolution: $("video-resolution").value,
+      duration: $("video-duration").value, audio: $("video-audio").checked, inputVideo: videoPricingInputVideo() };
+  }
+
+  function videoPricingKey() {
+    return `${state.video.pricingEpoch}:${MeteorVideoPricing.selectionKey(videoPricingSelection())}`;
   }
 
   function currentVideoQuote() {
     const model = $("video-model").value;
     if (!state.video.models.includes(model)) return null;
-    if (model.startsWith("doubao-seedance-")) return state.video.pricingQuote;
+    if (MeteorVideoPricing.isProviderModel(model)) return state.video.pricingKey === videoPricingKey() ? state.video.pricingQuote : null;
     return MeteorVideoPricing.quote(
       accountKeys.getGroup("video", $("video-key").value),
       model, $("video-resolution").value, Number($("video-duration").value),
@@ -578,26 +650,18 @@
   }
 
   function videoPricingInputVideo() {
-    return parseLines($("video-reference-urls").value).some((value) => {
-      try {
-        const raw = value.replace(/^[^:]+:(?=https?:\/\/)/i, "");
-        const url = new URL(raw);
-        return /\.mp4$/i.test(url.searchParams.get("name") || url.searchParams.get("filename") || url.pathname);
-      } catch { return false; }
-    });
+    return MeteorVideoPricing.referenceHasVideo(parseLines($("video-reference-urls").value));
   }
 
   function refreshVideoTokenPricing() {
-    const model = $("video-model").value;
-    if (!model.startsWith("doubao-seedance-") || !state.video.models.includes(model)) return;
+    const selection = videoPricingSelection();
+    const model = selection.model;
+    if (!MeteorVideoPricing.isProviderModel(model) || !state.video.models.includes(model) || !currentVideoCatalog() || !selection.resolution) return;
     const key = selectedKey("video");
     if (!key) return;
-    const params = new URLSearchParams({
-      model, resolution: $("video-resolution").value,
-      duration: $("video-duration").value, audio: String($("video-audio").checked),
-      input_video: String(videoPricingInputVideo()),
-    });
-    const requestKey = `${$("video-key").value}:${params}`;
+    const params = new URLSearchParams({ model, resolution: selection.resolution,
+      duration: selection.duration, audio: String(selection.audio), input_video: String(selection.inputVideo) });
+    const requestKey = videoPricingKey();
     if (requestKey === state.video.pricingKey && (state.video.pricingPending ||
       (state.video.pricingQuote && Date.now() - state.video.pricingFetchedAt < 60000) ||
       (!state.video.pricingQuote && Date.now() < state.video.pricingRetryAt))) return;
@@ -606,15 +670,15 @@
     state.video.pricingError = "";
     state.video.pricingPending = true;
     void request(`/v1/videos/pricing?${params}`, {}, key).then(({ data }) => {
-      if (state.video.pricingKey !== requestKey) return;
-      state.video.pricingQuote = MeteorVideoPricing.tokenQuote(data);
+      if (state.video.pricingKey !== requestKey || videoPricingKey() !== requestKey || selectedKey("video") !== key) return;
+      state.video.pricingQuote = MeteorVideoPricing.providerQuote(data);
       state.video.pricingError = state.video.pricingQuote ? "" : "上游价格格式无效";
       state.video.pricingFetchedAt = state.video.pricingQuote ? Date.now() : 0;
       state.video.pricingPending = false;
       state.video.pricingRetryAt = state.video.pricingQuote ? 0 : Date.now() + 5000;
       updateVideoPricing();
     }).catch((error) => {
-      if (state.video.pricingKey !== requestKey) return;
+      if (state.video.pricingKey !== requestKey || videoPricingKey() !== requestKey || selectedKey("video") !== key) return;
       state.video.pricingError = error.message || "上游价格暂不可用";
       state.video.pricingFetchedAt = 0;
       state.video.pricingPending = false;
@@ -625,16 +689,24 @@
 
   function updateVideoPricing() {
     const model = $("video-model").value;
-    if (model.startsWith("doubao-seedance-") && state.video.models.includes(model)) {
+    if (MeteorVideoPricing.isProviderModel(model) && state.video.models.includes(model)) {
       refreshVideoTokenPricing();
-      const quote = state.video.pricingQuote;
+      const quote = currentVideoQuote();
+      const second = quote?.mode === "second";
+      const unit = second ? "秒" : "百万 Token";
+      const official = second ? quote?.officialPerSecond : quote?.officialPerMillion;
+      const upstream = second ? quote?.upstreamPerSecond : quote?.upstreamPerMillion;
+      const sale = second ? quote?.salePerSecond : quote?.salePerMillion;
       $("video-estimated-label").textContent = "创建时预扣";
-      $("video-unit-price").textContent = quote ? `${MeteorVideoPricing.providerMoney(quote.salePerMillion, quote.currency)}/百万 Token` : "读取中…";
+      $("video-unit-price").textContent = quote ? `${MeteorVideoPricing.providerMoney(sale, quote.currency)}/${unit}` : "读取中…";
       $("video-rate-discount").textContent = quote ? `官方 ${MeteorVideoPricing.discount(quote.saleRateToOfficial)}` : "—";
       $("video-estimated-cost").textContent = quote ? MeteorVideoPricing.money(quote.prechargeAmount) : "—";
       $("video-pricing-note").textContent = quote
-        ? `${quote.sceneName}：官方 ${MeteorVideoPricing.providerMoney(quote.officialPerMillion, quote.currency)}、上游折后 ${MeteorVideoPricing.providerMoney(quote.upstreamPerMillion, quote.currency)}、本站 ${MeteorVideoPricing.providerMoney(quote.salePerMillion, quote.currency)}/百万 Token。¥1 按本站余额 $1 计算；最终按实际输出 Token 多退少补，失败退款。`
-        : state.video.pricingError || "正在读取该密钥的上游场景价格；无法取得价格时不会提交付费任务。";
+        ? `${quote.sceneName}：官方 ${MeteorVideoPricing.providerMoney(official, quote.currency)}、上游折后 ${MeteorVideoPricing.providerMoney(upstream, quote.currency)}、本站 ${MeteorVideoPricing.providerMoney(sale, quote.currency)}/${unit}。本站售价为上游折后价 × 1.15；¥1 按本站余额 $1 计算。${second ? "按实际生成秒数结算" : "按上游实际输出 Token 结算"}，预扣多退少补，失败退款。`
+        : state.video.catalogError || state.video.pricingError || "正在读取该密钥的上游场景价格；无法取得价格时不会提交付费任务。";
+      $("video-pricing-source").textContent = quote?.source
+        ? `价格来源：盈合当前密钥模型目录${quote.fetchedAt ? ` · 读取于 ${new Date(quote.fetchedAt).toLocaleString("zh-CN")}` : ""}；创建时再次核价并固定本次价格。`
+        : "价格与分辨率来源：盈合当前密钥模型目录。";
       return;
     }
     const quote = currentVideoQuote();
@@ -642,15 +714,12 @@
     $("video-unit-price").textContent = quote ? `${MeteorVideoPricing.money(quote.unitPrice)}/秒` : "—";
     $("video-rate-discount").textContent = quote ? MeteorVideoPricing.discount(quote.rate) : "—";
     $("video-estimated-cost").textContent = quote ? MeteorVideoPricing.money(quote.estimatedCost) : "—";
-    const duration = Number($("video-duration").value);
-    const resolution = $("video-resolution").value;
+    $("video-pricing-source").textContent = model ? "价格来源：本站当前分组配置。" : "";
     $("video-pricing-note").textContent = !model || !state.video.models.includes(model)
       ? "请先读取该密钥可用的视频模型。"
-      : duration > 15 || resolution === "4K"
-        ? "当前本站计费规则不能可靠预估超过 15 秒或 4K 的价格；最终以结算记录为准。"
-        : quote
-          ? `${MeteorVideoPricing.money(quote.unitPrice)}/秒 × ${quote.duration} 秒 × ${quote.rate.toFixed(2)} 倍；实际扣费以完成后的账单为准。`
-          : "该模型与分辨率未配置可验证的本站单价；最终以结算记录为准。";
+      : quote
+        ? `${MeteorVideoPricing.money(quote.unitPrice)}/秒 × ${quote.duration} 秒 × ${quote.rate.toFixed(2)} 倍；实际扣费以完成后的账单为准。`
+        : "该模型与分辨率未配置可验证的本站单价；最终以结算记录为准。";
   }
 
   function parseLines(value) { return value.split("\n").map((line) => line.trim()).filter(Boolean); }
@@ -790,18 +859,23 @@
         node.append(bold);
         grid.append(node);
       };
-      if (quote?.mode === "token") {
-        item("官方单价", `${MeteorVideoPricing.providerMoney(quote.officialPerMillion, quote.currency)}/百万 Token`);
-        item("上游折后价", `${MeteorVideoPricing.providerMoney(quote.upstreamPerMillion, quote.currency)}/百万 Token`);
-        item("本站售价", `${MeteorVideoPricing.providerMoney(quote.salePerMillion, quote.currency)}/百万 Token`);
+      if (quote?.mode === "token" || quote?.mode === "second") {
+        const second = quote.mode === "second";
+        const unit = second ? "秒" : "百万 Token";
+        item("官方单价", `${MeteorVideoPricing.providerMoney(second ? quote.officialPerSecond : quote.officialPerMillion, quote.currency)}/${unit}`);
+        item("上游折后价", `${MeteorVideoPricing.providerMoney(second ? quote.upstreamPerSecond : quote.upstreamPerMillion, quote.currency)}/${unit}`);
+        item("本站售价", `${MeteorVideoPricing.providerMoney(second ? quote.salePerSecond : quote.salePerMillion, quote.currency)}/${unit}`);
         item("相对官方折扣", MeteorVideoPricing.discount(quote.saleRateToOfficial));
         item("创建时预扣", MeteorVideoPricing.money(quote.prechargeAmount));
+        if (second) item("创建时长", `${quote.duration} 秒`);
+        if (quote.source) item("价格来源", "盈合密钥专属价格 · 创建时快照");
+        if (quote.fetchedAt) item("价格读取时间", new Date(quote.fetchedAt).toLocaleString("zh-CN"));
       } else if (quote) item("本站规则", `${MeteorVideoPricing.money(quote.unitPrice)}/秒 × ${quote.duration} 秒`);
       if (settled) {
         item("实际余额消耗", MeteorVideoPricing.money(settled.actualCost));
-        item("实际倍率 / 折扣", quote?.mode === "token" ? MeteorVideoPricing.discount(quote.saleRateToOfficial) : settled.discount);
+        item("实际倍率 / 折扣", ["token", "second"].includes(quote?.mode) ? MeteorVideoPricing.discount(quote.saleRateToOfficial) : settled.discount);
         if (settled.balanceAfter !== null) item("结算后账户余额", MeteorVideoPricing.money(settled.balanceAfter));
-      } else if (quote?.mode === "token") {
+      } else if (["token", "second"].includes(quote?.mode)) {
         if (info.status === "success") item("实际余额消耗", "待账单同步");
       } else if (quote) {
         item("预计消耗", MeteorVideoPricing.money(quote.estimatedCost));
@@ -816,7 +890,9 @@
       const note = document.createElement("small");
       note.textContent = quote?.mode === "token"
         ? "豆包 Seedance 按上游实际输出 Token × 本站场景售价结算；预扣多退少补，失败退款。¥1 按本站余额 $1 计算。"
-        : "本站按视频秒数计费，实际扣费与折扣以本站账单为准。";
+        : quote?.mode === "second"
+          ? "盈合可灵按上游场景价 × 1.15 × 实际视频秒数结算；预扣多退少补，失败退款。¥1 按本站余额 $1 计算。"
+          : "本站按视频秒数计费，实际扣费与折扣以本站账单为准。";
       billing.append(note);
       card.append(billing);
     }
@@ -939,10 +1015,7 @@
           return null;
         }
         const previous = state.video.history.find((item) => item.id === taskId);
-        const quote = previous?.quote || (
-          $("video-key").value === String(keyId) && $("video-model").value === model
-            ? currentVideoQuote() : null
-        );
+        const quote = previous?.quote || null;
         if (!rememberVideo({ ...info, keyId, prompt, model, createdAt, quote, tokenUsage: info.tokenUsage || previous?.tokenUsage }, scope, epoch)) {
           if (info.url?.startsWith("blob:")) mediaHistory.revokeObjectUrls([info.url]);
           return null;
@@ -1007,13 +1080,13 @@
     if (!key) return setStatus("video", "请先读取并选择视频密钥", "error");
     if (!scope) return setStatus("video", "登录状态无效，请重新登录", "error");
     if (!state.video.models.includes(model)) return setStatus("video", "请先读取该密钥可用的视频模型", "error");
-    if (model.startsWith("doubao-seedance-") && !state.video.pricingQuote) {
+    if (MeteorVideoPricing.isProviderModel(model) && !currentVideoQuote()) {
       refreshVideoTokenPricing();
-      return setStatus("video", "请先等待上游 Token 价格读取完成", "error");
+      return setStatus("video", state.video.catalogError || state.video.pricingError || "请先等待上游价格和分辨率读取完成", "error");
     }
-    if (model.startsWith("doubao-seedance-") && Date.now() - state.video.pricingFetchedAt >= 60000) {
+    if (MeteorVideoPricing.isProviderModel(model) && Date.now() - state.video.pricingFetchedAt >= 60000) {
       refreshVideoTokenPricing();
-      return setStatus("video", "正在刷新上游 Token 价格，请稍后重新提交", "error");
+      return setStatus("video", "正在刷新上游价格，请稍后重新提交", "error");
     }
     if (!prompt) return setStatus("video", "提示词不能为空", "error");
     if (prompt.length > 1300) return setStatus("video", "提示词不能超过 1,300 个字符", "error");
@@ -1048,14 +1121,14 @@
         else if (endUrl) args.end_image_url = endUrl;
         const tool = await mcpCall("video", "create_video", args, key);
         data = tool.structuredContent || tool;
-        creationQuote = MeteorVideoPricing.tokenQuote(data.billing);
+        creationQuote = MeteorVideoPricing.providerQuote(data.billing);
       } else {
         if (referenceUrls.length) payload.reference_images = referenceUrls;
         if (startUrl) payload.start_image_url = startUrl;
         if (endUrl) payload.end_image_url = endUrl;
         const created = await request("/v1/videos/generations", { method: "POST", body: JSON.stringify(payload) }, key);
         data = created.data;
-        creationQuote = MeteorVideoPricing.tokenQuote(videoBillingHeader(created.response));
+        creationQuote = MeteorVideoPricing.providerQuote(videoBillingHeader(created.response));
       }
       const taskId = taskIdFrom(data);
       if (!taskId) throw new ApiError("接口已响应，但没有返回任务 ID");
@@ -1154,8 +1227,8 @@
     $("video-model").addEventListener("change", updateVideoOptions);
     $("video-duration").addEventListener("input", updateVideoPricing);
     $("video-resolution").addEventListener("change", updateVideoPricing);
-    $("video-audio").addEventListener("change", updateVideoPricing);
-    $("video-reference-urls").addEventListener("input", updateVideoPricing);
+    $("video-audio").addEventListener("change", updateVideoOptions);
+    $("video-reference-urls").addEventListener("input", updateVideoOptions);
     $("image-load-models").addEventListener("click", () => void loadModels("image"));
     $("video-load-models").addEventListener("click", () => void loadModels("video"));
     $("image-form").addEventListener("submit", (event) => void submitImage(event));

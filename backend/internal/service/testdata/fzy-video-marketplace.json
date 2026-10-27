@@ -1,0 +1,503 @@
+{
+  "code": 200,
+  "data": [
+    {
+      "innerCode": "doubao-seedance-2.0-mini",
+      "discount": "0.3000",
+      "billingRule": {
+        "displayMode": "VIDEO_SCENARIOS",
+        "pricingCurrency": "CNY",
+        "tokenUnitSize": 1000000,
+        "scenarioRules": [
+          {
+            "sceneCode": "video-doubao-seedance-2.0-mini-novideo",
+            "sceneName": "无输入视频",
+            "inputMode": "无输入视频",
+            "resolution": "480p/720p",
+            "outputPricePerMillion": "23",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-mini-video",
+            "sceneName": "含输入视频",
+            "inputMode": "含输入视频",
+            "resolution": "480p/720p",
+            "outputPricePerMillion": "14",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          }
+        ]
+      }
+    },
+    {
+      "innerCode": "doubao-seedance-2.5",
+      "discount": "0.7900",
+      "billingRule": {
+        "displayMode": "VIDEO_SCENARIOS",
+        "pricingCurrency": "CNY",
+        "tokenUnitSize": 1000000,
+        "scenarioRules": [
+          {
+            "sceneCode": "video-doubao-seedance-2.5-novideo-480p",
+            "sceneName": "无输入视频 480p",
+            "inputMode": "无输入视频",
+            "resolution": "480p",
+            "outputPricePerMillion": "70",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.5-novideo-720p",
+            "sceneName": "无输入视频 720p",
+            "inputMode": "无输入视频",
+            "resolution": "720p",
+            "outputPricePerMillion": "70",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.5-novideo-1080p",
+            "sceneName": "无输入视频 1080p",
+            "inputMode": "无输入视频",
+            "resolution": "1080p",
+            "outputPricePerMillion": "77",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.5-video-480p",
+            "sceneName": "含输入视频 480p",
+            "inputMode": "含输入视频",
+            "resolution": "480p",
+            "outputPricePerMillion": "42",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.5-video-720p",
+            "sceneName": "含输入视频 720p",
+            "inputMode": "含输入视频",
+            "resolution": "720p",
+            "outputPricePerMillion": "42",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.5-video-1080p",
+            "sceneName": "含输入视频 1080p",
+            "inputMode": "含输入视频",
+            "resolution": "1080p",
+            "outputPricePerMillion": "46",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          }
+        ]
+      }
+    },
+    {
+      "innerCode": "doubao-seedance-2.0",
+      "discount": "0.7900",
+      "billingRule": {
+        "displayMode": "VIDEO_SCENARIOS",
+        "pricingCurrency": "CNY",
+        "tokenUnitSize": 1000000,
+        "scenarioRules": [
+          {
+            "sceneCode": "video-doubao-seedance-2.0-novideo-480p",
+            "sceneName": "无输入视频 480p",
+            "inputMode": "无输入视频",
+            "resolution": "480p",
+            "outputPricePerMillion": "46",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-novideo-720p",
+            "sceneName": "无输入视频 720p",
+            "inputMode": "无输入视频",
+            "resolution": "720p",
+            "outputPricePerMillion": "46",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-novideo-1080p",
+            "sceneName": "无输入视频 1080p",
+            "inputMode": "无输入视频",
+            "resolution": "1080p",
+            "outputPricePerMillion": "51",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-video-480p",
+            "sceneName": "含输入视频 480p",
+            "inputMode": "含输入视频",
+            "resolution": "480p",
+            "outputPricePerMillion": "28",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-video-720p",
+            "sceneName": "含输入视频 720p",
+            "inputMode": "含输入视频",
+            "resolution": "720p",
+            "outputPricePerMillion": "28",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-video-1080p",
+            "sceneName": "含输入视频 1080p",
+            "inputMode": "含输入视频",
+            "resolution": "1080p",
+            "outputPricePerMillion": "31",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-novideo-4k",
+            "sceneName": "无输入视频 4K",
+            "inputMode": "无输入视频",
+            "resolution": "4k",
+            "outputPricePerMillion": "26",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-video-4k",
+            "sceneName": "含输入视频 4K",
+            "inputMode": "含输入视频",
+            "resolution": "4k",
+            "outputPricePerMillion": "16",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          }
+        ]
+      }
+    },
+    {
+      "innerCode": "kling-v3-omni",
+      "discount": "0.6500",
+      "billingRule": {
+        "displayMode": "VIDEO_SCENARIOS",
+        "pricingCurrency": "CNY",
+        "tokenUnitSize": 1000000,
+        "scenarioRules": [
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-norefvideo-noaudio-720p",
+            "sceneName": "无参考视频 无声 720P",
+            "inputMode": "无参考视频无声",
+            "resolution": "720p",
+            "outputPricePerMillion": "60",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "0.6",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-norefvideo-noaudio-1080p",
+            "sceneName": "无参考视频 无声 1080P",
+            "inputMode": "无参考视频无声",
+            "resolution": "1080p",
+            "outputPricePerMillion": "80",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "0.8",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-norefvideo-noaudio-4k",
+            "sceneName": "无参考视频 无声 4K",
+            "inputMode": "无参考视频无声",
+            "resolution": "4k",
+            "outputPricePerMillion": "300",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "3",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-norefvideo-audio-720p",
+            "sceneName": "无参考视频 有声 720P",
+            "inputMode": "无参考视频有声",
+            "resolution": "720p",
+            "outputPricePerMillion": "80",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "0.8",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-norefvideo-audio-1080p",
+            "sceneName": "无参考视频 有声 1080P",
+            "inputMode": "无参考视频有声",
+            "resolution": "1080p",
+            "outputPricePerMillion": "100",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "1",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-norefvideo-audio-4k",
+            "sceneName": "无参考视频 有声 4K",
+            "inputMode": "无参考视频有声",
+            "resolution": "4k",
+            "outputPricePerMillion": "300",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "3",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-refvideo-noaudio-720p",
+            "sceneName": "有参考视频 无声 720P",
+            "inputMode": "有参考视频无声",
+            "resolution": "720p",
+            "outputPricePerMillion": "90",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "0.9",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-refvideo-noaudio-1080p",
+            "sceneName": "有参考视频 无声 1080P",
+            "inputMode": "有参考视频无声",
+            "resolution": "1080p",
+            "outputPricePerMillion": "120",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "1.2",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-refvideo-noaudio-4k",
+            "sceneName": "有参考视频 无声 4K",
+            "inputMode": "有参考视频无声",
+            "resolution": "4k",
+            "outputPricePerMillion": "300",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "3",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-refvideo-audio-720p",
+            "sceneName": "有参考视频 有声 720P",
+            "inputMode": "有参考视频有声",
+            "resolution": "720p",
+            "outputPricePerMillion": "110",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "1.1",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-refvideo-audio-1080p",
+            "sceneName": "有参考视频 有声 1080P",
+            "inputMode": "有参考视频有声",
+            "resolution": "1080p",
+            "outputPricePerMillion": "140",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "1.4",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-omni-refvideo-audio-4k",
+            "sceneName": "有参考视频 有声 4K",
+            "inputMode": "有参考视频有声",
+            "resolution": "4k",
+            "outputPricePerMillion": "300",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "3",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          }
+        ]
+      }
+    },
+    {
+      "innerCode": "doubao-seedance-2.0-fast",
+      "discount": "0.3800",
+      "billingRule": {
+        "displayMode": "VIDEO_SCENARIOS",
+        "pricingCurrency": "CNY",
+        "tokenUnitSize": 1000000,
+        "scenarioRules": [
+          {
+            "sceneCode": "video-doubao-seedance-2.0-fast-novideo",
+            "sceneName": "无输入视频",
+            "inputMode": "无输入视频",
+            "resolution": "480p/720p",
+            "outputPricePerMillion": "37",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-doubao-seedance-2.0-fast-video",
+            "sceneName": "含输入视频",
+            "inputMode": "含输入视频",
+            "resolution": "480p/720p",
+            "outputPricePerMillion": "22",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": null,
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          }
+        ]
+      }
+    },
+    {
+      "innerCode": "kling-v3",
+      "discount": "0.6500",
+      "billingRule": {
+        "displayMode": "VIDEO_SCENARIOS",
+        "pricingCurrency": "CNY",
+        "tokenUnitSize": 1000000,
+        "scenarioRules": [
+          {
+            "sceneCode": "video-tencent-kling-3.0-noaudio-720p",
+            "sceneName": "无声 720P",
+            "inputMode": "无声视频",
+            "resolution": "720p",
+            "outputPricePerMillion": "60",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "0.6",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-noaudio-1080p",
+            "sceneName": "无声 1080P",
+            "inputMode": "无声视频",
+            "resolution": "1080p",
+            "outputPricePerMillion": "80",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "0.8",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-noaudio-4k",
+            "sceneName": "无声 4K",
+            "inputMode": "无声视频",
+            "resolution": "4k",
+            "outputPricePerMillion": "300",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "3",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-audio-720p",
+            "sceneName": "有声 720P",
+            "inputMode": "有声视频",
+            "resolution": "720p",
+            "outputPricePerMillion": "110",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "1.1",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-audio-1080p",
+            "sceneName": "有声 1080P",
+            "inputMode": "有声视频",
+            "resolution": "1080p",
+            "outputPricePerMillion": "140",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "1.4",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          },
+          {
+            "sceneCode": "video-tencent-kling-3.0-audio-4k",
+            "sceneName": "有声 4K",
+            "inputMode": "有声视频",
+            "resolution": "4k",
+            "outputPricePerMillion": "300",
+            "minPrice": null,
+            "surcharges": [],
+            "pricePerSecond": "3",
+            "pricingCurrency": "CNY",
+            "tokenUnitSize": 1000000
+          }
+        ]
+      }
+    }
+  ]
+}

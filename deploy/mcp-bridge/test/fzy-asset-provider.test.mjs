@@ -12,7 +12,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 const token = 'yh-integration-provider-not-a-real-key'
 const source = 'https://8.8.8.8/portrait.png'
 
-async function fixture({ assetStatus = 'Active', createStatus = 200 } = {}) {
+async function fixture({ assetStatus = 'Active', assetErrorCode, assetErrorMessage, createStatus = 200 } = {}) {
   const seen = { groups: 0, assets: 0, videos: [], status: 0 }
   const vendor = http.createServer(async (req, res) => {
     const chunks = []
@@ -29,7 +29,8 @@ async function fixture({ assetStatus = 'Active', createStatus = 200 } = {}) {
       assert.equal(body.assetType, 'Image')
       assert.equal(body.url, source)
       seen.assets++
-      res.end(JSON.stringify({ code: 200, data: { id: `asset-mock-${seen.assets}`, status: assetStatus } }))
+      res.end(JSON.stringify({ code: 200, data: { id: `asset-mock-${seen.assets}`, status: assetStatus,
+        ...(assetErrorCode ? { errorCode: assetErrorCode, errorMessage: assetErrorMessage } : {}) } }))
     } else if (req.url === '/v3/video/tasks') {
       assert.match(req.headers['idempotency-key'], /^meteor-fzy-video-/)
       seen.videos.push(body)
@@ -147,6 +148,24 @@ test('failed asset approval becomes a failed virtual task without any paid video
     const before = f.seen.assets
     assert.equal((await f.call('/videos/generations', { owner: '', body: videoBody() })).res.status, 503)
     assert.equal(f.seen.assets, before)
+  } finally { await f.close() }
+})
+
+test('HTTP task status distinguishes an inaccessible source from content rejection without leaking private provider diagnostics', async () => {
+  const f = await fixture({ assetStatus: 'Failed', assetErrorCode: 'UPLOAD_ERROR',
+    assetErrorMessage: `Failed to download ${source}?private-signature=secret: HTTP 404 ${token}` })
+  try {
+    const created = await f.call('/videos/generations', { body: videoBody() })
+    const failed = await until(async () => {
+      const status = await f.call(`/videos/${created.body.id}`)
+      return status.body?.status === 'failed' && status.body
+    })
+    assert.equal(failed.error.type, 'asset_download_failed')
+    assert.equal(failed.error.code, 'UPLOAD_ERROR')
+    assert.match(failed.error.message, /无法下载或解析/)
+    assert.doesNotMatch(JSON.stringify(failed), /审核未通过|private-signature|yh-integration|https:/)
+    assert.equal(f.seen.assets, 1)
+    assert.equal(f.seen.videos.length, 0)
   } finally { await f.close() }
 })
 

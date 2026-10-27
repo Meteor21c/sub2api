@@ -255,18 +255,25 @@
 
   function safeQuote(value) {
     if (!value || typeof value !== "object") return null;
-    if (value.mode === "token") {
-      const officialPerMillion = safeNumber(value.officialPerMillion);
-      const upstreamPerMillion = safeNumber(value.upstreamPerMillion);
-      const salePerMillion = safeNumber(value.salePerMillion);
+    if (value.mode === "token" || value.mode === "second") {
+      const token = value.mode === "token";
+      const official = safeNumber(token ? value.officialPerMillion : value.officialPerSecond);
+      const upstream = safeNumber(token ? value.upstreamPerMillion : value.upstreamPerSecond);
+      const sale = safeNumber(token ? value.salePerMillion : value.salePerSecond);
       const prechargeAmount = safeNumber(value.prechargeAmount);
       const saleRateToOfficial = safeNumber(value.saleRateToOfficial);
-      if ([officialPerMillion, upstreamPerMillion, salePerMillion, prechargeAmount, saleRateToOfficial].some(number => number === null)) return null;
+      const duration = safeNumber(value.duration);
+      if ([official, upstream, sale, prechargeAmount, saleRateToOfficial].some(number => number === null) ||
+          (!token && (!duration || !Number.isInteger(duration)))) return null;
       return {
-        mode: "token", currency: value.currency === "USD" ? "USD" : "CNY",
-        sceneName: String(value.sceneName || "").slice(0, 80), officialPerMillion,
-        upstreamPerMillion, salePerMillion, prechargeAmount, saleRateToOfficial,
+        mode: token ? "token" : "second", currency: value.currency === "USD" ? "USD" : "CNY",
+        sceneName: String(value.sceneName || "").slice(0, 160),
+        ...(token ? { officialPerMillion: official, upstreamPerMillion: upstream, salePerMillion: sale }
+          : { officialPerSecond: official, upstreamPerSecond: upstream, salePerSecond: sale, duration }),
+        prechargeAmount, saleRateToOfficial,
         providerDiscountRate: safeNumber(value.providerDiscountRate),
+        source: value.source === "fzyinghe-marketplace-by-api-key" ? value.source : "",
+        fetchedAt: typeof value.fetchedAt === "string" && Number.isFinite(Date.parse(value.fetchedAt)) ? new Date(value.fetchedAt).toISOString() : "",
       };
     }
     const unitPrice = safeNumber(value.unitPrice);

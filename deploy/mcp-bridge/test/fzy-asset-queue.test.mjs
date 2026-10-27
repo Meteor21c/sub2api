@@ -148,19 +148,125 @@ test('preserves media types and per-content roles when replacing references', as
   }
 })
 
-test('failed review never creates a video and a new job does not reuse a failed asset', async t => {
+test('unknown processing failures do not claim moderation rejection or create a video and are not reused', async t => {
   const f = await fixture(t)
   f.mock.hooks.detail = () => response({ code: 200, data: { status: 'Failed' } })
   const job = await f.enqueue()
   for (let i = 0; i < 5; i++) await f.step()
   assert.equal(f.lookup(job).stage, 'failed')
-  assert.match(f.lookup(job).error, /审核/)
+  assert.equal(f.lookup(job).errorType, 'asset_processing_failed')
+  assert.equal(f.lookup(job).errorCode, 'ASSET_PROCESSING_FAILED')
+  assert.equal(f.lookup(job).error, '上游素材处理失败，未提供明确原因，请稍后重试或联系管理员')
+  assert.doesNotMatch(f.lookup(job).error, /审核/)
   assert.equal(f.mock.counts.videos, 0)
   f.mock.hooks.detail = undefined
   const next = await f.enqueue()
   await f.reach(next)
   assert.equal(f.mock.counts.groups, 1)
   assert.equal(f.mock.counts.uploads, 2)
+  assert.equal(f.mock.counts.videos, 1)
+})
+
+const downloadTimeout = () => response({ code: 200, data: { status: 'Failed', errorCode: 'UPLOAD_ERROR',
+  errorMessage: `Failed to download media from ${imageURL}; tos: read body err:context deadline exceeded ${TOKEN}` } })
+
+test('a confirmed transient download failure retries the import and submits one video after approval', async t => {
+  const f = await fixture(t)
+  f.mock.hooks.detail = payload => f.mock.counts.details === 1 ? downloadTimeout()
+    : response({ code: 200, data: { id: payload.assetId, status: 'Active' } })
+  const job = await f.enqueue()
+  await f.reach(job)
+  assert.equal(f.mock.counts.uploads, 2)
+  assert.equal(f.mock.counts.videos, 1)
+  const imports = f.mock.calls.filter(call => call.endpoint === '/v3/assets')
+  assert.notEqual(imports[0].headers.get('idempotency-key'), imports[1].headers.get('idempotency-key'), 'a confirmed failed import gets a new stable identity')
+  assert.equal(f.mock.calls.find(call => call.endpoint === '/v3/video/tasks').payload.content[1].image_url.url, 'asset://asset-2')
+  for (let i = 0; i < 4; i++) await f.step()
+  assert.equal(f.mock.counts.videos, 1)
+  await f.queue.observeTerminal(job.id, TOKEN, 'user-1', 'done')
+  f.advance(8 * DAY)
+  assert.equal((await f.queue.cleanup({ force: true })).deleted, 1)
+  assert.equal(f.mock.counts.deletes, 1, 'failed replaced imports are retained for ordinary single-asset cleanup')
+  assert.equal((await f.queue.cleanup({ force: true })).deleted, 1)
+  assert.equal(f.mock.counts.deletes, 2)
+})
+
+test('download retries are bounded and preserve safe failure details across restarts', async t => {
+  const f = await fixture(t)
+  f.mock.hooks.detail = downloadTimeout
+  const job = await f.enqueue()
+  for (let i = 0; i < 20; i++) await f.step()
+  const failed = f.lookup(job)
+  assert.equal(failed.stage, 'failed')
+  assert.equal(failed.errorType, 'asset_download_timeout')
+  assert.equal(failed.errorCode, 'UPLOAD_ERROR')
+  assert.match(failed.error, /下载素材超时/)
+  assert.doesNotMatch(failed.error, /审核未通过|private-signature|yh-test|https:/)
+  assert.equal(f.mock.counts.uploads, 3, 'one initial import and at most two confirmed-failure retries')
+  assert.equal(f.mock.counts.videos, 0)
+  await f.queue.stop()
+  f.queue = await createFzyAssetQueue(f.options)
+  for (let i = 0; i < 8; i++) await f.step()
+  assert.deepEqual(f.lookup(job), failed)
+  assert.equal(f.mock.counts.uploads, 3, 'a terminal/refunded job is never resurrected')
+})
+
+test('restart keeps a scheduled download retry and its backoff without repeating the failed identity', async t => {
+  const f = await fixture(t)
+  f.mock.hooks.detail = payload => f.mock.counts.details === 1 ? downloadTimeout()
+    : response({ code: 200, data: { id: payload.assetId, status: 'Active' } })
+  const job = await f.enqueue()
+  await f.step() // group
+  await f.step() // initial import
+  await f.step() // download fails and successor is durably reserved
+  assert.equal(f.lookup(job).stage, 'asset_reviewing')
+  await f.queue.stop()
+  f.queue = await createFzyAssetQueue(f.options)
+  await f.queue.tick()
+  assert.equal(f.mock.counts.uploads, 1, 'restart does not remove the backoff')
+  await f.reach(job)
+  assert.equal(f.mock.counts.uploads, 2)
+  assert.equal(f.mock.counts.videos, 1)
+})
+
+test('permanent source failures and moderation rejection are distinct and are never automatically retried', async t => {
+  const f = await fixture(t)
+  for (const [code, detail, expectedType, expectedText] of [
+    ['UPLOAD_ERROR', 'Failed to download media: HTTP 404', 'asset_download_failed', /无法下载或解析/],
+    ['CONTENT_REJECTED', `Moderation timeout rejected ${imageURL} ${TOKEN}`, 'asset_review_rejected', /审核未通过/],
+  ]) {
+    f.mock.hooks.detail = () => response({ code: 200, data: { status: 'Failed', errorCode: code, errorMessage: detail } })
+    const previous = f.mock.counts.uploads
+    const job = await f.enqueue()
+    for (let i = 0; i < 10; i++) await f.step()
+    assert.equal(f.lookup(job).stage, 'failed')
+    assert.equal(f.lookup(job).errorType, expectedType)
+    assert.match(f.lookup(job).error, expectedText)
+    assert.equal(f.mock.counts.uploads, previous + 1)
+    assert.equal(f.mock.counts.videos, 0)
+  }
+})
+
+test('material-library permission errors are actionable and do not expose provider details', async t => {
+  const f = await fixture(t)
+  f.mock.hooks.upload = () => response({ error: { message: `Forbidden ${TOKEN} ${imageURL}` } }, 403)
+  const job = await f.enqueue()
+  for (let i = 0; i < 5; i++) await f.step()
+  assert.equal(f.lookup(job).errorType, 'asset_permission_denied')
+  assert.match(f.lookup(job).error, /权限不足/)
+  assert.doesNotMatch(JSON.stringify(f.lookup(job)), /yh-test|private-signature|https:/)
+  assert.equal(f.mock.counts.videos, 0)
+})
+
+for (const status of [408, 409, 429]) test(`temporary import HTTP ${status} retries the same idempotent import`, async t => {
+  const f = await fixture(t)
+  f.mock.hooks.upload = () => f.mock.counts.uploads === 1 ? response({ error: { message: 'try later' } }, status)
+    : response({ code: 200, data: { id: 'asset-retried', status: 'Active' } })
+  const job = await f.enqueue()
+  await f.reach(job)
+  const imports = f.mock.calls.filter(call => call.endpoint === '/v3/assets')
+  assert.equal(imports.length, 2)
+  assert.equal(imports[0].headers.get('idempotency-key'), imports[1].headers.get('idempotency-key'))
   assert.equal(f.mock.counts.videos, 1)
 })
 

@@ -114,7 +114,7 @@ func (s *OpenAIGatewayService) reconcileFZYVideoJob(ctx context.Context, repo FZ
 		return nil
 	}
 	usage := providerTokenUsageFromGrokStatus(body)
-	if usage.OutputTokens <= 0 {
+	if !job.Price.IsPerSecond() && usage.OutputTokens <= 0 {
 		return errors.New("completed FZY video did not include output tokens")
 	}
 	user, err := s.userRepo.GetByID(ctx, job.UserID)

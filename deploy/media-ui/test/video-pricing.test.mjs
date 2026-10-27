@@ -52,3 +52,54 @@ test('FZY token quote distinguishes official, upstream, sale and refundable hold
   assert.equal(pricing.discount(quote.saleRateToOfficial), '3.45 折（0.345×）')
   assert.equal(pricing.tokenQuote({ billing_mode: 'token', sale_per_million: null }), null)
 })
+
+test('provider second quote uses the same marked-up tariff without a group multiplier', () => {
+  const quote = pricing.providerQuote({
+    billing_mode: 'second', currency: 'CNY', scene_name: '无参考视频 无声 1080P',
+    official_per_second: '0.8', upstream_per_second: '0.52', sale_per_second: '0.598',
+    sale_rate_to_official: '0.7475', provider_discount_rate: '.65', precharge_amount: '2.99', duration: 5,
+    source: 'fzyinghe-marketplace-by-api-key', fetched_at: '2026-10-27T07:00:00Z',
+  })
+  assert.equal(quote.mode, 'second')
+  assert.equal(quote.salePerSecond, 0.598)
+  assert.equal(quote.prechargeAmount, 2.99)
+  assert.equal(quote.saleRateToOfficial, 0.7475)
+  assert.equal(quote.fetchedAt, '2026-10-27T07:00:00.000Z')
+  assert.equal(pricing.providerQuote({ billing_mode: 'second', official_per_million: 80 }), null)
+})
+
+test('resolution choices follow the selected model and matching upstream audio/input-video scenario', () => {
+  const raw = { source: 'fzyinghe-marketplace-by-api-key', model: 'doubao-seedance-2.5',
+    resolutions: ['480p', '720p', '1080p'], scenarios: [
+      { billing_mode: 'token', input_video: false, resolutions: ['480p', '720p', '1080p'] },
+      { billing_mode: 'token', input_video: true, resolutions: ['480p', '720p'] },
+    ] }
+  const catalog = pricing.providerCatalog(raw, raw.model)
+  assert.deepEqual(pricing.scenarioResolutions(catalog, { audio: true, inputVideo: false }), ['480p', '720p', '1080p'])
+  assert.deepEqual(pricing.scenarioResolutions(catalog, { audio: false, inputVideo: true }), ['480p', '720p'])
+  assert.equal(pricing.providerCatalog(raw, 'doubao-seedance-2.0-mini'), null)
+  assert.deepEqual(pricing.scenarioResolutions(null, {}), [])
+  const mini = pricing.providerCatalog({ ...raw, model: 'doubao-seedance-2.0-mini', resolutions: ['480p', '720p'],
+    scenarios: [{ billing_mode: 'token', resolutions: ['480p', '720p'] }] }, 'doubao-seedance-2.0-mini')
+  assert.deepEqual(pricing.scenarioResolutions(mini, { audio: true, inputVideo: false }), ['480p', '720p'])
+  const kling = pricing.providerCatalog({ source: raw.source, model: 'kling-v3-omni', resolutions: ['720p', '1080p', '4k'],
+    scenarios: [
+      { billing_mode: 'second', input_video: false, audio: true, resolutions: ['720p', '1080p', '4k'] },
+      { billing_mode: 'second', input_video: true, audio: false, resolutions: ['720p', '1080p'] },
+    ] }, 'kling-v3-omni')
+  assert.deepEqual(pricing.scenarioResolutions(kling, { audio: true, inputVideo: false }), ['720p', '1080p', '4K'])
+  assert.deepEqual(pricing.scenarioResolutions(kling, { audio: true, inputVideo: true }), [])
+})
+
+test('changing a key, model or priced scenario invalidates the quote identity', () => {
+  const selection = { keyId: '1', model: 'kling-v3-omni', resolution: '1080p', duration: 5, audio: true, inputVideo: false }
+  const initial = pricing.selectionKey(selection)
+  for (const change of [{ keyId: '2' }, { model: 'kling-v3' }, { resolution: '720p' }, { duration: 6 }, { audio: false }, { inputVideo: true }]) {
+    assert.notEqual(pricing.selectionKey({ ...selection, ...change }), initial)
+  }
+  assert.equal(pricing.isProviderModel('grok-imagine-video-1.5'), false)
+  for (const reference of ['https://example.com/a.MOV', 'https://example.com/get?filename=ref.webm', 'video:https://example.com/download', 'reference:https://example.com/a.m4v']) {
+    assert.equal(pricing.referenceHasVideo([reference]), true)
+  }
+  assert.equal(pricing.referenceHasVideo(['https://example.com/portrait.png']), false)
+})

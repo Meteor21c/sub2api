@@ -51,6 +51,7 @@ func TestFZYVideoBillingReserveSettleReleaseAndDeduplicate(t *testing.T) {
 	require.NotNil(t, loaded)
 	require.True(t, decimal.RequireFromString("7.935").Equal(decimal.RequireFromString(loaded.Price.SalePerMillion)))
 	require.Equal(t, "pending", loaded.Status)
+	require.Equal(t, "token", loaded.Price.BillingMode, "legacy empty mode must persist as token")
 
 	const actual = 0.32211339
 	cmd := &service.UsageBillingCommand{
@@ -92,6 +93,37 @@ func TestFZYVideoBillingReserveSettleReleaseAndDeduplicate(t *testing.T) {
 	}
 	require.ErrorIs(t, repo.ReserveFZYVideo(ctx, tooLarge), service.ErrFZYVideoInsufficientBalance)
 	assertFZYVideoBalance(t, ctx, user.ID, 0.67788661, 0)
+}
+
+func TestFZYVideoSecondBillingPersistsTariffAndSettlesWithoutTokens(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB).(*usageBillingRepository)
+	user := mustCreateUser(t, client, &service.User{Email: "kling-" + uuid.NewString() + "@example.com", Balance: 100})
+	group := mustCreateGroup(t, client, &service.Group{Name: "kling-" + uuid.NewString(), Platform: service.PlatformGrok, RateMultiplier: 1, SubscriptionType: service.SubscriptionTypeStandard})
+	account := mustCreateAccount(t, client, &service.Account{Name: "kling-" + uuid.NewString(), Platform: service.PlatformGrok, Type: service.AccountTypeAPIKey})
+	key := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, GroupID: &group.ID, Key: "sk-kling-" + uuid.NewString()})
+	price := service.FZYVideoPriceSnapshot{Model: "kling-v3-omni", SceneCode: "noaudio-4k", SceneName: "无参考视频 无声 4K", Currency: "CNY", BillingMode: "second", OfficialPerMillion: "0", SalePerMillion: "0", OfficialPerSecond: "3", SalePerSecond: "2.2425", DiscountRate: "0.65", MarkupRate: "1.15", Resolution: "4K"}
+	job := &service.FZYVideoBillingJob{ID: uuid.NewString(), UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID, Price: price, DurationSeconds: 15, HoldAmount: 33.6375}
+	require.NoError(t, repo.ReserveFZYVideo(ctx, job), "the new migration must allow zero per-million prices for a seconds tariff")
+	assertFZYVideoBalance(t, ctx, user.ID, 66.3625, 33.6375)
+	taskID := "kling-task-" + job.ID
+	require.NoError(t, repo.BindFZYVideo(ctx, job.ID, taskID))
+	loaded, err := repo.GetFZYVideoByTask(ctx, taskID, user.ID, key.ID, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, "second", loaded.Price.BillingMode)
+	require.Equal(t, "4K", loaded.Price.Resolution)
+	require.Equal(t, 15, loaded.DurationSeconds)
+	require.True(t, decimal.RequireFromString("2.2425").Equal(decimal.RequireFromString(loaded.Price.SalePerSecond)))
+	cmd := &service.UsageBillingCommand{RequestID: service.StableGrokVideoBillingRequestID(taskID), UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID, AccountType: service.AccountTypeAPIKey, Model: price.Model, BalanceCost: 33.6375}
+	result, err := repo.SettleFZYVideo(ctx, job.ID, 0, 33.6375, cmd)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	assertFZYVideoBalance(t, ctx, user.ID, 66.3625, 0)
+	result, err = repo.SettleFZYVideo(ctx, job.ID, 0, 33.6375, cmd)
+	require.NoError(t, err)
+	require.False(t, result.Applied)
+	assertFZYVideoBalance(t, ctx, user.ID, 66.3625, 0)
 }
 
 func assertFZYVideoBalance(t *testing.T, ctx context.Context, userID int64, wantBalance, wantFrozen float64) {

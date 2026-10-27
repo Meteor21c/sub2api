@@ -143,6 +143,7 @@
             <div class="field">
               <label for="video-resolution">分辨率</label>
               <select id="video-resolution"></select>
+              <small id="video-resolution-hint"></small>
             </div>
             <div class="field">
               <label for="video-ratio">画幅比例</label>
@@ -156,7 +157,7 @@
                 <option value="start_end_frame">首尾帧</option>
               </select>
             </div>
-            <label class="check-field"><input id="video-audio" type="checkbox" checked><span><strong>生成音频</strong><small>由上游模型决定是否支持</small></span></label>
+            <label class="check-field"><input id="video-audio" type="checkbox" checked><span><strong>生成音频</strong><small id="video-audio-hint">由上游模型决定是否支持</small></span></label>
 
             <div class="video-pricing full" aria-live="polite">
               <strong>本次计价预览</strong>
@@ -166,7 +167,8 @@
                 <span><span id="video-estimated-label">预计扣费</span> <b id="video-estimated-cost">—</b></span>
               </div>
               <small id="video-pricing-note">选择视频密钥和模型后显示。最终以任务完成后的本站用量记录为准。</small>
-              <small>豆包 Seedance 使用盈合密钥专属 Token 价格：先预扣，完成后读取上游实际生成 Token 多退少补；失败退款。可灵与 Grok 保持原有计费规则。</small>
+              <small id="video-pricing-source"></small>
+              <small>豆包 Seedance 按实际输出 Token、盈合可灵按实际视频秒数计费，售价均为上游折后价加价 15%；先预扣，完成后结算，失败退款。</small>
             </div>
 
             <div class="field full">
@@ -231,10 +233,10 @@
     <script src="./account-keys.js?v=20260928-preserve-session" defer></script>
     <script src="./image-options.js" defer></script>
     <script src="./video-asset-status.js?v=20261027-fzy-assets" defer></script>
-    <script src="./media-history.js?v=20261027-fzy-assets" defer></script>
+    <script src="./media-history.js?v=20261027-provider-pricing" defer></script>
     <script src="./image-results.js?v=20260927-image-delivery" defer></script>
     <script src="./video-results.js?v=20261027-video-playback" defer></script>
-    <script src="./video-pricing.js?v=20260926-gemini-native" defer></script>
-    <script src="./app.js?v=20261027-video-playback" defer></script>
+    <script src="./video-pricing.js?v=20261027-provider-pricing" defer></script>
+    <script src="./app.js?v=20261027-provider-pricing" defer></script>
   </body>
 </html>
