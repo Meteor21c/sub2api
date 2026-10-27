@@ -127,9 +127,10 @@ func fzyScenarioResolutions(value string) []string {
 	var values []string
 	for _, part := range strings.Split(strings.ToLower(value), "/") {
 		part = strings.TrimSpace(part)
-		if part == "4k" {
+		switch part {
+		case "4k":
 			values = append(values, "4K")
-		} else if part == "480p" || part == "720p" || part == "1080p" {
+		case "480p", "720p", "1080p":
 			values = append(values, part)
 		}
 	}
@@ -259,7 +260,7 @@ func ParseFZYVideoPriceSnapshot(body []byte, model string, requestBody []byte) (
 	}
 	inputVideo := fzyRequestHasInputVideo(requestBody)
 	if model == "kling-v3-omni" && inputVideo && audio {
-		return empty, errors.New("Kling Omni reference video does not support audio generation")
+		return empty, errors.New("kling Omni reference video does not support audio generation")
 	}
 	for _, scene := range entry.BillingRule.ScenarioRules {
 		if model == "doubao-seedance-1.5-pro" {

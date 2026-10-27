@@ -74,7 +74,8 @@ func TestFZYVideoCatalogUsesOnlyAvailablePricedCapabilities(t *testing.T) {
 	require.NotContains(t, catalog["available_models"], "doubao-seedance-1.5-pro")
 	require.Len(t, catalog["models"], 6)
 	require.NotContains(t, catalog, "model")
-	models := catalog["models"].([]map[string]any)
+	models, ok := catalog["models"].([]map[string]any)
+	require.True(t, ok)
 	for _, model := range models {
 		switch model["model"] {
 		case "doubao-seedance-2.0-mini", "doubao-seedance-2.0-fast":
@@ -85,11 +86,16 @@ func TestFZYVideoCatalogUsesOnlyAvailablePricedCapabilities(t *testing.T) {
 			require.Equal(t, []string{"480p", "720p", "1080p", "4K"}, model["resolutions"])
 		case "kling-v3-omni":
 			require.Equal(t, []string{"720p", "1080p", "4K"}, model["resolutions"])
-			rows := model["scenarios"].([]map[string]any)
+			rows, ok := model["scenarios"].([]map[string]any)
+			require.True(t, ok)
 			require.Len(t, rows, 9, "upstream's three unsupported reference-video+audio tariffs must not be offered")
 			for _, row := range rows {
-				hasVideo := row["input_video"].(*bool)
-				audio := row["audio"].(*bool)
+				hasVideo, ok := row["input_video"].(*bool)
+				require.True(t, ok)
+				require.NotNil(t, hasVideo)
+				audio, ok := row["audio"].(*bool)
+				require.True(t, ok)
+				require.NotNil(t, audio)
 				require.False(t, *hasVideo && *audio)
 				require.Equal(t, "second", row["billing_mode"])
 			}
