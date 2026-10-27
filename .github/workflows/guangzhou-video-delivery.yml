@@ -1,4 +1,4 @@
-name: Build Guangzhou Video Delivery
+name: Build Private Video Delivery
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
     paths:
       - deploy/mcp-bridge/**
       - deploy/video-relay/**
+      - deploy/video-edge/**
       - deploy/media-ui/**
       - .github/workflows/guangzhou-video-delivery.yml
   workflow_dispatch:
@@ -39,6 +40,17 @@ jobs:
           node --test deploy/mcp-bridge/test/*.test.mjs
           node --test deploy/video-relay/test/*.test.mjs
           node --test deploy/media-ui/test/*.test.mjs
+          node --test deploy/video-edge/test/*.test.mjs
+      - name: Prepare standalone EdgeOne function
+        run: |
+          mkdir -p video-edge-artifact
+          node deploy/video-edge/render.mjs "$GITHUB_WORKSPACE/video-edge-artifact/edge.js"
+          node --check video-edge-artifact/edge.js
+          cp deploy/video-edge/README.md video-edge-artifact/README.md
+      - uses: actions/upload-artifact@v6
+        with:
+          name: meteor-private-video-edge
+          path: video-edge-artifact/
 
   image:
     needs: test
