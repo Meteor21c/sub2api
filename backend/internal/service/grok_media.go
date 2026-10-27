@@ -880,10 +880,16 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		return nil, err
 	}
 
-	contentURL, err := grokMediaSignedVideoContentURL(statusBody, requestID)
-	if err != nil {
-		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
-		return nil, err
+	contentURL := ""
+	// FZY's adapter returns its own signed delivery URL. Read content through
+	// the configured adapter with the bound user identity; the xAI signed URL
+	// allowlist only applies to native Grok responses.
+	if !IsFZYVideoBridgeAccount(account) {
+		contentURL, err = grokMediaSignedVideoContentURL(statusBody, requestID)
+		if err != nil {
+			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+			return nil, err
+		}
 	}
 	signedContent := contentURL != ""
 	if !signedContent {

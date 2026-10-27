@@ -92,21 +92,26 @@ func TestForwardGrokMediaFZYAssetIdentityUsesAuthenticatedContext(t *testing.T) 
 
 func TestForwardGrokMediaFZYAssetContentUsesOwnerForBothInternalRequests(t *testing.T) {
 	upstream := &grokMediaContentUpstreamStub{responses: []*http.Response{
-		grokMediaContentStatusResponse(`{"id":"meteorasset-task","status":"done"}`),
+		grokMediaContentStatusResponse(`{"id":"meteorasset-task","status":"done","model":"doubao-seedance-2.5","video":{"url":"https://api.example/mcp/assets/result-video?exp=123&sig=delivery-signature","duration":4}}`),
 		{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"video/mp4"}},
 			Body:       io.NopCloser(strings.NewReader("video-content")),
 		},
 	}}
-	c, _ := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/meteorasset-task/content", map[string]string{
+	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/meteorasset-task/content", map[string]string{
 		fzyAssetOwnerHeader: "user-999",
+		"Range":             "bytes=0-12",
 	})
 	SetFZYAssetOwner(c, 11)
 	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
 	_, err := svc.ForwardGrokMedia(context.Background(), c, fzyAssetTestAccount(), GrokMediaEndpointVideoContent, "meteorasset-task", nil, "")
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://relay.example/provider/fzyinghe/v1/videos/meteorasset-task/content", upstream.requests[1].URL.String())
+	require.Equal(t, "Bearer upstream-key", upstream.requests[1].Header.Get("Authorization"))
+	require.Equal(t, "bytes=0-12", upstream.requests[1].Header.Get("Range"))
+	require.Equal(t, "video-content", recorder.Body.String())
 	for _, request := range upstream.requests {
 		requireFZYAssetHeader(t, request.Header, fzyAssetOwnerHeader, "user-11")
 		requireFZYAssetHeader(t, request.Header, fzyAssetReservationHeader, "")

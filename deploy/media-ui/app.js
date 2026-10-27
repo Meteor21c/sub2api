@@ -26,6 +26,7 @@
     },
   });
   const mediaHistory = MeteorMediaHistory;
+  const videoResults = MeteorMediaVideoResults;
   const selectedKey = kind => accountKeys.get(kind, $(`${kind}-key`).value);
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -677,10 +678,6 @@
     return String(data?.id || data?.task_id || data?.request_id || data?.data?.id || data?.data?.task_id || data?.data?.request_id || "").trim();
   }
 
-  function safeRemoteUrl(value) {
-    return typeof value === "string" && /^https?:\/\//i.test(value.trim()) ? value.trim() : "";
-  }
-
   function videoInfo(data, fallbackId = "") {
     const candidates = [data, data?.data, data?.task, data?.data?.task].filter(Boolean);
     const assetMetadata = MeteorVideoAssetStatus.read(data);
@@ -692,10 +689,10 @@
     for (const item of candidates) {
       if (!status && item.status) status = String(item.status).toLowerCase();
       if (!id) id = String(item.id || item.task_id || item.request_id || "").trim();
-      url ||= safeRemoteUrl(item.result_url || item.video_url || item.url || item.video?.url || item.result?.url);
       reason ||= String(item.fail_reason || item.error?.message || item.message || "").trim();
       tokenUsage ||= MeteorVideoPricing.tokenUsage(item.provider_token_usage || item.token_usage);
     }
+    url = videoResults.responseUrl(data, API_BASE);
     status = MeteorVideoAssetStatus.taskStatus(status, url, assetMetadata.assetStage);
     return { id, status, url, reason, tokenUsage, ...assetMetadata };
   }
@@ -742,11 +739,7 @@
   }
 
   async function fetchVideoContent(taskId, key) {
-    try {
-      const blob = await requestBlob(`/v1/videos/generations/${encodeURIComponent(taskId)}/content`, {}, key);
-      if (blob.size && (blob.type.startsWith("video/") || blob.type === "application/octet-stream")) return URL.createObjectURL(blob);
-    } catch { /* Some Sub2API versions return a provider URL instead. */ }
-    return "";
+    return requestBlob(`/v1/videos/${encodeURIComponent(taskId)}/content`, {}, key);
   }
 
   function createVideoCard(info, prompt, model, createdAt) {
@@ -849,6 +842,33 @@
       link.download = `meteor-video-${info.id || "generated"}.mp4`;
       link.textContent = "打开 / 下载视频";
       card.append(wrap, link);
+    } else if (info.status === "success") {
+      if (!info.reason) {
+        const note = document.createElement("small");
+        note.className = "task-stage-detail";
+        note.textContent = videoResults.unavailableMessage;
+        card.append(note);
+      }
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "video-link";
+      retry.textContent = "重新读取视频";
+      retry.addEventListener("click", async () => {
+        const scope = mediaHistory.userScope();
+        const epoch = state.video.pollEpoch;
+        const key = accountKeys.get("video", info.keyId);
+        if (!scope || !key) return setStatus("video", "请重新读取任务使用的视频密钥后重试。", "error");
+        retry.disabled = true;
+        retry.textContent = "读取中…";
+        try {
+          const result = await pollVideo(info.id, key, info.keyId, prompt, model, createdAt, scope, epoch);
+          if (mediaHistory.userScope() !== scope || state.video.pollEpoch !== epoch) return;
+          if (result?.url) setStatus("video", "视频已恢复，可在任务卡片中播放或下载。", "success");
+          else if (result) setStatus("video", videoResults.unavailableMessage, "error");
+        } catch (error) { setStatus("video", error.message || videoResults.unavailableMessage, "error");
+        } finally { retry.disabled = false; retry.textContent = "重新读取视频"; }
+      });
+      card.append(retry);
     }
     return card;
   }
@@ -905,7 +925,15 @@
         const data = await statusRequest(taskId, key);
         if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return null;
         const info = videoInfo(data, taskId);
-        if (info.status === "success" && !info.url) info.url = await fetchVideoContent(taskId, key);
+        if (info.status === "success") {
+          const playback = await videoResults.resolvePlayback(data, {
+            origin: API_BASE,
+            getSignedResult: () => mcpCall("video", "get_video", { task_id: taskId }, key),
+            fetchContent: () => fetchVideoContent(taskId, key),
+          });
+          info.url = playback.url;
+          info.reason = playback.error || info.reason;
+        }
         if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) {
           if (info.url?.startsWith("blob:")) mediaHistory.revokeObjectUrls([info.url]);
           return null;
@@ -1038,7 +1066,7 @@
       const preparation = MeteorVideoAssetStatus.describe(videoInfo(data, taskId));
       setStatus("video", preparation.detail || `任务已提交：${taskId}`, preparation.detail ? "" : "success");
       const final = await pollVideo(taskId, key, keyId, prompt, model, createdAt, scope, epoch);
-      if (final?.status === "success") setStatus("video", "视频生成完成", "success");
+      if (final?.status === "success") setStatus("video", final.url ? "视频生成完成" : videoResults.unavailableMessage, final.url ? "success" : "error");
       else if (final?.status === "pending") setStatus("video", "任务仍在处理中，稍后返回本页可继续查询");
     } catch (error) {
       setStatus("video", error.message || "视频任务失败", "error");
