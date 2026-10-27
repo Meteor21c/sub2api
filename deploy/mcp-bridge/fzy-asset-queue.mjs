@@ -4,6 +4,7 @@ import path from 'node:path'
 
 const DAY = 86400000
 const REVIEW_TIMEOUT = 30 * 60000
+const MAX_DOWNLOAD_RETRIES = 2
 const MAX_STATE = 16 * 1024 * 1024
 const LIVE = new Set(['asset_pending', 'asset_reviewing', 'video_submitting', 'video_generating', 'submission_unknown'])
 const WAITING = new Set(['asset_pending', 'asset_reviewing'])
@@ -15,6 +16,32 @@ const validOwner = owner => typeof owner === 'string' && /^user-[1-9]\d{0,18}$/.
 const scopeFor = (owner, token) => digest(`${owner}\0${token}`)
 const canonical = value => JSON.stringify(value, (_, item) => item && !Array.isArray(item) && typeof item === 'object'
   ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item)
+
+// Provider messages can contain private source URLs, signatures, or credentials.
+// Classify them internally and return fixed, actionable messages instead.
+function assetFailure(data = {}, httpStatus) {
+  if (!data || typeof data !== 'object') data = {}
+  const code = String(data.errorCode || data.error?.code || '').trim().toUpperCase()
+  const detail = String(data.errorMessage || data.error?.message || data.message || '')
+  if (httpStatus === 401 || httpStatus === 403 || /^(?:UNAUTHORIZED|FORBIDDEN|PERMISSION_DENIED|ACCESS_DENIED)$/.test(code)) {
+    return { type: 'asset_permission_denied', code: 'ASSET_PERMISSION_DENIED', message: '上游素材库权限不足，请联系管理员检查素材库权限', retryable: false }
+  }
+  if (/AUDIT|REVIEW|MODERATION|CONTENT|RISK|REJECT/.test(code)) {
+    return { type: 'asset_review_rejected', code: 'ASSET_REVIEW_REJECTED', message: '素材审核未通过，请更换素材后重新提交', retryable: false }
+  }
+  if (/^(?:UPLOAD_ERROR|DOWNLOAD_ERROR|UPLOAD_TIMEOUT|DOWNLOAD_TIMEOUT)$/.test(code)) {
+    const transient = /timeout|timed?\s*out|deadline\s*exceeded|ETIMEDOUT|ECONNRESET|connection\s*reset|temporar(?:y|ily)|connection\s*(?:closed|aborted)|超时|暂时不可用/i.test(detail) || code.endsWith('_TIMEOUT')
+    return {
+      type: transient ? 'asset_download_timeout' : 'asset_download_failed', code,
+      message: transient
+        ? '上游下载素材超时，自动重试后仍未成功；请稍后重试，或压缩素材后重新上传'
+        : '上游无法下载或解析素材，请确认链接可访问，并检查图片、视频或音频的格式和大小后重新上传',
+      retryable: transient,
+    }
+  }
+  if (httpStatus) return { type: 'asset_upload_failed', code: 'ASSET_UPLOAD_REJECTED', message: '上游拒绝素材入库请求，请检查素材格式、大小和链接后重试', retryable: false }
+  return { type: 'asset_processing_failed', code: 'ASSET_PROCESSING_FAILED', message: '上游素材处理失败，未提供明确原因，请稍后重试或联系管理员', retryable: false }
+}
 
 /** A single-process, low-concurrency queue. dataDir must be a dedicated directory. */
 export async function createFzyAssetQueue(options = {}) {
@@ -104,7 +131,8 @@ export async function createFzyAssetQueue(options = {}) {
   }
   function publicJob(job) {
     return { id: job.id, model: job.model, stage: job.stage, assetProgress: progress(job),
-      ...(job.upstreamTaskID ? { upstreamTaskID: job.upstreamTaskID } : {}), ...(job.error ? { error: job.error } : {}) }
+      ...(job.upstreamTaskID ? { upstreamTaskID: job.upstreamTaskID } : {}), ...(job.error ? { error: job.error } : {}),
+      ...(job.errorType ? { errorType: job.errorType, errorCode: job.errorCode } : {}) }
   }
   function authorised(job, token, owner) {
     return !!job && validOwner(owner) && typeof token === 'string' && job.scope === scopeFor(owner, token)
@@ -113,13 +141,14 @@ export async function createFzyAssetQueue(options = {}) {
     const job = state.jobs[id]
     return authorised(job, token, owner) ? publicJob(job) : null
   }
-  function finish(draft, job, stage, error) {
+  function finish(draft, job, stage, error, failure) {
     if (job.stage === 'completed' || job.stage === 'failed') return
     job.finalProgress = progress(job, draft)
     for (const id of job.assetIDs) if (draft.assets[id]) draft.assets[id].lastUsedAt = now()
     job.stage = stage
     job.terminalAt = now()
     if (error) job.error = error
+    if (failure?.type) { job.errorType = failure.type; job.errorCode = failure.code }
     delete job.requestBody
     delete job.refs
     delete job.submissionKey
@@ -186,6 +215,8 @@ export async function createFzyAssetQueue(options = {}) {
           draft.assetIndex[ref.baseKey] = assetID
         }
         asset.lastUsedAt = now()
+        // A fresh upload of identical bytes can renew a pending source URL.
+        if (asset.status !== 'active') asset.url = ref.url
         jobRefs.push({ index: ref.index, field: ref.field, assetID: asset.id })
       }
       const jobID = `meteorasset-${crypto.randomUUID()}`
@@ -200,7 +231,7 @@ export async function createFzyAssetQueue(options = {}) {
 
   function message(result, token) {
     const value = result.payload?.error?.message || result.payload?.msg || result.payload?.message || `HTTP ${result.status}`
-    return String(value).split(token).join('[redacted]').slice(0, 400)
+    return String(value).split(token).join('[redacted]').replace(/https?:\/\/\S+/gi, '[private URL]').slice(0, 400)
   }
   async function request(endpoint, group, body, method = 'POST', idempotencyKey) {
     const response = await fetchImpl(`${root}${endpoint}`, { method, headers: {
@@ -245,7 +276,7 @@ export async function createFzyAssetQueue(options = {}) {
     try {
       if (!group.groupId) {
         const result = await request('/v3/asset-groups', group, { name: `meteor-${job.scope.slice(0, 20)}`, description: 'User-isolated video reference materials' }, 'POST', `meteor-fzy-group-${job.scope}`)
-        if (!result.ok) throw Object.assign(new Error(message(result, group.token)), { definitive: result.status >= 400 && result.status < 500 })
+        if (!result.ok) throw Object.assign(new Error(message(result, group.token)), { definitive: result.status >= 400 && result.status < 500 && ![408, 409, 429].includes(result.status), failure: assetFailure(result.data, result.status) })
         if (!validProviderID(result.data?.groupId)) throw Object.assign(new Error('Invalid provider group ID'), { definitive: true })
         await mutate(draft => { draft.groups[job.scope].groupId = result.data.groupId; draft.groups[job.scope].nextAttemptAt = 0 })
         return
@@ -254,24 +285,51 @@ export async function createFzyAssetQueue(options = {}) {
       const result = creating
         ? await request('/v3/assets', group, { url: asset.url, name: `meteor-${asset.id}`, assetType: asset.type }, 'POST', `meteor-fzy-upload-${asset.id}`)
         : await request('/v3/assets/detail', group, { assetId: asset.providerAssetID })
-      if (!result.ok || !result.data) throw Object.assign(new Error(message(result, group.token)), { definitive: result.status >= 400 && result.status < 500 })
+      if (!result.ok || !result.data) throw Object.assign(new Error(message(result, group.token)), { definitive: result.status >= 400 && result.status < 500 && ![408, 409, 429].includes(result.status), failure: assetFailure(result.data, result.status) })
       if ((creating && !validProviderID(result.data.id)) || (result.data.id !== undefined && !validProviderID(result.data.id))) throw Object.assign(new Error('Invalid provider asset ID'), { definitive: true })
-      await mutate(draft => {
+      const retry = await mutate(draft => {
         const row = draft.assets[asset.id]
         if (creating) row.providerAssetID = result.data.id
         row.status = classifyStatus(result.data.status)
         row.nextAttemptAt = now() + 15000
-        if (row.status === 'failed') row.error = '素材审核未通过，请更换素材后重新提交'
+        if (row.status !== 'failed') return null
+        const failure = assetFailure(result.data)
+        row.error = failure.message
+        row.errorType = failure.type
+        row.errorCode = failure.code
+        const attempts = Number(row.downloadRetries) || 0
+        if (!failure.retryable || attempts >= MAX_DOWNLOAD_RETRIES || Object.keys(draft.assets).length >= 4000) return null
+        // A confirmed failed import is safe to replace. Persist its successor
+        // before sending another import, retaining the failed provider ID for
+        // normal one-at-a-time cleanup. Paid video creation is never retried.
+        const replacementID = `material-${crypto.randomUUID()}`
+        const attempt = attempts + 1
+        draft.assets[replacementID] = {
+          id: replacementID, scope: row.scope, baseKey: row.baseKey, type: row.type,
+          url: row.url, status: 'new', createdAt: now(), lastUsedAt: now(),
+          nextAttemptAt: now() + 30000 * attempt, downloadRetries: attempt,
+        }
+        row.lastUsedAt = now()
+        draft.assetIndex[row.baseKey] = replacementID
+        for (const waiting of Object.values(draft.jobs)) if (WAITING.has(waiting.stage) && waiting.assetIDs.includes(row.id)) {
+          waiting.assetIDs = waiting.assetIDs.map(id => id === row.id ? replacementID : id)
+          for (const ref of waiting.refs) if (ref.assetID === row.id) ref.assetID = replacementID
+        }
+        return { attempt, error_code: failure.code }
       })
+      if (retry) safeLog('fzy_asset_download_retry', { job_id: job.id, ...retry, max_retries: MAX_DOWNLOAD_RETRIES })
     } catch (error) {
       await mutate(draft => {
         if (!group.groupId) {
           draft.groups[job.scope].nextAttemptAt = now() + 30000
-          if (error.definitive) for (const row of Object.values(draft.jobs)) if (row.scope === job.scope && WAITING.has(row.stage)) finish(draft, row, 'failed', '上游素材组创建失败，请检查素材库权限')
+          if (error.definitive) for (const row of Object.values(draft.jobs)) if (row.scope === job.scope && WAITING.has(row.stage)) finish(draft, row, 'failed', '上游素材组创建失败，请检查素材库权限', error.failure)
         } else {
           const row = draft.assets[asset.id]
           row.nextAttemptAt = now() + 30000
-          if (error.definitive) { row.status = 'failed'; row.error = '上游素材入库或审核失败，请更换素材后重试' }
+          if (error.definitive) {
+            const failure = error.failure || { type: 'asset_upload_failed', code: 'ASSET_UPLOAD_FAILED', message: '上游素材入库返回异常，请联系管理员检查素材服务' }
+            row.status = 'failed'; row.error = failure.message; row.errorType = failure.type; row.errorCode = failure.code
+          }
         }
       })
       safeLog('fzy_asset_request_failed', { job_id: job.id, definitive: !!error.definitive })
@@ -323,8 +381,8 @@ export async function createFzyAssetQueue(options = {}) {
       if (expired) await mutate(draft => {
         for (const job of Object.values(draft.jobs)) if (WAITING.has(job.stage)) {
           const failed = job.assetIDs.map(id => draft.assets[id]).find(asset => !asset || asset.status === 'failed')
-          if (failed || job.assetIDs.some(id => !draft.assets[id])) finish(draft, job, 'failed', failed?.error || '素材入库失败')
-          else if (now() - job.createdAt >= REVIEW_TIMEOUT) finish(draft, job, 'failed', '素材入库或审核超时，请稍后重试')
+          if (failed || job.assetIDs.some(id => !draft.assets[id])) finish(draft, job, 'failed', failed?.error || '素材入库失败', failed ? { type: failed.errorType, code: failed.errorCode } : undefined)
+          else if (now() - job.createdAt >= REVIEW_TIMEOUT) finish(draft, job, 'failed', '素材入库或审核超时，请稍后重试', { type: 'asset_processing_timeout', code: 'ASSET_PROCESSING_TIMEOUT' })
         }
       })
       const jobs = Object.values(state.jobs).filter(job => WAITING.has(job.stage)).sort((a, b) => a.lastWorkAt - b.lastWorkAt || a.createdAt - b.createdAt)

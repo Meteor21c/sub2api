@@ -385,11 +385,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		var fzyReservation *service.FZYVideoBillingJob
-		if endpoint == service.GrokMediaEndpointVideosGenerations && service.IsFZYTokenVideoAccount(account, requestModel) {
+		if endpoint == service.GrokMediaEndpointVideosGenerations && service.IsFZYPricedVideoAccount(account, requestModel) {
 			fzyReservation, err = h.gatewayService.PrepareFZYVideoBilling(requestCtx, account, apiKey, apiKey.User, requestModel, body)
 			if err != nil {
 				reqLog.Error("fzy_video.price_snapshot_failed", zap.Error(err))
-				h.errorResponse(c, http.StatusServiceUnavailable, "video_pricing_unavailable", "Video token pricing is temporarily unavailable")
+				h.errorResponse(c, http.StatusServiceUnavailable, "video_pricing_unavailable", "Provider video pricing is temporarily unavailable")
 				return
 			}
 			if failoverClientGone(c) {
@@ -587,7 +587,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 						reqLog.Error("fzy_video.release_failed_task_failed", zap.String("task_id", taskID), zap.Error(releaseErr))
 					}
 				} else if result.VideoCount > 0 && job.Status == "pending" {
-					if result.Usage.OutputTokens <= 0 {
+					if !job.Price.IsPerSecond() && result.Usage.OutputTokens <= 0 {
 						reqLog.Error("fzy_video.completed_without_provider_tokens", zap.String("task_id", taskID))
 					} else {
 						billResult := *result

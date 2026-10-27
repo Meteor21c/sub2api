@@ -240,7 +240,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	longContextBillingGate := openAILongContextBillingGate(billingAccount)
 	modelLongContextExempt := openAISubscriptionLongContextExempt(billingAccount, result)
 	if result.FZYVideoBill != nil {
-		cost, err = calculateFZYVideoTokenCost(result.FZYVideoBill, result.Usage.OutputTokens)
+		cost, err = calculateFZYVideoCost(result.FZYVideoBill, result.Usage.OutputTokens, result.VideoDurationSeconds)
 	} else {
 		cost, err = s.calculateOpenAIRecordUsageCost(
 			ctx,
@@ -421,6 +421,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.VideoCount = result.VideoCount
 		usageLog.VideoResolution = optionalTrimmedStringPtr(NormalizeVideoBillingResolutionOrDefault(result.VideoResolution))
 		videoDurationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
+		if result.FZYVideoBill != nil {
+			videoDurationSeconds = fzyVideoDuration(result.FZYVideoBill, result.VideoDurationSeconds)
+			if result.FZYVideoBill.Price.Resolution != "" {
+				usageLog.VideoResolution = optionalTrimmedStringPtr(result.FZYVideoBill.Price.Resolution)
+			}
+		}
 		usageLog.VideoDurationSeconds = &videoDurationSeconds
 	}
 	if cost != nil {
@@ -499,7 +505,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if apiKey.GroupID != nil {
 		accountStatsBaseCost := cost.TotalCost
 		if result.FZYVideoBill != nil {
-			providerCost, providerErr := result.FZYVideoBill.Price.ProviderCostForOutputTokens(result.Usage.OutputTokens)
+			providerCost, providerErr := result.FZYVideoBill.Price.ProviderCostForUsage(result.Usage.OutputTokens, fzyVideoDuration(result.FZYVideoBill, result.VideoDurationSeconds))
 			if providerErr != nil {
 				return providerErr
 			}
@@ -542,7 +548,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			SimpleModeKeyRateLimitOnly: simpleModeKeyRateLimitOnly,
 		}
 		if result.FZYVideoBill != nil {
-			return s.applyFZYVideoUsageBilling(ctx, requestID, usageLog, params, result.FZYVideoBill, result.Usage.OutputTokens)
+			return s.applyFZYVideoUsageBilling(ctx, requestID, usageLog, params, result.FZYVideoBill, result.Usage.OutputTokens, result.VideoDurationSeconds)
 		}
 		_, err := applyUsageBilling(ctx, requestID, usageLog, params, s.billingDeps(), s.usageBillingRepo)
 		return err

@@ -353,6 +353,49 @@ test('FZYinghe provider rejects invalid duration before contacting the upstream'
   }
 })
 
+test('Kling Omni maps video references consistently and rejects reference video with generated audio before submission', async () => {
+  const requests = []
+  const mock = await startMock(async (req, res) => {
+    requests.push(JSON.parse((await readBody(req)).toString('utf8')))
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ id: `omni-${requests.length}`, status: 'queued' }))
+  })
+  const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
+  try {
+    const cases = [
+      { reference_images: ['https://8.8.8.8/ref.mp4'] },
+      { reference_images: ['https://8.8.8.8/ref.mov'] },
+      { reference_images: ['https://8.8.8.8/download?filename=ref.webm'] },
+      { reference_images: ['https://8.8.8.8/download?name=ref.m4v'] },
+      { reference_images: ['video:https://8.8.8.8/opaque-download'] },
+      { video_list: [{ video_url: 'https://8.8.8.8/opaque-download' }] },
+      { content: [{ type: 'video_url', video_url: { url: 'https://8.8.8.8/opaque-download' } }] },
+    ]
+    for (const refs of cases) {
+      const call = audio => fetch(`${bridge.base}/provider/fzyinghe/v1/videos/generations`, {
+        method: 'POST', headers: { Authorization: 'Bearer sk-fzy-provider', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'kling-v3-omni', prompt: 'reference motion', audio, ...refs }),
+      })
+      const before = requests.length
+      const invalid = await call(true)
+      assert.equal(invalid.status, 400)
+      assert.match((await invalid.json()).error.message, /参考视频.*关闭/)
+      assert.equal(requests.length, before, 'invalid combinations never create a paid task')
+      const valid = await call(false)
+      assert.equal(valid.status, 200)
+      assert.equal(requests.length, before + 1)
+      const payload = requests.at(-1)
+      assert.equal(payload.sound, 'off')
+      assert.equal(payload.video_list.length, 1)
+      assert.equal(payload.image_list.length, 0)
+      assert.match(payload.video_list[0].video_url, /^https:\/\/8\.8\.8\.8\//)
+    }
+  } finally {
+    await stopBridge(bridge)
+    await stopMock(mock)
+  }
+})
+
 test('FZYinghe exposes only authorized models and checks model-specific duration', async () => {
   let calls = 0
   const mock = await startMock(async (_req, res) => {

@@ -130,6 +130,23 @@ beforeEach(() => {
   revokedObjectUrls.length = 0
 })
 
+test('provider second tariff snapshot survives reload and discards untrusted metadata', () => {
+  login(7)
+  const now = Date.now()
+  history.upsertVideo({ id: 'kling-task', keyId: '5', model: 'kling-v3-omni', createdAt: now,
+    quote: { mode: 'second', currency: 'CNY', sceneName: '无参考视频 无声 1080P',
+      officialPerSecond: 0.8, upstreamPerSecond: 0.52, salePerSecond: 0.598, duration: 5,
+      prechargeAmount: 2.99, saleRateToOfficial: 0.7475, providerDiscountRate: 0.65,
+      source: 'fzyinghe-marketplace-by-api-key', fetchedAt: '2026-10-27T07:00:00Z',
+      apiKey: 'must-never-be-stored', upstreamURL: 'https://private.example/secret' } })
+  const quote = history.readVideos()[0].quote
+  assert.equal(quote.mode, 'second')
+  assert.equal(quote.salePerSecond, 0.598)
+  assert.equal(quote.duration, 5)
+  assert.equal(quote.fetchedAt, '2026-10-27T07:00:00.000Z')
+  assert.doesNotMatch(JSON.stringify(localStorage.entries()), /must-never-be-stored|private.example/)
+})
+
 test('history is scoped to a validated signed-in user', () => {
   assert.equal(history.userScope(), '')
   localStorage.setItem('auth_user', '{broken')
