@@ -74,7 +74,7 @@ func (s *BusinessMonitorService) SetCreditOverride(ctx context.Context, walletKe
 		w.Partial = !w.BalanceComplete
 		messages := []string{}
 		for _, m := range w.Messages {
-			if !strings.Contains(m, "含自动推测") && !strings.Contains(m, "估算毛利为负") && !strings.Contains(m, "成本待确认") && !strings.Contains(m, "含订阅套餐") {
+			if !strings.Contains(m, "含自动推测") && !strings.Contains(m, "估算毛利为负") && !strings.Contains(m, "成本待确认") && !strings.Contains(m, "含订阅套餐") && !strings.Contains(m, "待确认绘图/视频") && !strings.Contains(m, "钱包余额含已排除") {
 				messages = append(messages, m)
 			}
 		}
@@ -140,20 +140,24 @@ func (s *BusinessMonitorService) buildDay(ctx context.Context, day, until time.T
 		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT account_id,
+		CASE WHEN COALESCE(video_count,0)>0 OR billing_mode='video' OR COALESCE(inbound_endpoint,'') LIKE '%/videos/%' THEN 'video'
+		WHEN COALESCE(image_count,0)>0 OR COALESCE(image_output_tokens,0)>0 OR billing_mode='image' OR COALESCE(inbound_endpoint,'') LIKE '%/images/%' THEN 'image'
+		ELSE 'text' END AS usage_kind,
 		COALESCE(SUM(actual_cost) FILTER(WHERE COALESCE(billing_type,0)<>1),0),
 		COALESCE(SUM(actual_cost) FILTER(WHERE billing_type=1),0),
 		COALESCE(SUM(COALESCE(account_stats_cost,total_cost)),0),
 		COALESCE(SUM(COALESCE(account_stats_cost,total_cost)) FILTER(WHERE billing_type=1),0),
 		COUNT(*),COALESCE(SUM(total_cost) FILTER(WHERE COALESCE(billing_type,0)<>1),0),
 		COALESCE(SUM(COALESCE(account_stats_cost,total_cost)) FILTER(WHERE COALESCE(billing_type,0)<>1),0)
-		FROM usage_logs WHERE created_at >= $1 AND created_at < $2 GROUP BY account_id`, day, until)
+		FROM usage_logs WHERE created_at >= $1 AND created_at < $2 GROUP BY account_id,usage_kind`, day, until)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var accountID, requests int64
+		var usageKind string
 		var revenue, subscription, basis, subscriptionBasis, standard, accountStandard float64
-		if err = rows.Scan(&accountID, &revenue, &subscription, &basis, &subscriptionBasis, &requests, &standard, &accountStandard); err != nil {
+		if err = rows.Scan(&accountID, &usageKind, &revenue, &subscription, &basis, &subscriptionBasis, &requests, &standard, &accountStandard); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -162,13 +166,24 @@ func (s *BusinessMonitorService) buildDay(ctx context.Context, day, until time.T
 			a = businessAccount{ID: accountID, Name: fmt.Sprintf("历史账号 #%d", accountID), Key: fmt.Sprintf("unmapped:account:%d", accountID), RateStatus: "unknown"}
 		}
 		w := get(a.Key, a.Name)
-		w.AccountIDs = append(w.AccountIDs, accountID)
+		foundAccount := false
+		for _, id := range w.AccountIDs {
+			if id == accountID {
+				foundAccount = true
+				break
+			}
+		}
+		if !foundAccount {
+			w.AccountIDs = append(w.AccountIDs, accountID)
+		}
 		w.Revenue += revenue
 		w.SubscriptionUsage += subscription
-		businessApplyProbeCost(w, a, basis, subscriptionBasis)
+		businessApplyProbeCost(w, a, BusinessMonitorCostBasis{StandardCost: basis, SubscriptionStandardCost: subscriptionBasis, Revenue: revenue, SubscriptionUsage: subscription, RequestCount: requests, UsageKind: usageKind})
 		w.RequestCount += requests
-		if w.RateStatus == "unknown" || a.RateStatus != "ok" {
+		if len(w.CostBasis) == 1 {
 			w.RateStatus = a.RateStatus
+		} else if w.RateStatus != a.RateStatus {
+			w.RateStatus = "mixed"
 		}
 		if strings.HasPrefix(a.Key, "unmapped:") {
 			w.Status = "uncovered"
@@ -445,7 +460,7 @@ func (s *BusinessMonitorService) Report(ctx context.Context, period, date string
 			continue
 		}
 		summary := businessSummarize(wallets)
-		report.Daily = append(report.Daily, BusinessMonitorDaily{Date: key, Revenue: summary.Revenue, SubscriptionUsage: summary.SubscriptionUsage, ExpectedCost: summary.ExpectedCost, GrossProfit: summary.GrossProfit, BalanceCost: summary.BalanceCost, ObservedProfit: summary.ObservedProfit, Partial: summary.Partial})
+		report.Daily = append(report.Daily, BusinessMonitorDaily{Date: key, Revenue: summary.Revenue, SubscriptionUsage: summary.SubscriptionUsage, ExcludedMediaRevenue: summary.ExcludedMediaRevenue, ExcludedMediaRequests: summary.ExcludedMediaRequests, ExpectedCost: summary.ExpectedCost, GrossProfit: summary.GrossProfit, BalanceCost: summary.BalanceCost, ObservedProfit: summary.ObservedProfit, Partial: summary.Partial})
 		for _, w := range wallets {
 			if existing, ok := walletSums[w.Key]; ok {
 				businessMergeWallet(existing, w)
@@ -506,11 +521,17 @@ func businessSummarize(wallets []BusinessMonitorWallet) BusinessMonitorSummary {
 	s := BusinessMonitorSummary{ExpectedCost: businessAmount(0), GrossProfit: businessAmount(0)}
 	balance, observed, deviation := 0.0, 0.0, 0.0
 	knownBalance, knownProfit, knownDeviation := 0, 0, 0
+	var requests int64
 	for _, w := range wallets {
 		s.Revenue += w.Revenue
 		s.SubscriptionUsage += w.SubscriptionUsage
-		s.ExpectedCost = businessAddComplete(s.ExpectedCost, w.ExpectedCost)
-		s.GrossProfit = businessAddComplete(s.GrossProfit, w.GrossProfit)
+		s.ExcludedMediaRevenue += w.ExcludedMediaRevenue
+		s.ExcludedMediaRequests += w.ExcludedMediaRequests
+		requests += w.RequestCount
+		if !businessOnlyExcludedMedia(&w) {
+			s.ExpectedCost = businessAddComplete(s.ExpectedCost, w.ExpectedCost)
+			s.GrossProfit = businessAddComplete(s.GrossProfit, w.GrossProfit)
+		}
 		if w.BalanceCost != nil {
 			balance += *w.BalanceCost
 			knownBalance++
@@ -542,23 +563,36 @@ func businessSummarize(wallets []BusinessMonitorWallet) BusinessMonitorSummary {
 	if knownProfit > 0 {
 		s.ObservedProfit = &observed
 	}
-	if len(wallets) == 0 {
+	if len(wallets) == 0 || requests > 0 && requests == s.ExcludedMediaRequests {
 		s.ExpectedCost, s.GrossProfit = nil, nil
 	}
 	return s
 }
 
 func businessMergeWallet(to *BusinessMonitorWallet, from BusinessMonitorWallet) {
+	// An all-excluded day has no estimate, not an unknown included cost.
+	// It must not invalidate a different day's known, included estimates.
+	if businessOnlyExcludedMedia(to) {
+		to.ExpectedCost, to.SubscriptionExpectedCost, to.GrossProfit, to.Tolerance = from.ExpectedCost, from.SubscriptionExpectedCost, from.GrossProfit, from.Tolerance
+	} else if !businessOnlyExcludedMedia(&from) {
+		to.SubscriptionExpectedCost = businessAddComplete(to.SubscriptionExpectedCost, from.SubscriptionExpectedCost)
+		to.ExpectedCost = businessAddComplete(to.ExpectedCost, from.ExpectedCost)
+		to.GrossProfit = businessAddComplete(to.GrossProfit, from.GrossProfit)
+		to.Tolerance = businessAddComplete(to.Tolerance, from.Tolerance)
+	}
 	to.Revenue += from.Revenue
 	to.SubscriptionUsage += from.SubscriptionUsage
-	to.SubscriptionExpectedCost = businessAddComplete(to.SubscriptionExpectedCost, from.SubscriptionExpectedCost)
-	to.ExpectedCost = businessAddComplete(to.ExpectedCost, from.ExpectedCost)
-	to.GrossProfit = businessAddComplete(to.GrossProfit, from.GrossProfit)
+	to.ExcludedMediaRevenue += from.ExcludedMediaRevenue
+	to.ExcludedMediaSubscriptionUsage += from.ExcludedMediaSubscriptionUsage
+	to.ExcludedMediaRequests += from.ExcludedMediaRequests
 	to.CostBasis = append(to.CostBasis, from.CostBasis...)
 	to.RequestCount += from.RequestCount
+	if businessOnlyExcludedMedia(to) {
+		to.ExpectedCost, to.SubscriptionExpectedCost, to.GrossProfit, to.Tolerance = nil, nil, nil, nil
+		to.Status = "excluded"
+	}
 	to.Credits += from.Credits
 	to.InferredCredits += from.InferredCredits
-	to.Tolerance = businessAddComplete(to.Tolerance, from.Tolerance)
 	to.BalanceEnd = from.BalanceEnd
 	to.LastSampleAt = from.LastSampleAt
 	// Preserve sums for covered days without pretending missing days cost zero.
@@ -586,6 +620,9 @@ func businessMergeWallet(to *BusinessMonitorWallet, from BusinessMonitorWallet) 
 	}
 	if from.Status == "loss" || from.Status == "overspend" || to.Status == "ok" {
 		to.Status = from.Status
+	}
+	if to.Status == "excluded" && !businessOnlyExcludedMedia(to) {
+		to.Status = "partial"
 	}
 	for _, message := range from.Messages {
 		seen := false

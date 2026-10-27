@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const businessCostVersion = 2
+const businessCostVersion = 3
 
 func businessAmount(v float64) *float64 { return &v }
 
@@ -22,28 +22,41 @@ func businessAddComplete(a, b *float64) *float64 {
 	return businessAmount(*a + *b)
 }
 
-func businessApplyProbeCost(w *BusinessMonitorWallet, a businessAccount, basis, subscriptionBasis float64) {
+func businessOnlyExcludedMedia(w *BusinessMonitorWallet) bool {
+	return w.ExcludedMediaRequests > 0 && w.ExcludedMediaRequests == w.RequestCount
+}
+
+func businessApplyProbeCost(w *BusinessMonitorWallet, a businessAccount, usage BusinessMonitorCostBasis) {
 	rate := a.ProbeRate
 	if a.RateStatus != "ok" || rate == nil || *rate < 0 || math.IsNaN(*rate) || math.IsInf(*rate, 0) {
 		rate = nil
 	}
-	w.CostBasis = append(w.CostBasis, BusinessMonitorCostBasis{AccountID: a.ID, AccountName: a.Name, StandardCost: basis, SubscriptionStandardCost: subscriptionBasis, ProbeRate: rate, RateStatus: a.RateStatus})
+	usage.AccountID, usage.AccountName, usage.ProbeRate, usage.RateStatus = a.ID, a.Name, rate, a.RateStatus
+	usage.Excluded = rate == nil && (usage.UsageKind == "image" || usage.UsageKind == "video")
+	w.CostBasis = append(w.CostBasis, usage)
+	if usage.Excluded {
+		w.ExcludedMediaRevenue += usage.Revenue
+		w.ExcludedMediaSubscriptionUsage += usage.SubscriptionUsage
+		w.ExcludedMediaRequests += usage.RequestCount
+		return
+	}
 	if rate == nil {
-		if basis != 0 {
+		if usage.StandardCost != 0 {
 			w.ExpectedCost = nil
 		}
-		if subscriptionBasis != 0 {
+		if usage.SubscriptionStandardCost != 0 {
 			w.SubscriptionExpectedCost = nil
 		}
 		return
 	}
-	w.ExpectedCost = businessAddComplete(w.ExpectedCost, businessAmount(basis**rate))
-	w.SubscriptionExpectedCost = businessAddComplete(w.SubscriptionExpectedCost, businessAmount(subscriptionBasis**rate))
+	w.ExpectedCost = businessAddComplete(w.ExpectedCost, businessAmount(usage.StandardCost**rate))
+	w.SubscriptionExpectedCost = businessAddComplete(w.SubscriptionExpectedCost, businessAmount(usage.SubscriptionStandardCost**rate))
 }
 
 func businessResetCost(w *BusinessMonitorWallet) {
 	w.ExpectedCost, w.SubscriptionExpectedCost, w.GrossProfit, w.Tolerance, w.Deviation = nil, nil, nil, nil, nil
 	w.CostBasis = []BusinessMonitorCostBasis{}
+	w.ExcludedMediaRevenue, w.ExcludedMediaSubscriptionUsage, w.ExcludedMediaRequests = 0, 0, 0
 	w.Status = ""
 	if strings.HasPrefix(w.Key, "unmapped:") {
 		w.Status = "uncovered"
@@ -52,7 +65,7 @@ func businessResetCost(w *BusinessMonitorWallet) {
 	messages := []string{}
 	for _, m := range w.Messages {
 		costMessage := false
-		for _, text := range []string{"本日记账平均倍率", "本站配置估算毛利", "上游倍率为手工配置", "当前上游声明倍率", "当前上游探测倍率", "成本待确认", "按上游探测倍率估算毛利", "旧日报成本"} {
+		for _, text := range []string{"本日记账平均倍率", "本站配置估算毛利", "上游倍率为手工配置", "当前上游声明倍率", "当前上游探测倍率", "成本待确认", "按上游探测倍率估算毛利", "旧日报成本", "待确认绘图/视频", "钱包余额含已排除"} {
 			if strings.Contains(m, text) {
 				costMessage = true
 				break
@@ -68,6 +81,12 @@ func businessResetCost(w *BusinessMonitorWallet) {
 // Hide v1's incorrect costs immediately, including while the bounded background
 // migration is still working through older days. Revenue is never changed.
 func businessInvalidateLegacyCost(w *BusinessMonitorWallet) {
+	// v2 known costs already have full probe coverage, so none of their media
+	// usage needs excluding. Keep these usable while older days migrate.
+	if w.CostVersion == 2 && w.ExpectedCost != nil {
+		w.CostVersion = businessCostVersion
+		return
+	}
 	businessResetCost(w)
 	w.Messages = append(w.Messages, "旧日报成本正在按上游探测倍率修正；客户消费额保持不变")
 	businessFinalizeWallet(w)
@@ -85,6 +104,9 @@ func businessRepairCost(saved *BusinessMonitorWallet, recalculated *BusinessMoni
 		saved.SubscriptionExpectedCost = recalculated.SubscriptionExpectedCost
 		saved.CostBasis = recalculated.CostBasis
 		saved.RateStatus = recalculated.RateStatus
+		saved.ExcludedMediaRevenue = recalculated.ExcludedMediaRevenue
+		saved.ExcludedMediaSubscriptionUsage = recalculated.ExcludedMediaSubscriptionUsage
+		saved.ExcludedMediaRequests = recalculated.ExcludedMediaRequests
 		saved.Messages = append(saved.Messages, "历史日报已按当前有效上游探测倍率重估；非当时精确结算倍率，客户消费额未改变")
 	} else {
 		saved.RateStatus = "unknown"

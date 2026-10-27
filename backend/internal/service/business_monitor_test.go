@@ -175,7 +175,7 @@ func TestBusinessMonitorProbeCostNeverDefaultsToOne(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			w := BusinessMonitorWallet{Revenue: 2, ExpectedCost: businessTestFloat(0), SubscriptionExpectedCost: businessTestFloat(0)}
 			a := businessAccount{ID: 1, Name: "viapi", RateStatus: status, ProbeRate: businessTestFloat(0.15)}
-			businessApplyProbeCost(&w, a, 10, 0)
+			businessApplyProbeCost(&w, a, BusinessMonitorCostBasis{StandardCost: 10})
 			businessFinalizeWallet(&w)
 			if status == "ok" {
 				if w.ExpectedCost == nil || *w.ExpectedCost != 1.5 || w.GrossProfit == nil || *w.GrossProfit != 0.5 {
@@ -225,5 +225,63 @@ func TestBusinessMonitorLegacyRepairPreservesIncome(t *testing.T) {
 	businessInvalidateLegacyCost(&saved)
 	if saved.Revenue != 2 || saved.ExpectedCost != nil || saved.GrossProfit != nil || saved.Status == "loss" {
 		t.Fatalf("legacy report exposed incorrect cost during migration: %+v", saved)
+	}
+}
+
+func TestBusinessMonitorUnknownMediaExcludedFromBothSides(t *testing.T) {
+	w := BusinessMonitorWallet{Revenue: 12, RequestCount: 3, ExpectedCost: businessTestFloat(0), SubscriptionExpectedCost: businessTestFloat(0), BalanceStart: businessTestFloat(100), BalanceEnd: businessTestFloat(80), BalanceComplete: true}
+	businessApplyProbeCost(&w, businessAccount{ID: 1, RateStatus: "ok", ProbeRate: businessTestFloat(.15)}, BusinessMonitorCostBasis{StandardCost: 10, Revenue: 2, RequestCount: 1, UsageKind: "text"})
+	for _, kind := range []string{"image", "video"} {
+		businessApplyProbeCost(&w, businessAccount{ID: 2, RateStatus: "unsupported"}, BusinessMonitorCostBasis{StandardCost: 25, Revenue: 5, RequestCount: 1, UsageKind: kind})
+	}
+	businessFinalizeWallet(&w)
+	if w.Revenue != 12 || w.ExcludedMediaRevenue != 10 || w.ExcludedMediaRequests != 2 || w.ExpectedCost == nil || *w.ExpectedCost != 1.5 || w.GrossProfit == nil || *w.GrossProfit != .5 {
+		t.Fatalf("excluded media revenue made known text profit too large: %+v", w)
+	}
+	if w.BalanceCost == nil || *w.BalanceCost != 20 || w.Deviation != nil || w.ObservedProfit != nil || w.Tolerance != nil || !w.Partial || w.Status == "overspend" {
+		t.Fatalf("whole-wallet media balance was compared with text-only estimate: %+v", w)
+	}
+}
+
+func TestBusinessMonitorOnlyExcludedMediaIsNotZeroCost(t *testing.T) {
+	media := BusinessMonitorWallet{Revenue: 5, RequestCount: 1, ExpectedCost: businessTestFloat(0), SubscriptionExpectedCost: businessTestFloat(0)}
+	businessApplyProbeCost(&media, businessAccount{RateStatus: "failed"}, BusinessMonitorCostBasis{StandardCost: 20, Revenue: 5, RequestCount: 1, UsageKind: "video"})
+	businessFinalizeWallet(&media)
+	if media.ExpectedCost != nil || media.GrossProfit != nil || media.Status != "excluded" {
+		t.Fatalf("excluded-only wallet must not look free: %+v", media)
+	}
+	summary := businessSummarize([]BusinessMonitorWallet{media})
+	if summary.ExpectedCost != nil || summary.GrossProfit != nil || summary.ExcludedMediaRevenue != 5 {
+		t.Fatalf("excluded-only report manufactured zero cost/profit: %+v", summary)
+	}
+	known := BusinessMonitorWallet{Revenue: 2, RequestCount: 1, ExpectedCost: businessTestFloat(1.5), SubscriptionExpectedCost: businessTestFloat(0), GrossProfit: businessTestFloat(.5)}
+	summary = businessSummarize([]BusinessMonitorWallet{media, known})
+	if summary.ExpectedCost == nil || *summary.ExpectedCost != 1.5 || summary.GrossProfit == nil || *summary.GrossProfit != .5 || summary.Revenue != 7 || summary.ExcludedMediaRevenue != 5 {
+		t.Fatalf("excluded-only wallet contaminated known subtotal: %+v", summary)
+	}
+	for _, pair := range [][2]BusinessMonitorWallet{{media, known}, {known, media}} {
+		to := pair[0]
+		businessMergeWallet(&to, pair[1])
+		if to.ExpectedCost == nil || *to.ExpectedCost != 1.5 || to.GrossProfit == nil || *to.GrossProfit != .5 || to.ExcludedMediaRevenue != 5 || to.Status == "excluded" {
+			t.Fatalf("excluded-only day contaminated known period: %+v", to)
+		}
+	}
+	businessMergeWallet(&media, BusinessMonitorWallet{ExpectedCost: businessTestFloat(0), GrossProfit: businessTestFloat(0)})
+	if media.ExpectedCost != nil || media.GrossProfit != nil {
+		t.Fatal("inactive day made an all-excluded period look free")
+	}
+}
+
+func TestBusinessMonitorMediaRepairKeepsOriginalConsumption(t *testing.T) {
+	saved := BusinessMonitorWallet{Revenue: 12, RequestCount: 3, CostVersion: 2}
+	updated := BusinessMonitorWallet{Revenue: 12, RequestCount: 3, ExcludedMediaRevenue: 10, ExcludedMediaRequests: 2, ExpectedCost: businessTestFloat(1.5), SubscriptionExpectedCost: businessTestFloat(0)}
+	businessRepairCost(&saved, &updated)
+	if saved.Revenue != 12 || saved.RequestCount != 3 || saved.ExcludedMediaRevenue != 10 || saved.ExcludedMediaRequests != 2 || saved.GrossProfit == nil || *saved.GrossProfit != .5 {
+		t.Fatalf("media repair lost revenue or exclusion scope: %+v", saved)
+	}
+	knownV2 := BusinessMonitorWallet{CostVersion: 2, Revenue: 2, ExpectedCost: businessTestFloat(1.5), GrossProfit: businessTestFloat(.5)}
+	businessInvalidateLegacyCost(&knownV2)
+	if knownV2.ExpectedCost == nil || *knownV2.ExpectedCost != 1.5 || knownV2.CostVersion != businessCostVersion {
+		t.Fatal("fully covered v2 estimate unnecessarily hidden during media migration")
 	}
 }

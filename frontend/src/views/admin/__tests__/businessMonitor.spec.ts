@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { businessMoney, businessTime, shanghaiDay } from '../businessMonitorFormatting'
+import { businessMoney, businessTime, shanghaiDay, businessIncludedRevenue } from '../businessMonitorFormatting'
 
 describe('经营监测数据口径', () => {
+  it('排除待确认媒体消费时，收入端同步扣除但不改变原始总额', () => {
+    expect(businessIncludedRevenue(12, 10)).toBe(2)
+    expect(businessIncludedRevenue(5, 5)).toBe(0)
+    expect(businessIncludedRevenue(2)).toBe(2)
+    expect(businessIncludedRevenue(0.3, 0.1 + 0.2)).toBe(0)
+  })
   it('没有采到余额时不显示为零，真实零余额保留', () => {
     expect(businessMoney(null)).toBe('—')
     expect(businessMoney(undefined)).toBe('—')

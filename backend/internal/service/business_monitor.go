@@ -399,9 +399,14 @@ func businessTolerance(revenue, expected float64) float64 {
 
 func businessFinalizeWallet(w *BusinessMonitorWallet) {
 	w.GrossProfit, w.Tolerance = nil, nil
+	if businessOnlyExcludedMedia(w) {
+		w.ExpectedCost, w.SubscriptionExpectedCost = nil, nil
+		w.Status = "excluded"
+	}
 	if w.ExpectedCost != nil && w.SubscriptionExpectedCost != nil {
-		w.GrossProfit = businessAmount(w.Revenue - *w.ExpectedCost + *w.SubscriptionExpectedCost)
-		w.Tolerance = businessAmount(businessTolerance(w.Revenue, *w.ExpectedCost))
+		includedRevenue := w.Revenue - w.ExcludedMediaRevenue
+		w.GrossProfit = businessAmount(includedRevenue - *w.ExpectedCost + *w.SubscriptionExpectedCost)
+		w.Tolerance = businessAmount(businessTolerance(includedRevenue, *w.ExpectedCost))
 	} else {
 		w.Partial = true
 	}
@@ -420,10 +425,16 @@ func businessFinalizeWallet(w *BusinessMonitorWallet) {
 	if w.SubscriptionUsage > 0 {
 		w.Partial = true
 	}
+	if w.ExcludedMediaRequests > 0 {
+		w.Partial = true
+		w.Deviation, w.ObservedProfit, w.Tolerance = nil, nil, nil
+		w.Messages = append(w.Messages, fmt.Sprintf("待确认绘图/视频已暂不计入：%d次，客户消费%.4f，套餐计量%.4f；收入与成本均不参与预计毛利", w.ExcludedMediaRequests, w.ExcludedMediaRevenue, w.ExcludedMediaSubscriptionUsage))
+		w.Messages = append(w.Messages, "钱包余额含已排除的绘图/视频消耗，暂不进行此钱包的余额偏差与余额毛利核验")
+	}
 	if w.Partial && w.Status == "ok" {
 		w.Status = "partial"
 	}
-	if w.ExpectedCost == nil {
+	if w.ExpectedCost == nil && !businessOnlyExcludedMedia(w) {
 		w.Messages = append(w.Messages, "成本待确认：有用量的渠道缺少有效上游探测倍率，不使用本地记账倍率或默认1")
 	}
 	if w.GrossProfit != nil && *w.GrossProfit < -0.2 && w.Revenue > 0 {
@@ -444,11 +455,11 @@ func businessFinalizeWallet(w *BusinessMonitorWallet) {
 	}
 	cost := *w.BalanceStart + w.Credits - *w.BalanceEnd
 	w.BalanceCost = &cost
-	if w.ExpectedCost != nil {
+	if w.ExpectedCost != nil && w.ExcludedMediaRequests == 0 {
 		w.Deviation = businessAmount(cost - *w.ExpectedCost)
 	}
 	// A subscription has usage value but no per-request cash realization.
-	if w.SubscriptionUsage == 0 {
+	if w.SubscriptionUsage == 0 && w.ExcludedMediaRequests == 0 {
 		profit := w.Revenue - cost
 		w.ObservedProfit = &profit
 	}

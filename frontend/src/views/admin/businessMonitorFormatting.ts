@@ -3,6 +3,11 @@ export function businessMoney(value: number | null | undefined): string {
   return `¥${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
 }
 
+export function businessIncludedRevenue(total: number, excluded = 0): number {
+  const included = total - excluded
+  return Math.abs(included) < 1e-9 ? 0 : included
+}
+
 export function shanghaiDay(now = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'

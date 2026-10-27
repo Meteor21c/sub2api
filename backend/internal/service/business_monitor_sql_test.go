@@ -32,12 +32,13 @@ func TestBusinessMonitorSQLIntegration(t *testing.T) {
 CREATE TABLE accounts(id BIGINT PRIMARY KEY,name TEXT,credentials JSONB,extra JSONB,deleted_at TIMESTAMPTZ);
 CREATE TABLE groups(id BIGINT PRIMARY KEY,name TEXT,rate_multiplier NUMERIC,deleted_at TIMESTAMPTZ);
 CREATE TABLE usage_logs(account_id BIGINT,actual_cost NUMERIC,billing_type INT,account_stats_cost NUMERIC,total_cost NUMERIC,account_rate_multiplier NUMERIC,created_at TIMESTAMPTZ);
+ALTER TABLE usage_logs ADD COLUMN image_count INT DEFAULT 0, ADD COLUMN video_count INT DEFAULT 0, ADD COLUMN image_output_tokens INT DEFAULT 0, ADD COLUMN billing_mode TEXT, ADD COLUMN inbound_endpoint TEXT;
 INSERT INTO groups(id,name,rate_multiplier) VALUES(1,'test group',0.2);
 INSERT INTO accounts(id,name,credentials,extra) VALUES(1,'test supplier','{"base_url":"https://Supplier.Example.Test/"}','{}');`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO usage_logs VALUES(1,2,0,10,10,1,$1)`, businessDay(time.Now()))
+	_, err = db.ExecContext(ctx, `INSERT INTO usage_logs(account_id,actual_cost,billing_type,account_stats_cost,total_cost,account_rate_multiplier,created_at) VALUES(1,2,0,10,10,1,$1)`, businessDay(time.Now()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ INSERT INTO accounts(id,name,credentials,extra) VALUES(1,'test supplier','{"base
 		t.Fatal(err)
 	}
 	yesterday := businessDay(time.Now()).AddDate(0, 0, -1)
-	if _, err := db.ExecContext(ctx, `INSERT INTO usage_logs VALUES(1,2,0,10,10,1,$1)`, yesterday); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO usage_logs(account_id,actual_cost,billing_type,account_stats_cost,total_cost,account_rate_multiplier,created_at) VALUES(1,2,0,10,10,1,$1)`, yesterday); err != nil {
 		t.Fatal(err)
 	}
 	legacy := BusinessMonitorWallet{Key: "https://supplier.example.test", Revenue: 2, RequestCount: 1, ExpectedCost: businessTestFloat(10), GrossProfit: businessTestFloat(-8)}
@@ -156,5 +157,37 @@ INSERT INTO accounts(id,name,credentials,extra) VALUES(1,'test supplier','{"base
 	}
 	if legacy.Revenue != 2 || legacy.ExpectedCost == nil || *legacy.ExpectedCost != 1.5 || legacy.GrossProfit == nil || *legacy.GrossProfit != 0.5 || legacy.CostVersion != businessCostVersion {
 		t.Fatalf("saved daily repair changed income or used local multiplier: %+v", legacy)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO accounts(id,name,credentials,extra) VALUES(2,'media supplier','{"base_url":"https://supplier.example.test"}','{"upstream_billing_probe":{"status":"unsupported"}}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO usage_logs(account_id,actual_cost,billing_type,total_cost,created_at,image_count,video_count,billing_mode,inbound_endpoint) VALUES
+(2,4,0,20,$1,1,0,'image','/v1/images/generations'),
+(2,6,0,30,$1,0,1,'token','/v1/videos/generations')`, businessDay(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	report, err = s.Report(ctx, "day", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Summary.Revenue != 12 || report.Summary.ExcludedMediaRevenue != 10 || report.Summary.ExcludedMediaRequests != 2 || report.Summary.ExpectedCost == nil || *report.Summary.ExpectedCost != 1.5 || report.Summary.GrossProfit == nil || *report.Summary.GrossProfit != .5 {
+		t.Fatalf("unknown image/video contaminated known text profit: %+v", report.Summary)
+	}
+	if len(report.Wallets) != 1 || len(report.Wallets[0].AccountIDs) != 2 || report.Wallets[0].Deviation != nil || report.Wallets[0].ObservedProfit != nil {
+		t.Fatalf("shared media wallet double counted channels or compared unlike balances: %+v", report.Wallets)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO usage_logs(account_id,actual_cost,billing_type,total_cost,created_at,image_count,billing_mode) VALUES(1,2,0,10,$1,1,'image')`, businessDay(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	report, err = s.Report(ctx, "day", "")
+	if err != nil || report.Summary.ExpectedCost == nil || *report.Summary.ExpectedCost != 3 || report.Summary.GrossProfit == nil || *report.Summary.GrossProfit != 1 || report.Summary.ExcludedMediaRequests != 2 {
+		t.Fatalf("valid-probe media was wrongly excluded: report=%+v err=%v", report, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO usage_logs(account_id,actual_cost,billing_type,total_cost,created_at,billing_mode) VALUES(2,1,0,10,$1,'token')`, businessDay(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	report, err = s.Report(ctx, "day", "")
+	if err != nil || report.Summary.ExpectedCost != nil || report.Summary.GrossProfit != nil || report.Summary.ExcludedMediaRequests != 2 {
+		t.Fatalf("unknown text usage must not be silently excluded: report=%+v err=%v", report, err)
 	}
 }

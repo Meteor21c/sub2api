@@ -5,47 +5,52 @@ import "time"
 // Financial amounts use the owner's configured 1:1 bookkeeping unit. They are
 // operational estimates, not a substitute for a supplier settlement ledger.
 type BusinessMonitorSummary struct {
-	Revenue           float64  `json:"revenue"`
-	SubscriptionUsage float64  `json:"subscription_usage"`
-	ExpectedCost      *float64 `json:"expected_cost"`
-	GrossProfit       *float64 `json:"gross_profit"`
-	BalanceCost       *float64 `json:"balance_cost"`
-	ObservedProfit    *float64 `json:"observed_profit"`
-	Deviation         *float64 `json:"deviation"`
-	AnomalyCount      int      `json:"anomaly_count"`
-	Partial           bool     `json:"partial"`
+	Revenue               float64  `json:"revenue"`
+	SubscriptionUsage     float64  `json:"subscription_usage"`
+	ExcludedMediaRevenue  float64  `json:"excluded_media_revenue"`
+	ExcludedMediaRequests int64    `json:"excluded_media_requests"`
+	ExpectedCost          *float64 `json:"expected_cost"`
+	GrossProfit           *float64 `json:"gross_profit"`
+	BalanceCost           *float64 `json:"balance_cost"`
+	ObservedProfit        *float64 `json:"observed_profit"`
+	Deviation             *float64 `json:"deviation"`
+	AnomalyCount          int      `json:"anomaly_count"`
+	Partial               bool     `json:"partial"`
 }
 
 type BusinessMonitorWallet struct {
-	Key                      string                     `json:"key"`
-	BaseURL                  string                     `json:"base_url"`
-	Name                     string                     `json:"name"`
-	AccountIDs               []int64                    `json:"account_ids"`
-	Revenue                  float64                    `json:"revenue"`
-	SubscriptionUsage        float64                    `json:"subscription_usage"`
-	SubscriptionExpectedCost *float64                   `json:"subscription_expected_cost"`
-	ExpectedCost             *float64                   `json:"expected_cost"`
-	GrossProfit              *float64                   `json:"gross_profit"`
-	CostVersion              int                        `json:"cost_version"`
-	CostBasis                []BusinessMonitorCostBasis `json:"cost_basis"`
-	BalanceStart             *float64                   `json:"balance_start"`
-	BalanceEnd               *float64                   `json:"balance_end"`
-	Credits                  float64                    `json:"credits"`
-	InferredCredits          float64                    `json:"inferred_credits"`
-	CreditOverride           *float64                   `json:"credit_override"`
-	CreditNote               string                     `json:"credit_note"`
-	BalanceCost              *float64                   `json:"balance_cost"`
-	ObservedProfit           *float64                   `json:"observed_profit"`
-	Deviation                *float64                   `json:"deviation"`
-	Tolerance                *float64                   `json:"tolerance"`
-	Status                   string                     `json:"status"`
-	Messages                 []string                   `json:"messages"`
-	LastSampleAt             *time.Time                 `json:"last_sample_at"`
-	StartSampleAt            *time.Time                 `json:"start_sample_at"`
-	RateStatus               string                     `json:"rate_status"`
-	RequestCount             int64                      `json:"request_count"`
-	Partial                  bool                       `json:"partial"`
-	BalanceComplete          bool                       `json:"balance_complete"`
+	Key                            string                     `json:"key"`
+	BaseURL                        string                     `json:"base_url"`
+	Name                           string                     `json:"name"`
+	AccountIDs                     []int64                    `json:"account_ids"`
+	Revenue                        float64                    `json:"revenue"`
+	SubscriptionUsage              float64                    `json:"subscription_usage"`
+	ExcludedMediaRevenue           float64                    `json:"excluded_media_revenue"`
+	ExcludedMediaSubscriptionUsage float64                    `json:"excluded_media_subscription_usage"`
+	ExcludedMediaRequests          int64                      `json:"excluded_media_requests"`
+	SubscriptionExpectedCost       *float64                   `json:"subscription_expected_cost"`
+	ExpectedCost                   *float64                   `json:"expected_cost"`
+	GrossProfit                    *float64                   `json:"gross_profit"`
+	CostVersion                    int                        `json:"cost_version"`
+	CostBasis                      []BusinessMonitorCostBasis `json:"cost_basis"`
+	BalanceStart                   *float64                   `json:"balance_start"`
+	BalanceEnd                     *float64                   `json:"balance_end"`
+	Credits                        float64                    `json:"credits"`
+	InferredCredits                float64                    `json:"inferred_credits"`
+	CreditOverride                 *float64                   `json:"credit_override"`
+	CreditNote                     string                     `json:"credit_note"`
+	BalanceCost                    *float64                   `json:"balance_cost"`
+	ObservedProfit                 *float64                   `json:"observed_profit"`
+	Deviation                      *float64                   `json:"deviation"`
+	Tolerance                      *float64                   `json:"tolerance"`
+	Status                         string                     `json:"status"`
+	Messages                       []string                   `json:"messages"`
+	LastSampleAt                   *time.Time                 `json:"last_sample_at"`
+	StartSampleAt                  *time.Time                 `json:"start_sample_at"`
+	RateStatus                     string                     `json:"rate_status"`
+	RequestCount                   int64                      `json:"request_count"`
+	Partial                        bool                       `json:"partial"`
+	BalanceComplete                bool                       `json:"balance_complete"`
 }
 
 // Retain the standard usage basis and the probe used by each daily estimate.
@@ -57,17 +62,24 @@ type BusinessMonitorCostBasis struct {
 	SubscriptionStandardCost float64  `json:"subscription_standard_cost"`
 	ProbeRate                *float64 `json:"probe_rate"`
 	RateStatus               string   `json:"rate_status"`
+	UsageKind                string   `json:"usage_kind"`
+	Revenue                  float64  `json:"revenue"`
+	SubscriptionUsage        float64  `json:"subscription_usage"`
+	RequestCount             int64    `json:"request_count"`
+	Excluded                 bool     `json:"excluded"`
 }
 
 type BusinessMonitorDaily struct {
-	Date              string   `json:"date"`
-	Revenue           float64  `json:"revenue"`
-	SubscriptionUsage float64  `json:"subscription_usage"`
-	ExpectedCost      *float64 `json:"expected_cost"`
-	GrossProfit       *float64 `json:"gross_profit"`
-	BalanceCost       *float64 `json:"balance_cost"`
-	ObservedProfit    *float64 `json:"observed_profit"`
-	Partial           bool     `json:"partial"`
+	Date                  string   `json:"date"`
+	Revenue               float64  `json:"revenue"`
+	SubscriptionUsage     float64  `json:"subscription_usage"`
+	ExcludedMediaRevenue  float64  `json:"excluded_media_revenue"`
+	ExcludedMediaRequests int64    `json:"excluded_media_requests"`
+	ExpectedCost          *float64 `json:"expected_cost"`
+	GrossProfit           *float64 `json:"gross_profit"`
+	BalanceCost           *float64 `json:"balance_cost"`
+	ObservedProfit        *float64 `json:"observed_profit"`
+	Partial               bool     `json:"partial"`
 }
 
 type BusinessMonitorRateChange struct {

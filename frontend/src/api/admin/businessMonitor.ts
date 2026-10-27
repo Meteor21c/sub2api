@@ -4,6 +4,8 @@ export type BusinessPeriod = 'day' | 'week' | 'month' | 'year'
 export interface BusinessSummary {
   revenue: number
   subscription_usage: number
+  excluded_media_revenue: number
+  excluded_media_requests: number
   expected_cost: number | null
   gross_profit: number | null
   balance_cost: number | null
@@ -19,10 +21,12 @@ export interface BusinessWallet {
   account_ids: number[]
   revenue: number
   subscription_usage: number
+  excluded_media_revenue: number
+  excluded_media_requests: number
   expected_cost: number | null
   gross_profit: number | null
   cost_version: number
-  cost_basis: { account_id: number; account_name: string; standard_cost: number; probe_rate: number | null; rate_status: string }[]
+  cost_basis: { account_id: number; account_name: string; standard_cost: number; probe_rate: number | null; rate_status: string; usage_kind: string; excluded: boolean }[]
   balance_start: number | null
   balance_end: number | null
   credits: number
@@ -42,6 +46,8 @@ export interface BusinessDaily {
   date: string
   revenue: number
   subscription_usage: number
+  excluded_media_revenue: number
+  excluded_media_requests: number
   expected_cost: number | null
   gross_profit: number | null
   balance_cost: number | null
