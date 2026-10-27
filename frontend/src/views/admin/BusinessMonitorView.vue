@@ -40,7 +40,7 @@
           <p>用量历史始于 {{ report.coverage_start ? businessTime(report.coverage_start) : '尚无记录' }}</p>
         </div>
         <div v-if="report.summary.partial" class="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 leading-7 text-amber-900 dark:border-amber-800 dark:bg-amber-950/25 dark:text-amber-200">
-          当前区间含首次采样、余额缺失或未覆盖渠道。客户消费和预计成本仍可查看，余额推算结果只覆盖已有数据，不能视为完整实际利润。
+          当前区间含余额缺失、倍率待确认或未覆盖渠道。客户消费额正常保留；缺少有效探测倍率时成本与预计毛利显示“待确认”，余额推算结果仅覆盖已有数据。
         </div>
 
         <section class="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -72,13 +72,14 @@
                   <tr class="align-top">
                     <td class="min-w-[240px] px-5 py-4"><p class="font-semibold">{{ wallet.name || wallet.base_url }}</p><p class="mt-1 break-all text-sm text-gray-500">{{ wallet.base_url }}</p><div class="mt-2 flex flex-wrap gap-2"><span class="rounded-full px-2.5 py-1 text-sm" :class="statusClass(wallet.status)">{{ statusText(wallet.status) }}</span><span class="rounded-full bg-gray-100 px-2.5 py-1 text-sm text-gray-600 dark:bg-dark-700 dark:text-gray-300">{{ wallet.account_ids?.length || 0 }} 个渠道</span></div></td>
                     <td class="whitespace-nowrap px-4 py-4 tabular-nums">{{ businessMoney(wallet.revenue) }}</td>
-                    <td class="whitespace-nowrap px-4 py-4 tabular-nums">{{ businessMoney(wallet.expected_cost) }}</td>
+                    <td class="whitespace-nowrap px-4 py-4 tabular-nums">{{ wallet.expected_cost == null ? '待确认' : businessMoney(wallet.expected_cost) }}</td>
                     <td class="whitespace-nowrap px-4 py-4 tabular-nums">{{ businessMoney(wallet.balance_cost) }}<p class="mt-2 text-sm text-gray-500">{{ businessMoney(wallet.balance_start) }} → {{ businessMoney(wallet.balance_end) }}</p></td>
-                    <td class="whitespace-nowrap px-4 py-4 font-semibold tabular-nums" :class="wallet.gross_profit < 0 ? 'text-red-600' : ''">{{ businessMoney(wallet.gross_profit) }}</td>
+                    <td class="whitespace-nowrap px-4 py-4 font-semibold tabular-nums" :class="(wallet.gross_profit ?? 0) < 0 ? 'text-red-600' : ''">{{ wallet.gross_profit == null ? '待确认' : businessMoney(wallet.gross_profit) }}</td>
                     <td class="whitespace-nowrap px-4 py-4 tabular-nums">{{ businessMoney(wallet.deviation) }}<p class="mt-2 text-sm text-gray-500">容差 {{ businessMoney(wallet.tolerance) }}</p></td>
                     <td class="min-w-[150px] px-5 py-4"><p>{{ businessMoney(wallet.credits) }}</p><p class="mt-1 text-sm text-gray-500">{{ wallet.credit_override == null ? '自动推测净入账' : '已人工修正' }}</p><button v-if="period === 'day'" class="mt-2 text-sm font-medium text-primary-600 hover:underline" @click="openAdjustment(wallet)">修正金额</button></td>
                   </tr>
                   <tr><td colspan="7" class="px-5 pb-4 text-sm leading-6 text-gray-500 dark:text-gray-400"><div class="flex flex-wrap gap-x-5 gap-y-1"><span>最近采样 {{ businessTime(wallet.last_sample_at) }}</span><span>{{ rateText(wallet.rate_status) }}</span><span v-for="message in wallet.messages || []" :key="message" class="text-amber-700 dark:text-amber-400">{{ message }}</span></div></td></tr>
+                  <tr v-if="wallet.cost_basis?.length"><td colspan="7" class="px-5 pb-4 text-sm leading-6 text-gray-500 dark:text-gray-400"><details><summary class="cursor-pointer">成本采用的上游探测倍率（不使用本地记账倍率）</summary><p v-for="rate in walletProbeRates(wallet)" :key="rate" class="mt-1">{{ rate }}</p></details></td></tr>
                 </template>
                 <tr v-if="!report.wallets?.length"><td colspan="7" class="p-10 text-center text-gray-500">尚无渠道用量或余额采样，首次后台采集后会自动显示。</td></tr>
               </tbody>
@@ -113,9 +114,9 @@
 
         <section class="card overflow-hidden">
           <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-5"><h2 class="text-lg font-semibold">每日经营汇总</h2><button v-if="report.daily.length > 31" class="text-primary-600" @click="showAllDays = !showAllDays">{{ showAllDays ? '收起' : `查看全部 ${report.daily.length} 天` }}</button></div>
-          <div class="overflow-x-auto"><table class="w-full whitespace-nowrap text-left"><thead class="bg-gray-50 text-sm text-gray-500 dark:bg-dark-800"><tr><th class="px-5 py-3">日期</th><th class="px-5 py-3">客户消费</th><th class="px-5 py-3">预计成本</th><th class="px-5 py-3">预计毛利</th><th class="px-5 py-3">余额推算消耗</th><th class="px-5 py-3">覆盖情况</th></tr></thead><tbody class="divide-y divide-gray-100 dark:divide-dark-600"><tr v-for="day in visibleDays" :key="day.date"><td class="px-5 py-4"><button class="font-medium text-primary-600" @click="viewDay(day.date)">{{ day.date }}</button></td><td class="px-5 py-4">{{ businessMoney(day.revenue) }}</td><td class="px-5 py-4">{{ businessMoney(day.expected_cost) }}</td><td class="px-5 py-4" :class="day.gross_profit < 0 ? 'text-red-600' : ''">{{ businessMoney(day.gross_profit) }}</td><td class="px-5 py-4">{{ businessMoney(day.balance_cost) }}</td><td class="px-5 py-4 text-sm text-gray-500">{{ day.partial ? '部分数据／估算' : '已采样' }}</td></tr><tr v-if="!visibleDays.length"><td colspan="6" class="p-8 text-center text-gray-500">尚无每日汇总，历史用量正在按日整理。</td></tr></tbody></table></div>
+          <div class="overflow-x-auto"><table class="w-full whitespace-nowrap text-left"><thead class="bg-gray-50 text-sm text-gray-500 dark:bg-dark-800"><tr><th class="px-5 py-3">日期</th><th class="px-5 py-3">客户消费</th><th class="px-5 py-3">预计成本</th><th class="px-5 py-3">预计毛利</th><th class="px-5 py-3">余额推算消耗</th><th class="px-5 py-3">覆盖情况</th></tr></thead><tbody class="divide-y divide-gray-100 dark:divide-dark-600"><tr v-for="day in visibleDays" :key="day.date"><td class="px-5 py-4"><button class="font-medium text-primary-600" @click="viewDay(day.date)">{{ day.date }}</button></td><td class="px-5 py-4">{{ businessMoney(day.revenue) }}</td><td class="px-5 py-4">{{ day.expected_cost == null ? '待确认' : businessMoney(day.expected_cost) }}</td><td class="px-5 py-4" :class="(day.gross_profit ?? 0) < 0 ? 'text-red-600' : ''">{{ day.gross_profit == null ? '待确认' : businessMoney(day.gross_profit) }}</td><td class="px-5 py-4">{{ businessMoney(day.balance_cost) }}</td><td class="px-5 py-4 text-sm text-gray-500">{{ day.partial ? '部分数据／估算' : '已采样' }}</td></tr><tr v-if="!visibleDays.length"><td colspan="6" class="p-8 text-center text-gray-500">尚无每日汇总，历史用量正在按日整理。</td></tr></tbody></table></div>
         </section>
-        <p class="pb-4 text-sm leading-7 text-gray-500 dark:text-gray-400">预计毛利依据本站用量与计费配置计算。余额口径可能受充值、赠送、外部调用和采样时差影响；本页提供经营监测线索，不代表上游逐笔账单核验。</p>
+        <p class="pb-4 text-sm leading-7 text-gray-500 dark:text-gray-400">预计成本＝本站记录的标准用量成本 × 有效上游探测倍率，不使用本地账号记账倍率，也不默认按1计算。日内倍率变化见变动记录；历史补算采用补算时探测倍率，并非历史精确结算。余额口径可能受充值、赠送、外部调用和采样时差影响，本页不是逐笔账单核验。</p>
       </template>
 
       <div v-if="adjusting" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="adjustment-title" @click.self="!saving && (adjusting = null)">
@@ -159,9 +160,9 @@ const metrics = computed(() => {
   if (!s) return []
   return [
     { label: '客户消费额', value: s.revenue, help: '按本站已记录余额扣费汇总', negative: false },
-    { label: '预计上游成本', value: s.expected_cost, help: '按请求保存的价格与倍率，包含套餐请求成本', negative: false },
+    { label: '预计上游成本', value: s.expected_cost, help: s.expected_cost == null ? '成本待确认：部分渠道缺少有效上游探测倍率' : '标准用量成本 × 上游探测倍率，包含套餐成本', negative: false },
     { label: '已覆盖余额消耗', value: s.balance_cost, help: '仅汇总具备余额基线的上游与日期', negative: false },
-    { label: '预计毛利', value: s.gross_profit, help: '余额模式消费减对应成本；套餐另列', negative: s.gross_profit < 0 }
+    { label: '预计毛利', value: s.gross_profit, help: s.gross_profit == null ? '倍率未覆盖完整区间，暂不计算预计毛利' : '余额模式消费减探测成本；套餐另列', negative: (s.gross_profit ?? 0) < 0 }
   ]
 })
 const visibleDays = computed(() => {
@@ -191,7 +192,10 @@ function statusClass(status: string): string {
   if (status === 'loss' || status === 'overspend') return 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'
   return 'bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
 }
-function rateText(status: string): string { return ({ ok: '倍率探测有效', fresh: '倍率探测有效', stale: '倍率探测已过期', failed: '倍率探测失败', unsupported: '上游不支持倍率探测', missing: '尚无倍率探测结果', mixed: '部分倍率需核查', unknown: '倍率状态未知' } as Record<string, string>)[status] || '倍率按本站记录估算' }
+function rateText(status: string): string { return ({ ok: '倍率探测有效', fresh: '倍率探测有效', stale: '倍率探测已过期', failed: '倍率探测失败', invalid: '倍率探测数据不完整', unsupported: '上游不支持倍率探测', missing: '尚无倍率探测结果', mixed: '部分倍率需核查', unknown: '倍率状态未知' } as Record<string, string>)[status] || '倍率待确认' }
+function walletProbeRates(wallet: BusinessWallet): string[] {
+  return [...new Set((wallet.cost_basis || []).map(b => `${b.account_name}：${b.probe_rate == null ? '待确认' : b.probe_rate.toFixed(4)}`))]
+}
 function walletName(key: string): string { return report.value?.wallets.find(w => w.key === key)?.name || key }
 const adjusting = ref<BusinessWallet | null>(null)
 const adjustAmount = ref<number | string>(0)

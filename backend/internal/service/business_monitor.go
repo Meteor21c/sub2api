@@ -292,10 +292,13 @@ func (s *BusinessMonitorService) accountCatalog(ctx context.Context) (map[int64]
 				a.RateStatus = "stale"
 			}
 			var data map[string]any
-			if json.Unmarshal(probeJSON, &data) == nil {
+			if a.RateStatus == "ok" && json.Unmarshal(probeJSON, &data) == nil {
 				if rate, ok := upstreamBillingRateAt(data, time.Now()); ok {
 					a.ProbeRate = &rate
 				}
+			}
+			if a.RateStatus == "ok" && a.ProbeRate == nil {
+				a.RateStatus = "invalid"
 			}
 		}
 		result[a.ID] = a
@@ -395,8 +398,13 @@ func businessTolerance(revenue, expected float64) float64 {
 }
 
 func businessFinalizeWallet(w *BusinessMonitorWallet) {
-	w.GrossProfit = w.Revenue - w.ExpectedCost + w.SubscriptionExpectedCost
-	w.Tolerance = businessTolerance(w.Revenue, w.ExpectedCost)
+	w.GrossProfit, w.Tolerance = nil, nil
+	if w.ExpectedCost != nil && w.SubscriptionExpectedCost != nil {
+		w.GrossProfit = businessAmount(w.Revenue - *w.ExpectedCost + *w.SubscriptionExpectedCost)
+		w.Tolerance = businessAmount(businessTolerance(w.Revenue, *w.ExpectedCost))
+	} else {
+		w.Partial = true
+	}
 	if w.Messages == nil {
 		w.Messages = []string{}
 	}
@@ -415,9 +423,12 @@ func businessFinalizeWallet(w *BusinessMonitorWallet) {
 	if w.Partial && w.Status == "ok" {
 		w.Status = "partial"
 	}
-	if w.GrossProfit < -0.2 && w.Revenue > 0 {
+	if w.ExpectedCost == nil {
+		w.Messages = append(w.Messages, "成本待确认：有用量的渠道缺少有效上游探测倍率，不使用本地记账倍率或默认1")
+	}
+	if w.GrossProfit != nil && *w.GrossProfit < -0.2 && w.Revenue > 0 {
 		w.Status = "loss"
-		w.Messages = append(w.Messages, "本站配置估算毛利为负，建议检查倍率与模型价格")
+		w.Messages = append(w.Messages, "按上游探测倍率估算毛利为负，建议检查倍率与模型价格")
 	}
 	if w.BalanceStart == nil || w.BalanceEnd == nil {
 		w.Partial = true
@@ -433,8 +444,9 @@ func businessFinalizeWallet(w *BusinessMonitorWallet) {
 	}
 	cost := *w.BalanceStart + w.Credits - *w.BalanceEnd
 	w.BalanceCost = &cost
-	difference := cost - w.ExpectedCost
-	w.Deviation = &difference
+	if w.ExpectedCost != nil {
+		w.Deviation = businessAmount(cost - *w.ExpectedCost)
+	}
 	// A subscription has usage value but no per-request cash realization.
 	if w.SubscriptionUsage == 0 {
 		profit := w.Revenue - cost
@@ -443,7 +455,7 @@ func businessFinalizeWallet(w *BusinessMonitorWallet) {
 	if !w.Partial && w.SubscriptionUsage == 0 {
 		if *w.ObservedProfit < -0.2 {
 			w.Status = "loss"
-		} else if difference > w.Tolerance {
+		} else if w.Deviation != nil && w.Tolerance != nil && *w.Deviation > *w.Tolerance {
 			w.Status = "overspend"
 		}
 	}

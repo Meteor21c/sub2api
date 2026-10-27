@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,18 +79,18 @@ func TestBusinessMonitorShanghaiPeriod(t *testing.T) {
 }
 
 func TestBusinessMonitorIncompleteBalanceNeverUsesWholeDayIncome(t *testing.T) {
-	w := BusinessMonitorWallet{Revenue: 100, ExpectedCost: 80, BalanceEnd: businessTestFloat(50), Partial: true}
+	w := BusinessMonitorWallet{Revenue: 100, ExpectedCost: businessTestFloat(80), SubscriptionExpectedCost: businessTestFloat(0), BalanceEnd: businessTestFloat(50), Partial: true}
 	businessFinalizeWallet(&w)
 	if w.BalanceCost != nil || w.ObservedProfit != nil || w.Deviation != nil {
 		t.Fatal("missing baseline incorrectly produced a financial result")
 	}
-	if w.GrossProfit != 20 {
+	if w.GrossProfit == nil || *w.GrossProfit != 20 {
 		t.Fatalf("local estimate lost: %v", w.GrossProfit)
 	}
 }
 
 func TestBusinessMonitorInferredRechargeDoesNotConfirmLoss(t *testing.T) {
-	w := BusinessMonitorWallet{Revenue: 100, ExpectedCost: 80, BalanceStart: businessTestFloat(100), BalanceEnd: businessTestFloat(10), Credits: 30, InferredCredits: 30, BalanceComplete: true}
+	w := BusinessMonitorWallet{Revenue: 100, ExpectedCost: businessTestFloat(80), SubscriptionExpectedCost: businessTestFloat(0), BalanceStart: businessTestFloat(100), BalanceEnd: businessTestFloat(10), Credits: 30, InferredCredits: 30, BalanceComplete: true}
 	businessFinalizeWallet(&w)
 	if !w.Partial || w.Status == "loss" || w.Status == "overspend" {
 		t.Fatalf("unconfirmed credit produced certain anomaly: %+v", w)
@@ -100,20 +101,20 @@ func TestBusinessMonitorInferredRechargeDoesNotConfirmLoss(t *testing.T) {
 }
 
 func TestBusinessMonitorSubscriptionIsNotCashRevenue(t *testing.T) {
-	w := BusinessMonitorWallet{Revenue: 100, SubscriptionUsage: 50, ExpectedCost: 110, SubscriptionExpectedCost: 30, BalanceStart: businessTestFloat(200), BalanceEnd: businessTestFloat(90)}
+	w := BusinessMonitorWallet{Revenue: 100, SubscriptionUsage: 50, ExpectedCost: businessTestFloat(110), SubscriptionExpectedCost: businessTestFloat(30), BalanceStart: businessTestFloat(200), BalanceEnd: businessTestFloat(90)}
 	businessFinalizeWallet(&w)
-	if w.GrossProfit != 20 || w.ObservedProfit != nil || !w.Partial {
+	if w.GrossProfit == nil || *w.GrossProfit != 20 || w.ObservedProfit != nil || !w.Partial {
 		t.Fatalf("subscription recognized as cash or false loss: %+v", w)
 	}
 }
 
 func TestBusinessMonitorDeviationAndNegativeMargin(t *testing.T) {
-	w := BusinessMonitorWallet{Revenue: 100, ExpectedCost: 80, BalanceStart: businessTestFloat(200), BalanceEnd: businessTestFloat(117)}
+	w := BusinessMonitorWallet{Revenue: 100, ExpectedCost: businessTestFloat(80), SubscriptionExpectedCost: businessTestFloat(0), BalanceStart: businessTestFloat(200), BalanceEnd: businessTestFloat(117)}
 	businessFinalizeWallet(&w)
 	if w.Status != "overspend" || w.Deviation == nil || *w.Deviation != 3 {
 		t.Fatalf("overspend missed: %+v", w)
 	}
-	loss := BusinessMonitorWallet{Revenue: .5, ExpectedCost: 1}
+	loss := BusinessMonitorWallet{Revenue: .5, ExpectedCost: businessTestFloat(1), SubscriptionExpectedCost: businessTestFloat(0)}
 	businessFinalizeWallet(&loss)
 	if loss.Status != "loss" {
 		t.Fatal("negative local margin incorrectly hidden by tolerance")
@@ -121,12 +122,12 @@ func TestBusinessMonitorDeviationAndNegativeMargin(t *testing.T) {
 }
 
 func TestBusinessMonitorAggregateUnknownWalletIsNotZero(t *testing.T) {
-	wallets := []BusinessMonitorWallet{{Revenue: 10, ExpectedCost: 5, GrossProfit: 5, BalanceCost: businessTestFloat(5), ObservedProfit: businessTestFloat(5)}, {Revenue: 2, ExpectedCost: 1, GrossProfit: 1, Partial: true}}
+	wallets := []BusinessMonitorWallet{{Revenue: 10, ExpectedCost: businessTestFloat(5), GrossProfit: businessTestFloat(5), BalanceCost: businessTestFloat(5), ObservedProfit: businessTestFloat(5)}, {Revenue: 2, ExpectedCost: businessTestFloat(1), GrossProfit: businessTestFloat(1), Partial: true}}
 	summary := businessSummarize(wallets)
 	if summary.BalanceCost == nil || *summary.BalanceCost != 5 || summary.ObservedProfit == nil || *summary.ObservedProfit != 5 || !summary.Partial {
 		t.Fatalf("covered subtotal or incomplete coverage lost: %+v", summary)
 	}
-	if summary.Revenue != 12 || summary.ExpectedCost != 6 {
+	if summary.Revenue != 12 || summary.ExpectedCost == nil || *summary.ExpectedCost != 6 {
 		t.Fatal("known local totals not preserved")
 	}
 }
@@ -141,7 +142,7 @@ func TestBusinessMonitorHistoricalCreditCorrectionPreservesSavedRevenue(t *testi
 	defer s.Stop()
 	date := "2026-01-01"
 	key := "https://api.example.com"
-	w := BusinessMonitorWallet{Key: key, Revenue: 123, ExpectedCost: 100, GrossProfit: 23, BalanceStart: businessTestFloat(200), BalanceEnd: businessTestFloat(105), BalanceComplete: true, InferredCredits: 10, Credits: 10, Partial: true, AccountIDs: []int64{1}, Messages: []string{}}
+	w := BusinessMonitorWallet{Key: key, Revenue: 123, ExpectedCost: businessTestFloat(100), SubscriptionExpectedCost: businessTestFloat(0), GrossProfit: businessTestFloat(23), CostVersion: businessCostVersion, BalanceStart: businessTestFloat(200), BalanceEnd: businessTestFloat(105), BalanceComplete: true, InferredCredits: 10, Credits: 10, Partial: true, AccountIDs: []int64{1}, Messages: []string{}}
 	payload, _ := json.Marshal(w)
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(SELECT 1 FROM business_monitor_samples WHERE wallet_key=$1 UNION ALL SELECT 1 FROM business_monitor_daily WHERE wallet_key=$1)`)).WithArgs(key).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectExec("INSERT INTO business_monitor_credit_overrides").WithArgs(key, date, 10.0, "").WillReturnResult(sqlmock.NewResult(1, 1))
@@ -158,13 +159,71 @@ func TestBusinessMonitorHistoricalCreditCorrectionPreservesSavedRevenue(t *testi
 }
 
 func TestBusinessMonitorPeriodPreservesCoveredDayTotals(t *testing.T) {
-	to := BusinessMonitorWallet{Revenue: 20, ExpectedCost: 15, GrossProfit: 5, Partial: true}
-	from := BusinessMonitorWallet{Revenue: 30, ExpectedCost: 20, GrossProfit: 10, BalanceCost: businessTestFloat(21), ObservedProfit: businessTestFloat(9), Deviation: businessTestFloat(1), BalanceComplete: true}
+	to := BusinessMonitorWallet{Revenue: 20, ExpectedCost: businessTestFloat(15), GrossProfit: businessTestFloat(5), Partial: true}
+	from := BusinessMonitorWallet{Revenue: 30, ExpectedCost: businessTestFloat(20), GrossProfit: businessTestFloat(10), BalanceCost: businessTestFloat(21), ObservedProfit: businessTestFloat(9), Deviation: businessTestFloat(1), BalanceComplete: true}
 	businessMergeWallet(&to, from)
 	if !to.Partial || to.BalanceCost == nil || *to.BalanceCost != 21 || to.ObservedProfit == nil || *to.ObservedProfit != 9 {
 		t.Fatalf("covered day accounting lost or replaced by full-period income: %+v", to)
 	}
-	if to.Revenue != 50 || to.ExpectedCost != 35 {
+	if to.Revenue != 50 || to.ExpectedCost == nil || *to.ExpectedCost != 35 {
 		t.Fatal("local period totals lost")
+	}
+}
+
+func TestBusinessMonitorProbeCostNeverDefaultsToOne(t *testing.T) {
+	for _, status := range []string{"ok", "stale", "failed", "unsupported", "unknown", "invalid"} {
+		t.Run(status, func(t *testing.T) {
+			w := BusinessMonitorWallet{Revenue: 2, ExpectedCost: businessTestFloat(0), SubscriptionExpectedCost: businessTestFloat(0)}
+			a := businessAccount{ID: 1, Name: "viapi", RateStatus: status, ProbeRate: businessTestFloat(0.15)}
+			businessApplyProbeCost(&w, a, 10, 0)
+			businessFinalizeWallet(&w)
+			if status == "ok" {
+				if w.ExpectedCost == nil || *w.ExpectedCost != 1.5 || w.GrossProfit == nil || *w.GrossProfit != 0.5 {
+					t.Fatalf("did not use 0.15 probe: %+v", w)
+				}
+			} else if w.ExpectedCost != nil || w.GrossProfit != nil || w.Deviation != nil || w.Status == "loss" || !w.Partial {
+				t.Fatalf("unavailable probe manufactured cost/profit: %+v", w)
+			}
+		})
+	}
+}
+
+func TestBusinessMonitorMissingProbeDoesNotCreateAggregateProfit(t *testing.T) {
+	known := BusinessMonitorWallet{Revenue: 2, ExpectedCost: businessTestFloat(1.5), GrossProfit: businessTestFloat(0.5)}
+	unknown := BusinessMonitorWallet{Revenue: 3, Partial: true}
+	summary := businessSummarize([]BusinessMonitorWallet{known, unknown})
+	if summary.Revenue != 5 || summary.ExpectedCost != nil || summary.GrossProfit != nil || !summary.Partial {
+		t.Fatalf("unknown cost became free usage: %+v", summary)
+	}
+	businessMergeWallet(&known, unknown)
+	if known.Revenue != 5 || known.ExpectedCost != nil || known.GrossProfit != nil {
+		t.Fatalf("period ignored an unknown day: %+v", known)
+	}
+}
+
+func TestBusinessMonitorLegacyRepairPreservesIncome(t *testing.T) {
+	legacy := BusinessMonitorWallet{Revenue: 2, RequestCount: 1, ExpectedCost: businessTestFloat(10), SubscriptionExpectedCost: businessTestFloat(0), GrossProfit: businessTestFloat(-8), Messages: []string{"viapi 本日记账平均倍率 1.0000", "本站配置估算毛利为负"}}
+	recalculated := BusinessMonitorWallet{Revenue: 2, RequestCount: 1, ExpectedCost: businessTestFloat(1.5), SubscriptionExpectedCost: businessTestFloat(0), RateStatus: "ok"}
+	saved := legacy
+	businessRepairCost(&saved, &recalculated)
+	if saved.Revenue != 2 || saved.ExpectedCost == nil || *saved.ExpectedCost != 1.5 || saved.GrossProfit == nil || *saved.GrossProfit != 0.5 || saved.CostVersion != businessCostVersion {
+		t.Fatalf("incorrect legacy correction: %+v", saved)
+	}
+	for _, message := range saved.Messages {
+		if strings.Contains(message, "本日记账平均倍率") || strings.Contains(message, "本站配置估算毛利为负") {
+			t.Fatalf("stale warning retained: %s", message)
+		}
+	}
+	for _, missing := range []*BusinessMonitorWallet{nil, {}, {Revenue: 1, RequestCount: 1}} {
+		saved = legacy
+		businessRepairCost(&saved, missing)
+		if saved.Revenue != 2 || saved.ExpectedCost != nil || saved.GrossProfit != nil || !saved.Partial {
+			t.Fatalf("expired logs changed saved revenue or invented cost: %+v", saved)
+		}
+	}
+	saved = legacy
+	businessInvalidateLegacyCost(&saved)
+	if saved.Revenue != 2 || saved.ExpectedCost != nil || saved.GrossProfit != nil || saved.Status == "loss" {
+		t.Fatalf("legacy report exposed incorrect cost during migration: %+v", saved)
 	}
 }

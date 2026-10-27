@@ -74,12 +74,16 @@ func (s *BusinessMonitorService) SetCreditOverride(ctx context.Context, walletKe
 		w.Partial = !w.BalanceComplete
 		messages := []string{}
 		for _, m := range w.Messages {
-			if !strings.Contains(m, "含自动推测") && !strings.Contains(m, "本站配置估算毛利为负") && !strings.Contains(m, "含订阅套餐") {
+			if !strings.Contains(m, "含自动推测") && !strings.Contains(m, "估算毛利为负") && !strings.Contains(m, "成本待确认") && !strings.Contains(m, "含订阅套餐") {
 				messages = append(messages, m)
 			}
 		}
 		w.Messages = messages
-		businessFinalizeWallet(&w)
+		if w.CostVersion < businessCostVersion {
+			businessInvalidateLegacyCost(&w)
+		} else {
+			businessFinalizeWallet(&w)
+		}
 		updated, err := json.Marshal(w)
 		if err != nil {
 			return err
@@ -104,7 +108,7 @@ func (s *BusinessMonitorService) buildDay(ctx context.Context, day, until time.T
 		if strings.HasPrefix(base, "unmapped:") {
 			base = ""
 		}
-		w := &BusinessMonitorWallet{Key: key, BaseURL: base, Name: name, AccountIDs: []int64{}, Messages: []string{}, RateStatus: "unknown"}
+		w := &BusinessMonitorWallet{Key: key, BaseURL: base, Name: name, AccountIDs: []int64{}, Messages: []string{}, RateStatus: "unknown", CostVersion: businessCostVersion, ExpectedCost: businessAmount(0), SubscriptionExpectedCost: businessAmount(0), CostBasis: []BusinessMonitorCostBasis{}}
 		wallets[key] = w
 		return w
 	}
@@ -138,8 +142,8 @@ func (s *BusinessMonitorService) buildDay(ctx context.Context, day, until time.T
 	rows, err := tx.QueryContext(ctx, `SELECT account_id,
 		COALESCE(SUM(actual_cost) FILTER(WHERE COALESCE(billing_type,0)<>1),0),
 		COALESCE(SUM(actual_cost) FILTER(WHERE billing_type=1),0),
-		COALESCE(SUM(COALESCE(account_stats_cost,total_cost)*COALESCE(account_rate_multiplier,1)),0),
-		COALESCE(SUM(COALESCE(account_stats_cost,total_cost)*COALESCE(account_rate_multiplier,1)) FILTER(WHERE billing_type=1),0),
+		COALESCE(SUM(COALESCE(account_stats_cost,total_cost)),0),
+		COALESCE(SUM(COALESCE(account_stats_cost,total_cost)) FILTER(WHERE billing_type=1),0),
 		COUNT(*),COALESCE(SUM(total_cost) FILTER(WHERE COALESCE(billing_type,0)<>1),0),
 		COALESCE(SUM(COALESCE(account_stats_cost,total_cost)) FILTER(WHERE COALESCE(billing_type,0)<>1),0)
 		FROM usage_logs WHERE created_at >= $1 AND created_at < $2 GROUP BY account_id`, day, until)
@@ -148,8 +152,8 @@ func (s *BusinessMonitorService) buildDay(ctx context.Context, day, until time.T
 	}
 	for rows.Next() {
 		var accountID, requests int64
-		var revenue, subscription, expected, subscriptionCost, standard, accountStandard float64
-		if err = rows.Scan(&accountID, &revenue, &subscription, &expected, &subscriptionCost, &requests, &standard, &accountStandard); err != nil {
+		var revenue, subscription, basis, subscriptionBasis, standard, accountStandard float64
+		if err = rows.Scan(&accountID, &revenue, &subscription, &basis, &subscriptionBasis, &requests, &standard, &accountStandard); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -161,8 +165,7 @@ func (s *BusinessMonitorService) buildDay(ctx context.Context, day, until time.T
 		w.AccountIDs = append(w.AccountIDs, accountID)
 		w.Revenue += revenue
 		w.SubscriptionUsage += subscription
-		w.ExpectedCost += expected
-		w.SubscriptionExpectedCost += subscriptionCost
+		businessApplyProbeCost(w, a, basis, subscriptionBasis)
 		w.RequestCount += requests
 		if w.RateStatus == "unknown" || a.RateStatus != "ok" {
 			w.RateStatus = a.RateStatus
@@ -178,14 +181,8 @@ func (s *BusinessMonitorService) buildDay(ctx context.Context, day, until time.T
 			if math.Abs(standard-accountStandard) <= math.Max(0.000001, standard*0.001) {
 				userRate := revenue / standard
 				if *a.ProbeRate > userRate+0.000001 {
-					w.Messages = append(w.Messages, fmt.Sprintf("%s 当前上游声明倍率 %.4f 高于本日有效售价倍率 %.4f，疑似倍率倒挂", a.Name, *a.ProbeRate, userRate))
+					w.Messages = append(w.Messages, fmt.Sprintf("%s 当前上游探测倍率 %.4f 高于本日有效售价倍率 %.4f，疑似倍率倒挂", a.Name, *a.ProbeRate, userRate))
 					w.Status = "loss"
-				}
-			}
-			if accountStandard > 0 {
-				recorded := (expected - subscriptionCost) / accountStandard
-				if math.Abs(recorded-*a.ProbeRate) > 0.0001 {
-					w.Messages = append(w.Messages, fmt.Sprintf("%s 最新上游声明倍率 %.4f 与本日记账平均倍率 %.4f 不同；请结合倍率变动记录判断", a.Name, *a.ProbeRate, recorded))
 				}
 			}
 		}
@@ -214,6 +211,9 @@ func (s *BusinessMonitorService) buildDay(ctx context.Context, day, until time.T
 		}
 	}
 	for _, w := range wallets {
+		if day.Before(businessDay(time.Now())) && len(w.CostBasis) > 0 {
+			w.Messages = append(w.Messages, "历史用量按当前有效上游探测倍率重估，不代表当时的精确结算倍率")
+		}
 		if err := s.applyBalances(ctx, w, day, until); err != nil {
 			return nil, err
 		}
@@ -304,9 +304,6 @@ func (s *BusinessMonitorService) applyBalances(ctx context.Context, w *BusinessM
 		}
 	}
 	w.BalanceComplete = w.BalanceStart != nil && w.BalanceEnd != nil && !w.Partial
-	if w.RateStatus != "ok" {
-		w.Messages = append(w.Messages, "上游倍率为手工配置、过期或不支持探测；成本仍按本地历史快照估算")
-	}
 	return nil
 }
 
@@ -348,6 +345,11 @@ func (s *BusinessMonitorService) maintainDaily(ctx context.Context) error {
 		if err := s.saveDay(ctx, yesterday); err != nil {
 			return err
 		}
+	}
+	// Migrate one saved day per cycle, preserving its original revenue and
+	// balance evidence. Never rescan a year or overwrite expired usage with zero.
+	if repaired, err := s.repairLegacyCostDay(ctx); err != nil || repaired {
+		return err
 	}
 	// Backfill a single historical day per minute. No yearly raw-log scan.
 	var cursorText string
@@ -415,6 +417,9 @@ func (s *BusinessMonitorService) Report(ctx context.Context, period, date string
 		if err := json.Unmarshal(payload, &w); err != nil {
 			_ = rows.Close()
 			return nil, err
+		}
+		if w.CostVersion < businessCostVersion {
+			businessInvalidateLegacyCost(&w)
 		}
 		byDay[day] = append(byDay[day], w)
 	}
@@ -498,14 +503,14 @@ func (s *BusinessMonitorService) Report(ctx context.Context, period, date string
 }
 
 func businessSummarize(wallets []BusinessMonitorWallet) BusinessMonitorSummary {
-	s := BusinessMonitorSummary{}
+	s := BusinessMonitorSummary{ExpectedCost: businessAmount(0), GrossProfit: businessAmount(0)}
 	balance, observed, deviation := 0.0, 0.0, 0.0
-	knownBalance, knownProfit := 0, 0
+	knownBalance, knownProfit, knownDeviation := 0, 0, 0
 	for _, w := range wallets {
 		s.Revenue += w.Revenue
 		s.SubscriptionUsage += w.SubscriptionUsage
-		s.ExpectedCost += w.ExpectedCost
-		s.GrossProfit += w.GrossProfit
+		s.ExpectedCost = businessAddComplete(s.ExpectedCost, w.ExpectedCost)
+		s.GrossProfit = businessAddComplete(s.GrossProfit, w.GrossProfit)
 		if w.BalanceCost != nil {
 			balance += *w.BalanceCost
 			knownBalance++
@@ -516,6 +521,7 @@ func businessSummarize(wallets []BusinessMonitorWallet) BusinessMonitorSummary {
 		}
 		if w.Deviation != nil {
 			deviation += *w.Deviation
+			knownDeviation++
 		}
 		if w.Partial {
 			s.Partial = true
@@ -526,6 +532,8 @@ func businessSummarize(wallets []BusinessMonitorWallet) BusinessMonitorSummary {
 	}
 	if knownBalance > 0 {
 		s.BalanceCost = &balance
+	}
+	if knownDeviation > 0 {
 		s.Deviation = &deviation
 	}
 	if knownBalance < len(wallets) || len(wallets) == 0 {
@@ -534,19 +542,23 @@ func businessSummarize(wallets []BusinessMonitorWallet) BusinessMonitorSummary {
 	if knownProfit > 0 {
 		s.ObservedProfit = &observed
 	}
+	if len(wallets) == 0 {
+		s.ExpectedCost, s.GrossProfit = nil, nil
+	}
 	return s
 }
 
 func businessMergeWallet(to *BusinessMonitorWallet, from BusinessMonitorWallet) {
 	to.Revenue += from.Revenue
 	to.SubscriptionUsage += from.SubscriptionUsage
-	to.SubscriptionExpectedCost += from.SubscriptionExpectedCost
-	to.ExpectedCost += from.ExpectedCost
-	to.GrossProfit += from.GrossProfit
+	to.SubscriptionExpectedCost = businessAddComplete(to.SubscriptionExpectedCost, from.SubscriptionExpectedCost)
+	to.ExpectedCost = businessAddComplete(to.ExpectedCost, from.ExpectedCost)
+	to.GrossProfit = businessAddComplete(to.GrossProfit, from.GrossProfit)
+	to.CostBasis = append(to.CostBasis, from.CostBasis...)
 	to.RequestCount += from.RequestCount
 	to.Credits += from.Credits
 	to.InferredCredits += from.InferredCredits
-	to.Tolerance += from.Tolerance
+	to.Tolerance = businessAddComplete(to.Tolerance, from.Tolerance)
 	to.BalanceEnd = from.BalanceEnd
 	to.LastSampleAt = from.LastSampleAt
 	// Preserve sums for covered days without pretending missing days cost zero.

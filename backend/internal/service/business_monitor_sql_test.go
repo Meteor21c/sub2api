@@ -37,7 +37,11 @@ INSERT INTO accounts(id,name,credentials,extra) VALUES(1,'test supplier','{"base
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO usage_logs VALUES(1,2,0,10,10,0.1,$1)`, businessDay(time.Now()))
+	_, err = db.ExecContext(ctx, `INSERT INTO usage_logs VALUES(1,2,0,10,10,1,$1)`, businessDay(time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, `UPDATE accounts SET extra=jsonb_build_object('upstream_billing_probe',jsonb_build_object('status','ok','fresh_until',$1::text,'data',jsonb_build_object('billing_scope','token','resolved_rate_multiplier',0.15,'peak_rate_enabled',false))) WHERE id=1`, time.Now().Add(time.Hour).Format(time.RFC3339Nano))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +71,7 @@ INSERT INTO accounts(id,name,credentials,extra) VALUES(1,'test supplier','{"base
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Summary.Revenue != 2 || report.Summary.ExpectedCost != 1 || report.Summary.GrossProfit != 1 {
+	if report.Summary.Revenue != 2 || report.Summary.ExpectedCost == nil || *report.Summary.ExpectedCost != 1.5 || report.Summary.GrossProfit == nil || *report.Summary.GrossProfit != 0.5 {
 		t.Fatalf("wrong accounting: %+v", report.Summary)
 	}
 	if report.Summary.BalanceCost != nil || report.Summary.ObservedProfit != nil || !report.Summary.Partial {
@@ -113,5 +117,44 @@ INSERT INTO accounts(id,name,credentials,extra) VALUES(1,'test supplier','{"base
 	var oldRate, newRate float64
 	if err := db.QueryRowContext(ctx, `SELECT old_rate,new_rate FROM business_monitor_rate_changes WHERE kind='site' LIMIT 1`).Scan(&oldRate, &newRate); err != nil || oldRate != 0.2 || newRate != 0.25 {
 		t.Fatalf("rate history old=%v new=%v err=%v", oldRate, newRate, err)
+	}
+	for _, status := range []string{"stale", "failed", "unsupported", "unknown"} {
+		if _, err := db.ExecContext(ctx, `UPDATE accounts SET extra=jsonb_set(extra,'{upstream_billing_probe,status}',to_jsonb($1::text)) WHERE id=1`, status); err != nil {
+			t.Fatal(err)
+		}
+		report, err := s.Report(ctx, "day", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.Summary.Revenue != 2 || report.Summary.ExpectedCost != nil || report.Summary.GrossProfit != nil {
+			t.Fatalf("status %s incorrectly fell back to logged multiplier 1: %+v", status, report.Summary)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE accounts SET extra=jsonb_set(extra,'{upstream_billing_probe,status}','"ok"'::jsonb) WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	yesterday := businessDay(time.Now()).AddDate(0, 0, -1)
+	if _, err := db.ExecContext(ctx, `INSERT INTO usage_logs VALUES(1,2,0,10,10,1,$1)`, yesterday); err != nil {
+		t.Fatal(err)
+	}
+	legacy := BusinessMonitorWallet{Key: "https://supplier.example.test", Revenue: 2, RequestCount: 1, ExpectedCost: businessTestFloat(10), GrossProfit: businessTestFloat(-8)}
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO business_monitor_daily(day,wallet_key,payload) VALUES($1,$2,$3)`, yesterday.Format("2006-01-02"), legacy.Key, string(payload)); err != nil {
+		t.Fatal(err)
+	}
+	if repaired, err := s.repairLegacyCostDay(ctx); err != nil || !repaired {
+		t.Fatalf("legacy repair: %v %v", repaired, err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT payload FROM business_monitor_daily WHERE day=$1 AND wallet_key=$2`, yesterday.Format("2006-01-02"), legacy.Key).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(payload, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Revenue != 2 || legacy.ExpectedCost == nil || *legacy.ExpectedCost != 1.5 || legacy.GrossProfit == nil || *legacy.GrossProfit != 0.5 || legacy.CostVersion != businessCostVersion {
+		t.Fatalf("saved daily repair changed income or used local multiplier: %+v", legacy)
 	}
 }
