@@ -3,6 +3,55 @@
 
   const unavailableMessage = "视频已生成，但播放文件暂时读取失败。请点击“重新读取视频”，无需重新生成。";
 
+  function isRelayPlaybackUrl(value) {
+    try {
+      const url = new URL(value);
+      return !url.username && !url.password && url.origin === "https://media.meteor21c.fun" &&
+        !url.search && !url.hash && /^\/v1\/video\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(url.pathname);
+    } catch { return false; }
+  }
+
+  function videoBlob(blob) {
+    return blob?.size > 0 && typeof blob.type === "string" &&
+      (blob.type.startsWith("video/") || blob.type === "application/octet-stream");
+  }
+
+  // Reuse one controller for a task in the current login/history epoch. A
+  // metadata preload error and subsequent card renders must share one read.
+  function createRelayFallback({ fetchContent, isCurrent, applyPlayback, urlApi = globalThis.URL } = {}) {
+    let pending;
+    let discarded = false;
+    const revoked = new Set();
+    const current = () => typeof isCurrent === "function" && isCurrent();
+    function revoke(url) {
+      if (url?.startsWith("blob:") && !revoked.has(url)) {
+        revoked.add(url);
+        urlApi.revokeObjectURL(url);
+      }
+    }
+    async function readContent() {
+      try {
+        const blob = await fetchContent();
+        if (!current()) return null;
+        if (!videoBlob(blob)) throw new Error("Video content is unavailable");
+        return { url: urlApi.createObjectURL(blob), error: "" };
+      } catch {
+        return current() ? { url: "", error: unavailableMessage } : null;
+      }
+    }
+    return async (value) => {
+      if (discarded || !isRelayPlaybackUrl(value) || !current()) return null;
+      pending ||= readContent();
+      const playback = await pending;
+      if (!playback || discarded) return null;
+      if (!current()) { discarded = true; revoke(playback.url); return null; }
+      try {
+        if (applyPlayback(playback) !== true) { discarded = true; revoke(playback.url); return null; }
+      } catch { discarded = true; revoke(playback.url); return null; }
+      return playback;
+    };
+  }
+
   function playbackUrl(value, origin = globalThis.location?.origin || "https://api.meteor21c.fun") {
     if (typeof value !== "string" || !/^https?:\/\//i.test(value.trim())) return "";
     try {
@@ -44,12 +93,12 @@
     } catch { /* The authorized content endpoint remains available as fallback. */ }
     try {
       const blob = await fetchContent?.();
-      if (blob?.size && (blob.type.startsWith("video/") || blob.type === "application/octet-stream")) {
+      if (videoBlob(blob)) {
         return { url: urlApi.createObjectURL(blob), error: "" };
       }
     } catch { /* Preserve task success and expose a retryable delivery error. */ }
     return { url: "", error: unavailableMessage };
   }
 
-  globalThis.MeteorMediaVideoResults = { playbackUrl, responseUrl, resolvePlayback, unavailableMessage };
+  globalThis.MeteorMediaVideoResults = { playbackUrl, responseUrl, resolvePlayback, isRelayPlaybackUrl, createRelayFallback, unavailableMessage };
 })();

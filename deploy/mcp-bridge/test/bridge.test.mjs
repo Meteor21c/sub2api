@@ -295,6 +295,55 @@ test('video MCP returns the signed delivery URL after Sub2API rewrites video.url
   }
 })
 
+test('authenticated existing video tasks receive opaque relay links while retaining the original fallback', async () => {
+  const taskID = 'existing-relay-task-1'
+  let authorized = true
+  const mock = await startMock(async (req, res) => {
+    await readBody(req)
+    assert.equal(req.headers.authorization, 'Bearer sk-user-video')
+    res.writeHead(authorized ? 200 : 403, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(authorized ? { id: taskID, status: 'done', video: { url: `/v1/videos/${taskID}/content` } } : { error: 'denied' }))
+  })
+  const secret = 'b1'.repeat(32)
+  const bridge = await startBridge({ SUB2API_URL: mock.base, VIDEO_RELAY_BASE_URL: 'https://media.example.com', VIDEO_RELAY_SECRET: secret, VIDEO_RELAY_ALLOWED_HOSTS: 'storage.example.com' })
+  try {
+    const assetID = 'existingVideoAsset1234'
+    const exp = Math.floor(Date.now() / 1000) + 3600
+    const sig = crypto.createHmac('sha256', 'test-secret').update(`read:${assetID}:${exp}`).digest('base64url')
+    const fallback = `${bridge.base}/mcp/assets/${assetID}?exp=${exp}&op=read&sig=${sig}`
+    const taskPath = path.join(bridge.dir, 'tasks', `${crypto.createHash('sha256').update(taskID).digest('hex')}.json`)
+    const assetPath = path.join(bridge.dir, 'assets', `${assetID}.json`)
+    const task = { id: taskID, owner: 'provider-owner', deliveryURL: fallback, deliveryExpiresAt: exp }
+    const asset = { id: assetID, kind: 'remote-video', owner: task.owner, expiresAt: exp, sourceURL: 'https://storage.example.com/video.mp4?signature=origin-private' }
+    await writeFile(taskPath, JSON.stringify(task))
+    await writeFile(assetPath, JSON.stringify(asset))
+    const params = { name: 'get_video', arguments: { task_id: taskID } }
+    const result = await rpc(bridge.base, '/mcp/video', 'tools/call', params, 'sk-user-video')
+    const url = result.body.result.structuredContent.data.result_url
+    assert.ok(url.startsWith('https://media.example.com/v1/video/v1.'))
+    assert.ok(!JSON.stringify(result.body).includes('storage.example.com'))
+    assert.ok(!JSON.stringify(result.body).includes('origin-private'))
+    const [, iv, encrypted, tag] = new URL(url).pathname.slice('/v1/video/'.length).split('.')
+    const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(secret, 'hex'), Buffer.from(iv, 'base64url'))
+    decipher.setAAD(Buffer.from('meteor-video-relay:v1'))
+    decipher.setAuthTag(Buffer.from(tag, 'base64url'))
+    const payload = JSON.parse(Buffer.concat([decipher.update(Buffer.from(encrypted, 'base64url')), decipher.final()]).toString())
+    assert.equal(payload.id, assetID)
+    assert.equal(payload.src, asset.sourceURL)
+    assert.equal(JSON.parse(await readFile(taskPath, 'utf8')).deliveryURL, fallback)
+    await writeFile(assetPath, JSON.stringify({ ...asset, owner: 'different-owner' }))
+    const mismatched = await rpc(bridge.base, '/mcp/video', 'tools/call', params, 'sk-user-video')
+    assert.equal(mismatched.body.result.structuredContent.data.result_url, fallback)
+    authorized = false
+    const denied = await rpc(bridge.base, '/mcp/video', 'tools/call', params, 'sk-user-video')
+    assert.equal(denied.body.result.isError, true)
+    assert.ok(!JSON.stringify(denied.body).includes('media.example.com'))
+  } finally {
+    await stopBridge(bridge)
+    await stopMock(mock)
+  }
+})
+
 test('FZYinghe provider adapter keeps the provider token separate from the MCP user token', async () => {
   const requests = []
   const mock = await startMock(async (req, res) => {

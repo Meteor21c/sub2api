@@ -4,7 +4,7 @@
   const API_BASE = window.location.origin.replace(/\/$/, "");
   const state = {
     image: { key: "", models: [], busy: false, history: [], objectUrls: [], scope: "", restoreEpoch: 0 },
-    video: { key: "", models: [], busy: false, taskId: "", history: [], polling: new Set(), pollEpoch: 0, objectUrls: new Map(), scope: "", pricingKey: "", pricingQuote: null, pricingError: "", pricingFetchedAt: 0, pricingPending: false, pricingRetryAt: 0, catalogKey: "", catalog: null, catalogPending: false, catalogError: "", catalogFetchedAt: 0, catalogRetryAt: 0, pricingEpoch: 0 },
+    video: { key: "", models: [], busy: false, taskId: "", history: [], polling: new Set(), pollEpoch: 0, objectUrls: new Map(), relayFallbacks: new Map(), scope: "", pricingKey: "", pricingQuote: null, pricingError: "", pricingFetchedAt: 0, pricingPending: false, pricingRetryAt: 0, catalogKey: "", catalog: null, catalogPending: false, catalogError: "", catalogFetchedAt: 0, catalogRetryAt: 0, pricingEpoch: 0 },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -908,6 +908,39 @@
       const video = document.createElement("video");
       video.controls = true;
       video.preload = "metadata";
+      if (info.status === "success" && videoResults.isRelayPlaybackUrl(info.url)) {
+        const scope = mediaHistory.userScope();
+        const epoch = state.video.pollEpoch;
+        video.addEventListener("error", async () => {
+          const key = accountKeys.get("video", info.keyId);
+          const isCurrent = () => !!scope && !!key && mediaHistory.userScope() === scope &&
+            state.video.pollEpoch === epoch && accountKeys.get("video", info.keyId) === key &&
+            state.video.history.some(record => record.id === info.id && String(record.keyId) === String(info.keyId) && record.status === "success" &&
+              (record.url === info.url || record.url?.startsWith("blob:") && state.video.objectUrls.get(info.id) === record.url));
+          if (!isCurrent()) return;
+          const recoveryId = `${scope}:${epoch}:${info.id}`;
+          let recover = state.video.relayFallbacks.get(recoveryId);
+          if (!recover) {
+            recover = videoResults.createRelayFallback({
+              fetchContent: () => fetchVideoContent(info.id, key),
+              isCurrent,
+              applyPlayback: playback => rememberVideo({ id: info.id, status: "success", url: playback.url, reason: playback.error }, scope, epoch),
+            });
+            state.video.relayFallbacks.set(recoveryId, recover);
+          }
+          const playback = await recover(info.url);
+          if (playback && isCurrent()) setStatus("video", playback.url ? "视频已恢复，可在任务卡片中播放或下载。" : videoResults.unavailableMessage, playback.url ? "success" : "error");
+        }, { once: true });
+      } else if (info.status === "success" && info.url.startsWith("blob:")) {
+        const scope = mediaHistory.userScope();
+        const epoch = state.video.pollEpoch;
+        video.addEventListener("error", () => {
+          if (!scope || mediaHistory.userScope() !== scope || state.video.pollEpoch !== epoch || state.video.objectUrls.get(info.id) !== info.url) return;
+          if (rememberVideo({ id: info.id, status: "success", url: "", reason: videoResults.unavailableMessage }, scope, epoch)) {
+            setStatus("video", videoResults.unavailableMessage, "error");
+          }
+        }, { once: true });
+      }
       video.src = info.url;
       wrap.append(video);
       const link = document.createElement("a");
@@ -937,6 +970,7 @@
         retry.disabled = true;
         retry.textContent = "读取中…";
         try {
+          state.video.relayFallbacks.delete(`${scope}:${epoch}:${info.id}`);
           const result = await pollVideo(info.id, key, info.keyId, prompt, model, createdAt, scope, epoch);
           if (mediaHistory.userScope() !== scope || state.video.pollEpoch !== epoch) return;
           if (result?.url) setStatus("video", "视频已恢复，可在任务卡片中播放或下载。", "success");
@@ -959,6 +993,7 @@
   function revokeVideoObjectUrls() {
     mediaHistory.revokeObjectUrls([...state.video.objectUrls.values()]);
     state.video.objectUrls.clear();
+    state.video.relayFallbacks.clear();
   }
 
   function rememberVideo(record, scope, epoch) {
@@ -967,7 +1002,7 @@
       const previous = state.video.objectUrls.get(record.id);
       if (previous && previous !== record.url) mediaHistory.revokeObjectUrls([previous]);
       state.video.objectUrls.set(record.id, record.url);
-    } else if (record.url) {
+    } else if (typeof record.url === "string") {
       const previous = state.video.objectUrls.get(record.id);
       if (previous) mediaHistory.revokeObjectUrls([previous]);
       state.video.objectUrls.delete(record.id);
@@ -1002,13 +1037,19 @@
         if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) return null;
         const info = videoInfo(data, taskId);
         if (info.status === "success") {
-          const playback = await videoResults.resolvePlayback(data, {
-            origin: API_BASE,
-            getSignedResult: () => mcpCall("video", "get_video", { task_id: taskId }, key),
-            fetchContent: () => fetchVideoContent(taskId, key),
-          });
-          info.url = playback.url;
-          info.reason = playback.error || info.reason;
+          const recoveredUrl = state.video.objectUrls.get(taskId);
+          if (recoveredUrl) {
+            info.url = recoveredUrl;
+            info.reason = "";
+          } else {
+            const playback = await videoResults.resolvePlayback(data, {
+              origin: API_BASE,
+              getSignedResult: () => mcpCall("video", "get_video", { task_id: taskId }, key),
+              fetchContent: () => fetchVideoContent(taskId, key),
+            });
+            info.url = playback.url;
+            info.reason = playback.error || info.reason;
+          }
         }
         if (mediaHistory.userScope() !== scope || epoch !== state.video.pollEpoch) {
           if (info.url?.startsWith("blob:")) mediaHistory.revokeObjectUrls([info.url]);
@@ -1023,7 +1064,7 @@
         if (info.status === "success") {
           try {
             const settlement = await videoSettlement(taskId, keyId, model, scope);
-            if (settlement) rememberVideo({ ...info, keyId, prompt, model, createdAt, quote, tokenUsage: info.tokenUsage || previous?.tokenUsage, settlement }, scope, epoch);
+            if (settlement) rememberVideo({ id: taskId, settlement }, scope, epoch);
           } catch { /* The task is still successful if the billing read is temporarily unavailable. */ }
           return info;
         }

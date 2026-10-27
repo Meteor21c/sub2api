@@ -89,6 +89,23 @@ Omni 参考视频不支持同时生成音频。本站视频余额按用户指定
 
 ## 部署
 
+### 广州视频交付
+
+配置 `VIDEO_RELAY_BASE_URL=https://media.meteor21c.fun`、独立随机 32 字节的
+十六进制 `VIDEO_RELAY_SECRET`、精确主机列表 `VIDEO_RELAY_ALLOWED_HOSTS`，
+并将相同独立密钥和白名单配置到 `deploy/video-relay` 的广州服务。
+`VIDEO_RELAY_TTL_SECONDS` 默认 1800 秒，最大 3600 秒。
+此密钥不使用模型 API Key，也不替换已有 `MCP_ASSET_SIGNING_SECRET`。
+
+MCP `get_video` 先通过 Sub2API 校验原任务身份，再将已有短期结果映射为
+AES-256-GCM 加密能力链接。视频文件由广州直接向允许的上游存储读取，
+韩国不传输视频字节，源站路径及签名不以明文返回客户端。
+历史已完成视频无需重新生成或改写旧任务元数据；原韩国链接保留。
+关闭 `VIDEO_RELAY_BASE_URL` 后重新读取任务，即恢复韩国交付。
+网页播放器实际加载广州失败时，会只读同任务的韩国内容接口一次，
+不重发生成请求。视频读取允许最长 15 分钟，JSON 和创建请求超时不变。
+域名、证书与广州服务健康验证通过后再启用签发；广州日志不能记录 token 路径。
+
 韩国生产实例使用 GitHub Actions 预构建的固定 `mcpbridge-<commit>` 镜像，
 镜像存放在现有的 `ghcr.io/meteor21c/sub2api` 包中。服务器只拉取并切换
 `meteor-mcp-bridge` 服务，不在 2 核 / 2 GB 主机上构建。

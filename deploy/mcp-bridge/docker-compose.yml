@@ -20,6 +20,10 @@ services:
       MCP_DATA_DIR: "/data"
       FZYINGHE_BASE_URL: "https://api-aigc.fzyinghe.com"
       FZY_AUTO_ASSETS_ENABLED: "${FZY_AUTO_ASSETS_ENABLED:-true}"
+      VIDEO_RELAY_BASE_URL: "${VIDEO_RELAY_BASE_URL:-}"
+      VIDEO_RELAY_SECRET: "${VIDEO_RELAY_SECRET:-}"
+      VIDEO_RELAY_ALLOWED_HOSTS: "${VIDEO_RELAY_ALLOWED_HOSTS:-}"
+      VIDEO_RELAY_TTL_SECONDS: "${VIDEO_RELAY_TTL_SECONDS:-1800}"
     volumes:
       - ./data:/data
     networks:

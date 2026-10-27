@@ -6,6 +6,7 @@ import fsc from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { createFzyAssetQueue } from './fzy-asset-queue.mjs'
+import { createVideoRelay } from './video-relay.mjs'
 
 const PORT = Number(process.env.PORT || 3102)
 const SUB2API_URL = (process.env.SUB2API_URL || 'http://sub2api:8080').replace(/\/$/, '')
@@ -13,6 +14,12 @@ const PUBLIC_BASE_URL = (process.env.MCP_PUBLIC_BASE_URL || 'https://api.meteor2
 const FZYINGHE_BASE_URL = (process.env.FZYINGHE_BASE_URL || 'https://api-aigc.fzyinghe.com').replace(/\/$/, '')
 const FZY_AUTO_ASSETS_ENABLED = process.env.FZY_AUTO_ASSETS_ENABLED !== 'false'
 const ASSET_SECRET = process.env.MCP_ASSET_SIGNING_SECRET || ''
+const videoRelay = createVideoRelay({
+  baseURL: process.env.VIDEO_RELAY_BASE_URL,
+  secret: process.env.VIDEO_RELAY_SECRET,
+  allowedHosts: process.env.VIDEO_RELAY_ALLOWED_HOSTS,
+  ttlSeconds: process.env.VIDEO_RELAY_TTL_SECONDS,
+})
 const DATA_DIR = process.env.MCP_DATA_DIR || '/data'
 const MATERIAL_DIR = path.join(DATA_DIR, 'materials')
 const ASSET_DIR = path.join(DATA_DIR, 'assets')
@@ -28,6 +35,7 @@ const UPLOAD_TTL = 15 * 60
 const OUTPUT_TTL = 24 * 60 * 60
 const STORAGE_CLEANUP_INTERVAL_MS = 10 * 1000
 const IMAGE_UPSTREAM_TIMEOUT_MS = 5 * 60 * 1000
+const VIDEO_CONTENT_TIMEOUT_MS = 15 * 60 * 1000
 const uploadLocks = new Set()
 let storageQueue = Promise.resolve()
 
@@ -846,8 +854,15 @@ async function getVideo(token, taskID) {
       if (meta.id === taskID && Number(meta.deliveryExpiresAt) > Math.floor(Date.now() / 1000) &&
           url.origin === new URL(PUBLIC_BASE_URL).origin && url.pathname.startsWith('/mcp/assets/') &&
           safeId(id) && verifyAssetQuery(id, url.searchParams, 'read')) {
-        structured.data.result_url = url.toString()
-        structured.data.video_url = url.toString()
+        let playbackURL = url.toString()
+        if (videoRelay) {
+          const asset = await readMeta(id)
+          if (asset?.kind === 'remote-video' && asset.id === id && asset.owner === meta.owner) {
+            playbackURL = videoRelay.sign({ id, sourceURL: asset.sourceURL, expiresAt: Math.min(asset.expiresAt, Number(meta.deliveryExpiresAt)) }) || playbackURL
+          }
+        }
+        structured.data.result_url = playbackURL
+        structured.data.video_url = playbackURL
       }
     } catch { /* Older tasks may not have a signed delivery URL. */ }
     if (structured.data.result_url?.startsWith('/') && !structured.data.result_url.startsWith('//')) {
@@ -958,7 +973,7 @@ async function handleAsset(req, res, parsed) {
     try {
       const headers = {}
       if (req.headers.range) headers.Range = req.headers.range
-      const remote = await fetchPublic(meta.sourceURL, { headers, signal: AbortSignal.timeout(120000) })
+      const remote = await fetchPublic(meta.sourceURL, { headers, signal: AbortSignal.timeout(VIDEO_CONTENT_TIMEOUT_MS) })
       if (!remote.ok && remote.status !== 206) { text(res, 502, 'Remote video unavailable'); return }
       await streamRemote(res, remote, MAX_REMOTE_VIDEO, meta.contentType, req.method === 'HEAD')
     } catch { text(res, 502, 'Remote video unavailable') }
@@ -1195,7 +1210,7 @@ async function handleFzyProvider(req, res, parsed) {
       if (!success || !task.resultURL) { json(res, 409, { error: { message: 'video is not complete' } }); return }
       const resultURL = await checkedPublicURL(task.resultURL)
       if (!resultURL) { json(res, 502, { error: { message: 'provider returned an invalid video URL' } }); return }
-      const remote = await fetchPublic(resultURL, { headers: req.headers.range ? { Range: req.headers.range } : {}, signal: AbortSignal.timeout(120000) })
+      const remote = await fetchPublic(resultURL, { headers: req.headers.range ? { Range: req.headers.range } : {}, signal: AbortSignal.timeout(VIDEO_CONTENT_TIMEOUT_MS) })
       if (!remote.ok && remote.status !== 206) { json(res, 502, { error: { message: 'video content unavailable' } }); return }
       await streamRemote(res, remote, MAX_REMOTE_VIDEO, 'video/mp4', false)
       return

@@ -1,0 +1,68 @@
+name: Build Guangzhou Video Delivery
+
+on:
+  push:
+    branches: [codex/guangzhou-video-relay]
+    paths:
+      - deploy/mcp-bridge/**
+      - deploy/video-relay/**
+      - deploy/media-ui/**
+      - .github/workflows/guangzhou-video-delivery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: guangzhou-video-delivery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Test existing bridge and media UI with the new relay
+        run: |
+          node --test deploy/mcp-bridge/test/*.test.mjs
+          node --test deploy/video-relay/test/*.test.mjs
+          node --test deploy/media-ui/test/*.test.mjs
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - context: ./deploy/mcp-bridge
+            prefix: mcpbridge-
+            scope: meteor-mcp-bridge
+          - context: ./deploy/video-relay
+            prefix: videorelay-
+            scope: meteor-video-relay
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/meteor21c/sub2api
+          tags: type=sha,prefix=${{ matrix.prefix }},format=short
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.scope }}

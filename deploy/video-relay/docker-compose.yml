@@ -1,0 +1,25 @@
+services:
+  meteor-video-relay:
+    image: "${VIDEO_RELAY_IMAGE:?VIDEO_RELAY_IMAGE is required}"
+    container_name: meteor-video-relay
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 1.0
+    ports:
+      - "127.0.0.1:3103:3103"
+    environment:
+      PORT: "3103"
+      VIDEO_RELAY_SECRET: "${VIDEO_RELAY_SECRET:?VIDEO_RELAY_SECRET is required}"
+      VIDEO_RELAY_ALLOWED_HOSTS: "${VIDEO_RELAY_ALLOWED_HOSTS:?VIDEO_RELAY_ALLOWED_HOSTS is required}"
+      VIDEO_RELAY_CONCURRENCY: "${VIDEO_RELAY_CONCURRENCY:-8}"
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
