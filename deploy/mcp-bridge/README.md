@@ -115,3 +115,58 @@ curl -fsS http://127.0.0.1:3102/health
 
 真实图片/视频生成会产生上游费用，部署验收只应使用 `/health`、MCP
 `initialize`/`tools/list`、Sub2API `/v1/models` 和缺少 `model` 的校验请求。
+
+## Conservative delivery and storage limits
+
+Video playback/download stays behind this bridge on the current production
+host. It never redirects a browser to the provider's storage. Public-address
+validation is repeated on every redirect, and the validated DNS address is
+pinned to the actual HTTP(S) connection.
+
+- Complete videos stream to a separate `/data/video-cache` directory, with a
+  **5 GiB global**, **512 MiB per authenticated owner**, **256 MiB per file**
+  maximum. Only one full fill runs at a time; repeated fills for the same asset
+  share one promise, and other assets bypass a busy cache without queuing.
+- Cache entries expire after at most **24 hours**, independently of download
+  signatures. Every minute, TTL/LRU cleanup unlinks individually validated
+  cache paths; active readers/writers remain protected. An interrupted `.part`
+  never becomes readable, and crash leftovers are reclaimed after 10 minutes.
+- Below **10 GiB free disk** or above **80% used**, new caching is bypassed.
+  This cache is disposable and **must be excluded from backup archives**.
+- A normal authenticated successful status read can prefetch a complete video;
+  a billing-only status read never downloads it. A cold GET streams immediately
+  while one background fill prepares later hits. Cache failure keeps bounded live streaming and
+  never resubmits or changes billing for a completed generation.
+- Every cache hit is behind the existing signed asset or authenticated task
+  check. Signed links last **30 minutes** and can be renewed by an authenticated
+  task lookup. Holding a still-valid capability permits download until its
+  expiry; key revocation/logout does not instantly revoke an issued capability.
+- Live downloads and disk reads stop when clients disconnect or the two-minute
+  delivery deadline expires. Up to **8 GET** downloads and **2 HEAD** probes
+  run at once. HEAD uses HEAD upstream, or a one-byte probe if unsupported.
+  Cached files support a single byte Range, including suffix/open-ended forms.
+- Temporary uploads/generated images retain their **24-hour** expiry and
+  periodic cleanup, with configurable budgets capped at **256 MiB per key**
+  and **2 GiB globally**. The single image input limit remains 10 MiB and the
+  supported upload formats remain JPEG, PNG, and WebP.
+- Image requests are limited to one concurrent paid submission, uploads to two;
+  upstream image JSON is checked at declared and actual **48 MiB**, control
+  JSON at **2 MiB**, and decoded images at **32 MiB**. Busy image requests are
+  rejected before submission and should be retried by the user.
+- Compose defaults to **640 MiB** hard memory, **256 MiB** Node heap, **1 CPU**
+  and **128 PIDs**. These are ceilings, not preallocated RAM. Keep other apps'
+  headroom in mind before raising limits.
+- `/health` is liveness; internal `/ready` checks initialized storage, writable
+  data and a minimal disk reserve and exposes aggregate cache counters. Do not
+  proxy `/ready` publicly. Docker's healthcheck uses `/ready` without a paid call.
+- Upstream material-library idle expiry remains **7 days** with a daily scan;
+  active job references are retained. Terminal queue records retain the existing
+  30-day bound. `FZY_ASSET_CONCURRENCY=2` permits two distinct scopes while each
+  scope, persistence and destructive upstream cleanup keep their safety locks.
+
+Disable only the optional disk cache with `MCP_VIDEO_CACHE_ENABLED=false`.
+Limits can be reduced with `MCP_VIDEO_CACHE_MAX_BYTES`,
+`MCP_VIDEO_CACHE_OWNER_BYTES`, `MCP_VIDEO_CACHE_FILE_BYTES`,
+`MCP_VIDEO_CACHE_TTL_SECONDS`, `MCP_OWNER_STORAGE_BYTES`, and
+`MCP_GLOBAL_STORAGE_BYTES`; code caps prevent accidental oversized budgets.
+`MCP_VIDEO_CACHE_MIN_FREE_BYTES` can increase the free-space reserve.

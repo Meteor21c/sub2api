@@ -86,7 +86,24 @@ export interface BusinessReport {
   credits: BusinessCredit[]
 }
 
+export interface BusinessBalanceSnapshot {
+  generatedAt: string
+  accounts: {
+    id: string
+    name: string
+    baseUrl: string
+    balance: number | null
+    status: string
+    currency: string
+    planName: string
+    threshold: number
+  }[]
+}
+
 export const businessMonitorAPI = {
+  async getBalances(): Promise<BusinessBalanceSnapshot> {
+    return (await apiClient.get('/admin/business-monitor/balances', { timeout: 30000 })).data
+  },
   async getAccess(): Promise<{ enabled: boolean; allowed: boolean }> {
     return (await apiClient.get('/admin/business-monitor/access')).data
   },

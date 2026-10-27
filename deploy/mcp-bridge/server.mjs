@@ -6,6 +6,9 @@ import fsc from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { createFzyAssetQueue } from './fzy-asset-queue.mjs'
+import { requestPinnedPublic } from './public-fetch.mjs'
+import { createVideoCache, videoCacheOptions } from './video-cache.mjs'
+import { requestLifetime, serveCachedVideo, fetchVideoHead } from './video-delivery.mjs'
 
 const PORT = Number(process.env.PORT || 3102)
 const SUB2API_URL = (process.env.SUB2API_URL || 'http://sub2api:8080').replace(/\/$/, '')
@@ -21,8 +24,13 @@ const MAX_BODY = 8 * 1024 * 1024
 const MAX_MATERIAL = 10 * 1024 * 1024
 const MAX_OUTPUT = 32 * 1024 * 1024
 const MAX_REMOTE_VIDEO = 256 * 1024 * 1024
-const MAX_OWNER_STORAGE = 64 * 1024 * 1024
-const MAX_GLOBAL_STORAGE = 512 * 1024 * 1024
+const boundedBytes = (value, fallback, maximum) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Math.min(Number(value), maximum) : fallback
+const MAX_OWNER_STORAGE = boundedBytes(process.env.MCP_OWNER_STORAGE_BYTES, 256 * 1024 * 1024, 256 * 1024 * 1024)
+const MAX_GLOBAL_STORAGE = boundedBytes(process.env.MCP_GLOBAL_STORAGE_BYTES, 2 * 1024 * 1024 * 1024, 2 * 1024 * 1024 * 1024)
+const MAX_IMAGE_JSON = 48 * 1024 * 1024
+const MAX_CONTROL_JSON = 2 * 1024 * 1024
+const DELIVERY_URL_TTL = 30 * 60
+const DELIVERY_RENEW_WINDOW = 5 * 60
 const MATERIAL_TTL = 24 * 60 * 60
 const UPLOAD_TTL = 15 * 60
 const OUTPUT_TTL = 24 * 60 * 60
@@ -30,6 +38,10 @@ const STORAGE_CLEANUP_INTERVAL_MS = 10 * 1000
 const IMAGE_UPSTREAM_TIMEOUT_MS = 5 * 60 * 1000
 const uploadLocks = new Set()
 let storageQueue = Promise.resolve()
+let activeImageRequests = 0
+let activeUploads = 0
+let activeVideoDownloads = 0
+let activeVideoHeads = 0
 
 const imageModels = new Set([
   'gpt-image-1', 'gpt-image-1-mini', 'gpt-image-2', 'gpt-image-2-pro',
@@ -57,9 +69,14 @@ const fzyAssetQueue = FZY_AUTO_ASSETS_ENABLED && ASSET_SECRET ? await createFzyA
   baseURL: FZYINGHE_BASE_URL,
   fingerprint: fzyReferenceFingerprint,
   intervalMs: process.env.NODE_ENV === 'test' ? Number(process.env.FZY_ASSET_TEST_INTERVAL_MS) || 5000 : 5000,
+  concurrency: Number(process.env.FZY_ASSET_CONCURRENCY || 2),
   log,
 }) : null
 fzyAssetQueue?.start()
+const videoCache = await createVideoCache({
+  directory: process.env.MCP_VIDEO_CACHE_DIR || path.join(DATA_DIR, 'video-cache'),
+  ...videoCacheOptions(), fetchRemote: fetchPublic, log,
+})
 
 function log(message, extra = {}) {
   // Never log Authorization headers, request bodies, or provider URLs.
@@ -373,15 +390,19 @@ function ensureStorageCapacity(usage, owner, bytes) {
   if ((usage.owners.get(owner) || 0) + bytes > MAX_OWNER_STORAGE) throw new Error('your temporary media storage limit has been reached')
 }
 
-async function checkedPublicURL(value) {
+async function resolvedPublicURL(value) {
   const safe = publicURL(value)
-  if (!safe) return ''
-  const host = new URL(safe).hostname
-  if (net.isIP(host)) return safe
+  if (!safe) return null
+  const host = new URL(safe).hostname.replace(/^\[/, '').replace(/\]$/, '')
+  if (net.isIP(host)) return { url: safe, addresses: [{ address: host, family: net.isIP(host) }] }
   let addresses
-  try { addresses = await dns.lookup(host, { all: true, verbatim: true }) } catch { return '' }
-  if (!addresses.length || addresses.some(({ address }) => privateIPAddress(address))) return ''
-  return safe
+  try { addresses = await dns.lookup(host, { all: true, verbatim: true }) } catch { return null }
+  if (!addresses.length || addresses.some(({ address }) => privateIPAddress(address))) return null
+  return { url: safe, addresses }
+}
+
+async function checkedPublicURL(value) {
+  return (await resolvedPublicURL(value))?.url || ''
 }
 
 async function validateSub2APIToken(token) {
@@ -394,13 +415,14 @@ async function validateSub2APIToken(token) {
 async function fetchPublic(value, options = {}) {
   let current = String(value || '')
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const safe = await checkedPublicURL(current)
-    if (!safe) throw new Error('remote URL is not public')
-    const response = await fetch(safe, { ...options, redirect: 'manual' })
+    const resolved = await resolvedPublicURL(current)
+    if (!resolved) throw new Error('remote URL is not public')
+    const safe = resolved.url
+    const response = await requestPinnedPublic(safe, resolved.addresses, options)
     if (![301, 302, 303, 307, 308].includes(response.status)) return response
     const location = response.headers.get('location')
-    if (!location || redirects === 5) throw new Error('remote URL has too many redirects')
     try { await response.body?.cancel() } catch { /* Ignore a redirect body. */ }
+    if (!location || redirects === 5) throw new Error('remote URL has too many redirects')
     try { current = new URL(location, safe).toString() } catch { throw new Error('remote URL redirect is invalid') }
   }
   throw new Error('remote URL has too many redirects')
@@ -415,56 +437,91 @@ function remoteSizeAllowed(headers, limit) {
 }
 
 function remoteContentType(headers, fallback) {
+  const encoding = String(headers.get('content-encoding') || 'identity').toLowerCase()
+  if (encoding !== 'identity') return ''
   const value = String(headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase()
   if (value && !value.startsWith('video/') && value !== 'application/octet-stream') return ''
   return value || fallback
 }
 
-async function streamRemote(res, remote, limit, fallbackType, headOnly = false) {
-  if (!remoteSizeAllowed(remote.headers, limit)) {
-    if (!res.headersSent) json(res, 413, { error: { message: 'remote video exceeds delivery limit' } })
-    else res.destroy()
-    return
-  }
-  const contentType = remoteContentType(remote.headers, fallbackType)
-  if (!contentType) {
-    if (!res.headersSent) json(res, 502, { error: { message: 'provider returned a non-video response' } })
-    else res.destroy()
-    return
-  }
-  const responseHeaders = {
-    'Content-Type': contentType, 'Cache-Control': 'private, max-age=300',
-    'Accept-Ranges': 'bytes', 'Cross-Origin-Resource-Policy': 'cross-origin',
-    'X-Content-Type-Options': 'nosniff',
-  }
-  for (const key of ['content-length', 'content-range']) if (remote.headers.get(key)) responseHeaders[key] = remote.headers.get(key)
-  res.writeHead(remote.status, responseHeaders)
-  if (headOnly || !remote.body) { res.end(); return }
-  let total = 0
+async function streamRemote(res, remote, limit, fallbackType, headOnly = false, rangeProbe = false) {
   try {
-    for await (const chunk of remote.body) {
-      total += chunk.length
-      if (total > limit) { res.destroy(); return }
-      if (!res.write(chunk)) await new Promise((resolve) => res.once('drain', resolve))
+    if (!remoteSizeAllowed(remote.headers, limit)) {
+      if (!res.headersSent) json(res, 413, { error: { message: 'remote video exceeds delivery limit' } })
+      else res.destroy()
+      return
     }
-    res.end()
-  } catch { res.destroy() }
+    const contentType = remoteContentType(remote.headers, fallbackType)
+    if (!contentType) {
+      if (!res.headersSent) json(res, 502, { error: { message: 'provider returned a non-video response' } })
+      else res.destroy()
+      return
+    }
+    const responseHeaders = {
+      'Content-Type': contentType, 'Cache-Control': 'private, no-store',
+      'Accept-Ranges': 'bytes', 'Cross-Origin-Resource-Policy': 'cross-origin',
+      'X-Content-Type-Options': 'nosniff', 'X-Meteor-Video-Cache': 'MISS',
+    }
+    for (const key of ['content-length', 'content-range']) if (remote.headers.get(key)) responseHeaders[key] = remote.headers.get(key)
+    // A HEAD fallback probes only one byte. Present full object headers instead
+    // of falsely reporting the one-byte probe as a one-byte video.
+    let status = remote.status
+    if (headOnly && rangeProbe) {
+      const total = String(remote.headers.get('content-range') || '').match(/\/(\d+)$/)?.[1]
+      delete responseHeaders['content-range']
+      delete responseHeaders['content-length']
+      if (total) responseHeaders['content-length'] = total
+      status = 200
+    }
+    res.writeHead(status, responseHeaders)
+    if (headOnly || !remote.body) { res.end(); return }
+    const reader = remote.body.getReader()
+    const cancel = () => { void reader.cancel().catch(() => {}) }
+    res.once('close', cancel)
+    let total = 0
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        total += value.byteLength
+        if (total > limit || res.destroyed) { res.destroy(); return }
+        if (!res.write(value)) await new Promise((resolve, reject) => {
+          const finish = () => { res.removeListener('drain', drained); res.removeListener('close', closed) }
+          const drained = () => { finish(); resolve() }
+          const closed = () => { finish(); reject(new Error('download closed')) }
+          res.once('drain', drained); res.once('close', closed)
+        })
+      }
+      res.end()
+    } finally {
+      res.removeListener('close', cancel)
+      await reader.cancel().catch(() => {})
+      reader.releaseLock()
+    }
+  } catch { res.destroy() } finally {
+    try { await remote.body?.cancel() } catch { /* a consumed stream may be locked */ }
+  }
 }
 
 async function readResponseLimited(response, limit) {
-  if (!remoteSizeAllowed(response.headers, limit)) return null
+  if (!remoteSizeAllowed(response.headers, limit)) {
+    try { await response.body?.cancel() } catch { /* no bytes should be read */ }
+    return null
+  }
   if (!response.body) return Buffer.alloc(0)
+  const reader = response.body.getReader()
   const chunks = []
   let total = 0
-  for await (const chunk of response.body) {
-    total += chunk.length
-    if (total > limit) {
-      try { await response.body.cancel() } catch { /* Ignore cancellation errors. */ }
-      return null
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > limit) return null
+      chunks.push(Buffer.from(value))
     }
-    chunks.push(chunk)
-  }
-  return Buffer.concat(chunks)
+    return Buffer.concat(chunks, total)
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
 }
 
 function normalizeModel(model) {
@@ -638,8 +695,34 @@ async function storeRemoteVideo(sourceURL, owner) {
     const exp = Math.floor(Date.now() / 1000) + OUTPUT_TTL
     const meta = { id, kind: 'remote-video', owner, contentType: 'video/mp4', sizeBytes: 1, expiresAt: exp, sourceURL: safe }
     await writeJSONAtomic(path.join(ASSET_DIR, `${id}.json`), meta)
-    return { id, expiresAt: exp, url: assetURL(id, exp, 'read') }
+    const linkExpiresAt = Math.min(exp, Math.floor(Date.now() / 1000) + DELIVERY_URL_TTL)
+    return { id, expiresAt: linkExpiresAt, url: assetURL(id, linkExpiresAt, 'read') }
   })
+}
+
+async function renewTaskDelivery(taskMeta, sourceURL, owner) {
+  const now = Math.floor(Date.now() / 1000)
+  let meta = null
+  try {
+    const url = new URL(String(taskMeta?.deliveryURL || ''))
+    const id = decodeURIComponent(url.pathname.slice('/mcp/assets/'.length))
+    if (url.origin === new URL(PUBLIC_BASE_URL).origin && url.pathname.startsWith('/mcp/assets/') && safeId(id)) {
+      const candidate = await readMeta(id)
+      if (candidate?.kind === 'remote-video' && candidate.owner === owner && candidate.expiresAt > now) meta = candidate
+    }
+  } catch { /* An old task can safely acquire new signed metadata. */ }
+  if (meta) {
+    const expiresAt = Math.min(meta.expiresAt, now + DELIVERY_URL_TTL)
+    if (!taskMeta.deliveryURL || Number(taskMeta.deliveryExpiresAt) <= now + DELIVERY_RENEW_WINDOW) {
+      taskMeta.deliveryURL = assetURL(meta.id, expiresAt, 'read')
+      taskMeta.deliveryExpiresAt = expiresAt
+    }
+    return { taskMeta, meta }
+  }
+  const delivery = await storeRemoteVideo(sourceURL, owner)
+  taskMeta.deliveryURL = delivery.url
+  taskMeta.deliveryExpiresAt = delivery.expiresAt
+  return { taskMeta, meta: await readMeta(delivery.id) }
 }
 
 async function upstreamJSON(pathname, token, options = {}) {
@@ -652,7 +735,8 @@ async function upstreamJSON(pathname, token, options = {}) {
     body: options.body === undefined ? undefined : (typeof options.body === 'string' ? options.body : JSON.stringify(options.body)),
     signal: AbortSignal.timeout(options.timeoutMs || 120000),
   })
-  const buffer = Buffer.from(await response.arrayBuffer())
+  const buffer = await readResponseLimited(response, options.maxResponseBytes || MAX_CONTROL_JSON)
+  if (!buffer) throw new Error('upstream response exceeded safe delivery limit; do not retry generation automatically')
   const data = parseJSON(buffer)
   return { response, buffer, data }
 }
@@ -687,7 +771,8 @@ async function createImage(token, args) {
         method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, body: form,
         signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
       })
-      const buffer = Buffer.from(await response.arrayBuffer())
+      const buffer = await readResponseLimited(response, MAX_IMAGE_JSON)
+      if (!buffer) throw new Error('Image response exceeded safe delivery limit; it may still be billed, do not retry automatically')
       result = { response, buffer, data: parseJSON(buffer) }
     } else {
       result = await upstreamJSON('/v1/images/generations', token, {
@@ -695,7 +780,7 @@ async function createImage(token, args) {
           model, prompt, n, response_format: 'b64_json',
           ...(args.size ? { size: String(args.size) } : {}),
           ...(args.quality ? { quality: String(args.quality) } : {}),
-        }, timeoutMs: IMAGE_UPSTREAM_TIMEOUT_MS,
+        }, timeoutMs: IMAGE_UPSTREAM_TIMEOUT_MS, maxResponseBytes: MAX_IMAGE_JSON,
       })
     }
   } catch (error) {
@@ -705,7 +790,7 @@ async function createImage(token, args) {
     throw error
   }
   if (!result.response.ok) return mcpToolError(`Sub2API image request returned HTTP ${result.response.status}: ${String(result.buffer).slice(0, 800)}`)
-  const rows = Array.isArray(result.data?.data) ? result.data.data : []
+  const rows = Array.isArray(result.data?.data) ? result.data.data.slice(0, 4) : []
   if (!rows.length) return mcpToolError('Sub2API returned no image output; do not retry automatically')
   const content = []
   const images = []
@@ -716,22 +801,23 @@ async function createImage(token, args) {
     let mime = 'image/png'
     if (typeof row.b64_json === 'string' && row.b64_json) {
       const raw = row.b64_json.replace(/^data:[^;]+;base64,/, '')
+      if (raw.length > Math.ceil(MAX_OUTPUT / 3) * 4 + 4) continue
       bytes = Buffer.from(raw, 'base64')
       mime = row.b64_json.startsWith('data:image/jpeg') ? 'image/jpeg' : row.b64_json.startsWith('data:image/webp') ? 'image/webp' : 'image/png'
     } else if (typeof row.url === 'string' && row.url) {
       const imageURL = await checkedPublicURL(row.url)
       if (!imageURL) continue
       const fetched = await fetchPublic(imageURL, { signal: AbortSignal.timeout(30000) })
-      if (!fetched.ok) continue
+      if (!fetched.ok) { await fetched.body?.cancel().catch(() => {}); continue }
       const declared = String(fetched.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase()
-      if (declared && declared !== 'application/octet-stream' && !declared.startsWith('image/')) continue
+      if (declared && declared !== 'application/octet-stream' && !declared.startsWith('image/')) { await fetched.body?.cancel().catch(() => {}); continue }
       const array = await readResponseLimited(fetched, MAX_OUTPUT)
       if (!array) continue
       bytes = array
       mime = declared || 'image/png'
     }
     const detected = detectImageType(bytes)
-    if (!detected || !bytes.length || !mime.startsWith('image/')) continue
+    if (!detected || !bytes.length || bytes.length > MAX_OUTPUT || !mime.startsWith('image/')) continue
     if (mime !== detected && mime !== 'image/png') continue
     mime = detected
     content.push({ type: 'image', data: bytes.toString('base64'), mimeType: mime })
@@ -841,13 +927,27 @@ async function getVideo(token, taskID) {
     // for the same task, which MCP clients can open without a Bearer header.
     try {
       const meta = JSON.parse(await fs.readFile(taskMetaPath(taskID), 'utf8'))
-      const url = new URL(String(meta.deliveryURL || ''))
+      let url = new URL(String(meta.deliveryURL || ''))
       const id = decodeURIComponent(url.pathname.slice('/mcp/assets/'.length))
-      if (meta.id === taskID && Number(meta.deliveryExpiresAt) > Math.floor(Date.now() / 1000) &&
-          url.origin === new URL(PUBLIC_BASE_URL).origin && url.pathname.startsWith('/mcp/assets/') &&
-          safeId(id) && verifyAssetQuery(id, url.searchParams, 'read')) {
-        structured.data.result_url = url.toString()
-        structured.data.video_url = url.toString()
+      if (meta.id === taskID && url.origin === new URL(PUBLIC_BASE_URL).origin &&
+          url.pathname.startsWith('/mcp/assets/') && safeId(id)) {
+        const now = Math.floor(Date.now() / 1000)
+        if (Number(meta.deliveryExpiresAt) <= now + DELIVERY_RENEW_WINDOW) {
+          // The preceding Sub2API lookup authenticated this exact task for the
+          // caller. Renew only the task's existing local asset, never a raw URL
+          // supplied by a client and never by submitting another generation.
+          const asset = await readMeta(id)
+          if (asset?.kind === 'remote-video' && asset.expiresAt > now) {
+            meta.deliveryExpiresAt = Math.min(asset.expiresAt, now + DELIVERY_URL_TTL)
+            meta.deliveryURL = assetURL(id, meta.deliveryExpiresAt, 'read')
+            await writeJSONAtomic(taskMetaPath(taskID), meta)
+            url = new URL(meta.deliveryURL)
+          }
+        }
+        if (Number(meta.deliveryExpiresAt) > now && verifyAssetQuery(id, url.searchParams, 'read')) {
+          structured.data.result_url = url.toString()
+          structured.data.video_url = url.toString()
+        }
       }
     } catch { /* Older tasks may not have a signed delivery URL. */ }
     if (structured.data.result_url?.startsWith('/') && !structured.data.result_url.startsWith('//')) {
@@ -862,7 +962,11 @@ async function getVideo(token, taskID) {
 async function callTool(token, name, args) {
   try {
     if (name === 'create_material_upload') return await createMaterial(token, args)
-    if (name === 'create_image') return await createImage(token, args)
+    if (name === 'create_image') {
+      if (activeImageRequests >= 1) return mcpToolError('Image service is busy; no request was submitted or charged. Please try again shortly.')
+      activeImageRequests++
+      try { return await createImage(token, args) } finally { activeImageRequests-- }
+    }
     if (name === 'create_video') return await createVideo(token, args)
     if (name === 'get_video') return await getVideo(token, String(args?.task_id || '').trim())
     return mcpToolError(`unknown tool: ${name}`)
@@ -919,6 +1023,18 @@ function verifyAssetQuery(id, query, op) {
   return crypto.timingSafeEqual(supplied, wanted)
 }
 
+function claimVideoRequest(req) {
+  const head = req.method === 'HEAD'
+  if (head ? activeVideoHeads >= 2 : activeVideoDownloads >= 8) return null
+  if (head) activeVideoHeads++; else activeVideoDownloads++
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    if (head) activeVideoHeads--; else activeVideoDownloads--
+  }
+}
+
 async function handleAsset(req, res, parsed) {
   let id
   try { id = decodeURIComponent(parsed.pathname.slice('/mcp/assets/'.length).split('/')[0]) } catch {
@@ -934,7 +1050,9 @@ async function handleAsset(req, res, parsed) {
     // presigned URL. Claim the URL before consuming the body so only one
     // request can complete, while a failed request releases the claim.
     if (uploadLocks.has(id)) { text(res, 404, 'Not found'); return }
+    if (activeUploads >= 2) { text(res, 429, 'Upload service is busy; retry shortly'); return }
     uploadLocks.add(id)
+    activeUploads++
     const type = String(req.headers['content-type'] || '').split(';', 1)[0].toLowerCase()
     try {
       if (type !== meta.contentType) { text(res, 415, 'Content-Type does not match upload request'); return }
@@ -949,19 +1067,38 @@ async function handleAsset(req, res, parsed) {
       await writeJSONAtomic(path.join(MATERIAL_DIR, `${id}.json`), meta)
       res.writeHead(200, { 'Content-Length': '0', 'Cache-Control': 'no-store' }); res.end()
     } catch (error) { json(res, error.statusCode || 500, { error: error.message || 'upload failed' })
-    } finally { uploadLocks.delete(id) }
+    } finally { uploadLocks.delete(id); activeUploads-- }
     return
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') { text(res, 405, 'Method not allowed'); return }
   if (meta.kind === 'material' && !meta.uploaded) { text(res, 404, 'Not found'); return }
   if (meta.kind === 'remote-video') {
+    const releaseVideo = claimVideoRequest(req)
+    if (!releaseVideo) { text(res, 429, 'Video downloads are busy; retry shortly', { 'Retry-After': '3' }); return }
+    const lifetime = requestLifetime(req, res)
     try {
+      const cached = await videoCache.acquire(meta)
+      if (cached) { await serveCachedVideo(req, res, cached); return }
+      // Keep first-byte latency unchanged: a cold download streams at once,
+      // while one deduplicated background fill prepares subsequent reads.
+      // Only one full fill is allowed globally and busy tasks do not queue.
+      if (req.method === 'GET') void videoCache.ensure(meta).catch(() => {})
+      if (lifetime.signal.aborted || res.destroyed) return
       const headers = {}
-      if (req.headers.range) headers.Range = req.headers.range
-      const remote = await fetchPublic(meta.sourceURL, { headers, signal: AbortSignal.timeout(120000) })
-      if (!remote.ok && remote.status !== 206) { text(res, 502, 'Remote video unavailable'); return }
-      await streamRemote(res, remote, MAX_REMOTE_VIDEO, meta.contentType, req.method === 'HEAD')
-    } catch { text(res, 502, 'Remote video unavailable') }
+      if (req.headers.range) {
+        if (!/^bytes=\d*-\d*$/.test(req.headers.range)) { text(res, 416, 'Only one byte range is supported'); return }
+        headers.Range = req.headers.range
+      }
+      const { response: remote, rangeProbe = false } = req.method === 'HEAD'
+        ? await fetchVideoHead(fetchPublic, meta.sourceURL, { headers, signal: lifetime.signal })
+        : { response: await fetchPublic(meta.sourceURL, { headers, signal: lifetime.signal }) }
+      if (!remote.ok && remote.status !== 206) {
+        await remote.body?.cancel().catch(() => {})
+        text(res, remote.status === 416 ? 416 : 502, 'Video source unavailable or expired; do not regenerate automatically'); return
+      }
+      await streamRemote(res, remote, MAX_REMOTE_VIDEO, meta.contentType, req.method === 'HEAD', rangeProbe)
+    } catch { if (!res.destroyed && !res.headersSent) text(res, 502, 'Video source unavailable or expired; do not regenerate automatically')
+    } finally { lifetime.close(); releaseVideo() }
     return
   }
   const file = dataPath(meta)
@@ -1172,7 +1309,8 @@ async function handleFzyProvider(req, res, parsed) {
     const model = normalizeModel(libraryJob?.model || taskMeta?.model || 'doubao-seedance-2.0-fast')
     const providerTaskID = libraryJob?.upstreamTaskID || taskID
     const upstream = await fetch(fzyTaskEndpoint(model, providerTaskID), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(120000) })
-    const buffer = Buffer.from(await upstream.arrayBuffer())
+    const buffer = await readResponseLimited(upstream, MAX_CONTROL_JSON)
+    if (!buffer) { json(res, 502, { error: { message: 'provider response exceeds safe limit' } }); return }
     const raw = parseJSON(buffer) || {}
     const envelopeStatus = fzyEnvelopeStatus(raw, upstream.status)
     if (envelopeStatus >= 400) {
@@ -1195,24 +1333,36 @@ async function handleFzyProvider(req, res, parsed) {
       if (!success || !task.resultURL) { json(res, 409, { error: { message: 'video is not complete' } }); return }
       const resultURL = await checkedPublicURL(task.resultURL)
       if (!resultURL) { json(res, 502, { error: { message: 'provider returned an invalid video URL' } }); return }
-      const remote = await fetchPublic(resultURL, { headers: req.headers.range ? { Range: req.headers.range } : {}, signal: AbortSignal.timeout(120000) })
-      if (!remote.ok && remote.status !== 206) { json(res, 502, { error: { message: 'video content unavailable' } }); return }
-      await streamRemote(res, remote, MAX_REMOTE_VIDEO, 'video/mp4', false)
+      const releaseVideo = claimVideoRequest(req)
+      if (!releaseVideo) { text(res, 429, 'Video downloads are busy; retry shortly', { 'Retry-After': '3' }); return }
+      const lifetime = requestLifetime(req, res)
+      try {
+        const deliveryOwner = libraryOwner ? ownerHash(`${token}\0${libraryOwner}`) : ownerHash(token)
+        const delivery = await renewTaskDelivery({ id: taskID, owner: ownerHash(token), ...(taskMeta || {}), model }, resultURL, deliveryOwner)
+        await writeJSONAtomic(taskMetaPath(taskID), delivery.taskMeta)
+        const cached = delivery.meta && await videoCache.acquire(delivery.meta)
+        if (cached) { await serveCachedVideo(req, res, cached); return }
+        const remote = await fetchPublic(resultURL, { headers: req.headers.range ? { Range: req.headers.range } : {}, signal: lifetime.signal })
+        if (!remote.ok && remote.status !== 206) { await remote.body?.cancel().catch(() => {}); json(res, 502, { error: { message: 'video content unavailable or expired' } }); return }
+        await streamRemote(res, remote, MAX_REMOTE_VIDEO, 'video/mp4', false)
+        if (delivery.meta) void videoCache.ensure(delivery.meta).catch(() => {})
+      } finally { lifetime.close(); releaseVideo() }
       return
     }
     // The backend's low-frequency billing reconciler only needs status and
     // usage. Never download a potentially large video for this read-only poll.
     const billingOnly = req.headers['x-meteor-billing-only'] === '1'
     if (success && task.resultURL && !billingOnly) {
-      if (!taskMeta?.deliveryURL) {
-        try {
-          const delivery = await storeRemoteVideo(task.resultURL, ownerHash(token))
-          taskMeta = { id: taskID, owner: ownerHash(token), ...(taskMeta || {}), model, deliveryURL: delivery.url, deliveryExpiresAt: delivery.expiresAt }
-          await writeJSONAtomic(taskMetaPath(taskID), taskMeta)
-        } catch (error) { log('video_delivery_store_failed', { task_id: taskID, error: error.message }) }
-      }
+      try {
+        const deliveryOwner = libraryOwner ? ownerHash(`${token}\0${libraryOwner}`) : ownerHash(token)
+        taskMeta = { id: taskID, owner: ownerHash(token), ...(taskMeta || {}), model }
+        const delivery = await renewTaskDelivery(taskMeta, task.resultURL, deliveryOwner)
+        await writeJSONAtomic(taskMetaPath(taskID), delivery.taskMeta)
+        if (delivery.meta) void videoCache.ensure(delivery.meta).catch(() => {})
+      } catch { log('video_delivery_store_failed', { task_id: taskID }) }
     }
-    const url = billingOnly ? task.resultURL : first(taskMeta?.deliveryURL, task.resultURL)
+    const url = billingOnly ? task.resultURL : (Number(taskMeta?.deliveryExpiresAt) > Math.floor(Date.now() / 1000)
+      ? taskMeta.deliveryURL : `${PUBLIC_BASE_URL}/v1/videos/${encodeURIComponent(taskID)}/content`)
     const progress = libraryJob ? { ...fzyAssetProgress(libraryJob), stage: failure ? 'failed' : success ? 'completed' : 'video_generating' } : {}
     json(res, 200, failure ? { id: taskID, status: 'failed', model, ...progress, error: { message: task.reason || 'video generation failed' } } : success ? { id: taskID, status: 'done', model, ...progress, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}) } : { id: taskID, status: 'pending', model, ...progress })
     return
@@ -1261,7 +1411,8 @@ async function handleFzyProvider(req, res, parsed) {
       return
     }
     const upstream = await fetch(fzyTaskEndpoint(model), { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json', ...(req.headers['idempotency-key'] ? { 'Idempotency-Key': req.headers['idempotency-key'] } : {}) }, body: JSON.stringify(requestBody), signal: AbortSignal.timeout(120000) })
-    const buffer = Buffer.from(await upstream.arrayBuffer())
+    const buffer = await readResponseLimited(upstream, MAX_CONTROL_JSON)
+    if (!buffer) { json(res, 502, { error: { message: 'provider response exceeds safe limit' } }); return }
     const raw = parseJSON(buffer) || {}
     const envelopeStatus = fzyEnvelopeStatus(raw, upstream.status)
     if (envelopeStatus >= 400) {
@@ -1282,6 +1433,15 @@ async function handleFzyProvider(req, res, parsed) {
 const server = http.createServer(async (req, res) => {
   const parsed = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
   try {
+    if (parsed.pathname === '/ready' && req.method === 'GET') {
+      try {
+        await fs.access(DATA_DIR, fsc.constants.W_OK)
+        const disk = await fs.statfs(DATA_DIR)
+        const ready = Number(disk.bavail) * Number(disk.bsize) >= 256 * 1024 * 1024
+        json(res, ready ? 200 : 503, { status: ready ? 'ready' : 'low_disk', service: 'meteor-mcp-bridge', video_cache: videoCache.metrics() })
+      } catch { json(res, 503, { status: 'not_ready', service: 'meteor-mcp-bridge' }) }
+      return
+    }
     if (parsed.pathname === '/health' && req.method === 'GET') { json(res, 200, { status: 'ok', service: 'meteor-mcp-bridge' }); return }
     if (parsed.pathname.startsWith('/mcp/assets/')) { await handleAsset(req, res, parsed); return }
     if (parsed.pathname === '/mcp' || parsed.pathname === '/mcp/image' || parsed.pathname === '/mcp/video') {
@@ -1302,5 +1462,5 @@ server.headersTimeout = 70000
 server.listen(PORT, '0.0.0.0', () => log('started', { port: PORT, sub2api: SUB2API_URL, public_base: PUBLIC_BASE_URL }))
 
 for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
-  void Promise.resolve(fzyAssetQueue?.stop()).finally(() => server.close(() => process.exit(0)))
+  void Promise.allSettled([Promise.resolve(fzyAssetQueue?.stop()), videoCache.close()]).finally(() => server.close(() => process.exit(0)))
 })

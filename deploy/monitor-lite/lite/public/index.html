@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="Meteor API 轻量上游余额监控">
+    <title>Meteor Balance · 上游余额监控</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow"><span class="live-dot"></span> METEOR BALANCE</p>
+          <h1>上游余额，一眼看清</h1>
+          <p class="intro">仅保留余额、账户状态与每日告警，轻量运行。</p>
+        </div>
+        <button id="refreshButton" class="refresh-button" type="button">
+          <span aria-hidden="true">↻</span>
+          立即刷新
+        </button>
+      </header>
+
+      <section class="summary" aria-label="余额概览">
+        <article class="summary-card total-card">
+          <span>账户余额合计</span>
+          <strong id="totalBalance">—</strong>
+          <small>按币种分别汇总，不进行汇率换算</small>
+        </article>
+        <article class="summary-card">
+          <span>正常账户</span>
+          <strong id="readyCount">—</strong>
+          <small id="readyDetail">正在读取</small>
+        </article>
+        <article class="summary-card">
+          <span>需要关注</span>
+          <strong id="attentionCount">—</strong>
+          <small>低余额或查询失败</small>
+        </article>
+        <article class="summary-card">
+          <span>下次自动刷新</span>
+          <strong id="countdown">05:00</strong>
+          <small id="updatedAt">尚未同步</small>
+        </article>
+      </section>
+
+      <section class="accounts-section" aria-labelledby="accountsTitle">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">UPSTREAM ACCOUNTS</p>
+            <h2 id="accountsTitle">上游账户</h2>
+          </div>
+          <p>低于 <span id="threshold">10.00</span>（按账户币种）时进入每天 10:00 的邮件告警</p>
+        </div>
+        <div id="accountGrid" class="account-grid" aria-live="polite">
+          <article class="account-card skeleton"></article>
+          <article class="account-card skeleton"></article>
+          <article class="account-card skeleton"></article>
+          <article class="account-card skeleton"></article>
+          <article class="account-card skeleton"></article>
+          <article class="account-card skeleton"></article>
+        </div>
+      </section>
+
+      <p id="errorMessage" class="error-message" role="alert" hidden></p>
+      <footer>只读余额查询 · 不调用模型 · 北京时间每日 10:00 告警</footer>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

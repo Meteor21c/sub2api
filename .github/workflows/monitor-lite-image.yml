@@ -1,0 +1,48 @@
+name: Build Secured Balance Monitor Image
+
+on:
+  push:
+    branches: [codex/server-safety-media-cache-20261028]
+    paths:
+      - deploy/monitor-lite/**
+      - .github/workflows/monitor-lite-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: monitor-lite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Monitor authorization and HTTP tests
+        working-directory: deploy/monitor-lite
+        run: node --test lite/test/*.test.mjs
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Immutable tag
+        id: tag
+        run: echo "image=ghcr.io/meteor21c/sub2api:monitor-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./deploy/monitor-lite
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tag.outputs.image }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=meteor-monitor-lite
+          cache-to: type=gha,mode=max,scope=meteor-monitor-lite

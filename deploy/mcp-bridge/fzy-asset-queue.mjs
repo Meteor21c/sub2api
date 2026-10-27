@@ -50,7 +50,9 @@ export async function createFzyAssetQueue(options = {}) {
   const now = options.now || Date.now
   const intervalMs = options.intervalMs ?? 5000
   const retentionMs = options.retentionMs ?? 7 * DAY
+  const concurrency = options.concurrency ?? 1
   if (!Number.isFinite(intervalMs) || intervalMs < 10 || !Number.isFinite(retentionMs) || retentionMs <= 0) throw new Error('Invalid FZY asset queue interval')
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 2) throw new Error('FZY asset queue concurrency must be 1 or 2')
   if (typeof secret !== 'string' || !secret.trim()) throw new Error('FZY asset queue requires MCP_ASSET_SIGNING_SECRET')
   if (!dataDir || !baseURL || typeof fetchImpl !== 'function') throw new Error('FZY asset queue configuration is incomplete')
   const base = new URL(baseURL)
@@ -386,21 +388,43 @@ export async function createFzyAssetQueue(options = {}) {
         }
       })
       const jobs = Object.values(state.jobs).filter(job => WAITING.has(job.stage)).sort((a, b) => a.lastWorkAt - b.lastWorkAt || a.createdAt - b.createdAt)
+      // One operation per scope prevents shared groups/assets and paid submissions
+      // from racing. Only distinct users/keys can use the second network slot;
+      // all state writes still pass through the same durable writer above.
+      const scopes = new Set()
+      const selected = []
       for (const job of jobs) {
+        if (scopes.has(job.scope)) continue
         const assets = job.assetIDs.map(id => state.assets[id])
         if (assets.every(asset => asset?.status === 'active')) {
-          await mutate(draft => { draft.jobs[job.id].lastWorkAt = now() })
-          await submit(state.jobs[job.id])
-          return true
+          selected.push({ id: job.id, scope: job.scope, submit: true })
+          scopes.add(job.scope)
+          if (selected.length === concurrency) break
+          continue
         }
         const group = state.groups[job.scope]
         const asset = assets.find(row => row && ['new', 'processing'].includes(row.status) && row.nextAttemptAt <= now())
         if ((!group.groupId && group.nextAttemptAt > now()) || !asset) continue
-        await mutate(draft => { const row = draft.jobs[job.id]; row.lastWorkAt = now(); row.stage = 'asset_reviewing' })
-        await reviewOperation(state.jobs[job.id], state.assets[asset.id])
-        return true
+        selected.push({ id: job.id, scope: job.scope, assetID: asset.id })
+        scopes.add(job.scope)
+        if (selected.length === concurrency) break
       }
-      return false
+      // Reserve the batch together before starting any upstream operation.
+      if (!selected.length) return false
+      await mutate(draft => {
+        for (const operation of selected) {
+          const row = draft.jobs[operation.id]
+          row.lastWorkAt = now()
+          if (!operation.submit) row.stage = 'asset_reviewing'
+        }
+      })
+      // allSettled keeps tick/cleanup/stop locked until every request finishes,
+      // even when one scope encounters a persistence or provider failure.
+      const outcomes = await Promise.allSettled(selected.map(operation => operation.submit
+        ? submit(state.jobs[operation.id])
+        : reviewOperation(state.jobs[operation.id], state.assets[operation.assetID])))
+      if (outcomes.some(result => result.status === 'rejected')) throw new Error('FZY asset queue operation failed')
+      return true
     } finally { running = false; release() }
   }
   async function observeTerminal(id, token, owner, status) {

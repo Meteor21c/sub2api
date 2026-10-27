@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import http from 'node:http'
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -25,13 +25,14 @@ async function readBody(req) {
   return Buffer.concat(chunks)
 }
 
-async function startBridge(overrides = {}) {
+async function startBridge(overrides = {}, prepare = null) {
   const dir = await mkdtemp(path.join(tmpdir(), 'meteor-mcp-bridge-'))
   const port = 32000 + Math.floor(Math.random() * 1000)
+  if (prepare) await prepare(dir, port)
   const nodeBinary = process.env.NODE_BINARY || process.execPath
   const child = spawn(nodeBinary, ['server.mjs'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)),
-    env: { ...process.env, NODE_ENV: 'test', FZY_AUTO_ASSETS_ENABLED: 'false', PORT: String(port), MCP_DATA_DIR: dir, MCP_ASSET_SIGNING_SECRET: 'test-secret', MCP_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, SUB2API_URL: 'http://127.0.0.1:9', ...overrides },
+    env: { ...process.env, NODE_ENV: 'test', FZY_AUTO_ASSETS_ENABLED: 'false', MCP_OWNER_STORAGE_BYTES: String(64 * 1024 * 1024), MCP_GLOBAL_STORAGE_BYTES: String(512 * 1024 * 1024), MCP_VIDEO_CACHE_ENABLED: 'false', PORT: String(port), MCP_DATA_DIR: dir, MCP_ASSET_SIGNING_SECRET: 'test-secret', MCP_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, SUB2API_URL: 'http://127.0.0.1:9', ...overrides },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   await new Promise((resolve, reject) => {
@@ -475,7 +476,8 @@ test('FZYinghe authorized Doubao 1.5 Pro uses V3 for creation and successful sta
     assert.equal(status.status, 200)
     const result = await status.json()
     assert.equal(result.status, 'done')
-    assert.equal(result.video.url, 'https://cdn.example/video.mp4')
+    assert.equal(result.video.url, `${bridge.base}/v1/videos/doubao-task-1/content`)
+    assert.doesNotMatch(JSON.stringify(result), /cdn\.example/)
     assert.deepEqual(result.provider_token_usage, { completion_tokens: 40594, total_tokens: 40594 })
     assert.deepEqual(seenURLs, ['/v3/video/tasks', '/v3/video/tasks/doubao-task-1'])
   } finally {
@@ -570,4 +572,106 @@ test('invalid asset signatures return 404 instead of an internal error', async (
   } finally {
     await stopBridge(bridge)
   }
+})
+
+
+test('authorized video status renews an expired signed link without another generation; invalid user cannot renew', async () => {
+  const taskID = 'renew-expired-video'
+  let statusCalls = 0
+  const mock = await startMock(async (req, res) => {
+    assert.equal(req.method, 'GET')
+    assert.equal(req.url, `/v1/videos/generations/${taskID}`)
+    statusCalls++
+    res.writeHead(req.headers.authorization === 'Bearer sk-owner' ? 200 : 401, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(req.headers.authorization === 'Bearer sk-owner' ? { id: taskID, status: 'done', video: { url: `/v1/videos/${taskID}/content` } } : { error: { message: 'not your task' } }))
+  })
+  const bridge = await startBridge({ SUB2API_URL: mock.base })
+  try {
+    const id = 'expiredSignedVideo123'
+    const exp = Math.floor(Date.now() / 1000) - 1
+    const oldURL = `${bridge.base}/mcp/assets/${id}?exp=${exp}&op=read&sig=${crypto.createHmac('sha256', 'test-secret').update(`read:${id}:${exp}`).digest('base64url')}`
+    const taskPath = path.join(bridge.dir, 'tasks', `${crypto.createHash('sha256').update(taskID).digest('hex')}.json`)
+    await writeFile(taskPath, JSON.stringify({ id: taskID, owner: 'provider-token-hash', deliveryURL: oldURL, deliveryExpiresAt: exp }))
+    await writeFile(path.join(bridge.dir, 'assets', `${id}.json`), JSON.stringify({ id, kind: 'remote-video', owner: 'provider-token-hash', sourceURL: 'https://8.8.8.8/video.mp4', sizeBytes: 1, expiresAt: exp + 3600 }))
+    const rejected = await rpc(bridge.base, '/mcp/video', 'tools/call', { name: 'get_video', arguments: { task_id: taskID } }, 'sk-other')
+    assert.equal(rejected.body.result.isError, true)
+    assert.equal(JSON.parse(await readFile(taskPath)).deliveryURL, oldURL)
+    const result = await rpc(bridge.base, '/mcp/video', 'tools/call', { name: 'get_video', arguments: { task_id: taskID } }, 'sk-owner')
+    const signed = new URL(result.body.result.structuredContent.data.result_url)
+    assert.equal(signed.pathname, `/mcp/assets/${id}`)
+    assert.ok(Number(signed.searchParams.get('exp')) > Math.floor(Date.now() / 1000))
+    assert.ok(Number(signed.searchParams.get('exp')) <= Math.floor(Date.now() / 1000) + 1800)
+    assert.equal(statusCalls, 2)
+  } finally { await stopBridge(bridge); await stopMock(mock) }
+})
+
+test('cached asset hit still requires a valid unexpired signed capability', async () => {
+  const id = 'cachedVideoCapability123'
+  const owner = crypto.createHash('sha256').update('owner').digest('hex')
+  const sourceURL = 'https://8.8.8.8/not-fetched.mp4'
+  const createdAt = Date.now()
+  const exp = Math.floor(createdAt / 1000) + 3600
+  const key = crypto.createHash('sha256').update(`${id}\0${owner}\0${sourceURL}`).digest('hex')
+  const bridge = await startBridge({ MCP_VIDEO_CACHE_ENABLED: 'true' }, async dir => {
+    await mkdir(path.join(dir, 'assets'), { recursive: true })
+    await mkdir(path.join(dir, 'video-cache'), { recursive: true })
+    await writeFile(path.join(dir, 'assets', `${id}.json`), JSON.stringify({ id, owner, sourceURL, kind: 'remote-video', expiresAt: exp, sizeBytes: 1, contentType: 'video/mp4' }))
+    await writeFile(path.join(dir, 'video-cache', `${key}.bin`), Buffer.alloc(100))
+    await writeFile(path.join(dir, 'video-cache', `${key}.json`), JSON.stringify({ key, owner, size: 100, contentType: 'video/mp4', createdAt, expiresAt: createdAt + 3600000, lastAccess: createdAt }))
+  })
+  const signed = expires => `${bridge.base}/mcp/assets/${id}?exp=${expires}&op=read&sig=${crypto.createHmac('sha256', 'test-secret').update(`read:${id}:${expires}`).digest('base64url')}`
+  try {
+    const invalid = await fetch(`${signed(exp)}wrong`, { headers: { Range: 'bytes=0-9' } })
+    assert.equal(invalid.status, 404)
+    const expired = await fetch(signed(1))
+    assert.equal(expired.status, 404)
+    const hit = await fetch(signed(exp), { headers: { Range: 'bytes=10-19' } })
+    assert.equal(hit.status, 206)
+    assert.equal(hit.headers.get('x-meteor-video-cache'), 'HIT')
+    assert.equal(hit.headers.get('content-range'), 'bytes 10-19/100')
+    assert.equal((await hit.arrayBuffer()).byteLength, 10)
+    const ready = await fetch(`${bridge.base}/ready`)
+    assert.equal(ready.status, 200)
+  } finally { await stopBridge(bridge) }
+})
+
+test('oversized image JSON is rejected before buffering and is never automatically retried', async () => {
+  let calls = 0
+  const mock = await startMock(async (req, res) => {
+    await readBody(req)
+    calls++
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': String(49 * 1024 * 1024) })
+    res.end('{}')
+  })
+  const bridge = await startBridge({ SUB2API_URL: mock.base })
+  try {
+    const result = await rpc(bridge.base, '/mcp/image', 'tools/call', { name: 'create_image', arguments: { model: 'gpt-image-1', prompt: 'test' } })
+    assert.equal(result.body.result.isError, true)
+    assert.match(result.body.result.content[0].text, /limit|do not retry/)
+    assert.equal(calls, 1)
+  } finally { await stopBridge(bridge); await stopMock(mock) }
+})
+
+test('concurrent image calls are bounded before a second paid request is submitted', async () => {
+  let release
+  let began
+  const started = new Promise(resolve => { began = resolve })
+  const waiting = new Promise(resolve => { release = resolve })
+  let calls = 0
+  const mock = await startMock(async (req, res) => {
+    await readBody(req); calls++; began()
+    await waiting
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ data: [] }))
+  })
+  const bridge = await startBridge({ SUB2API_URL: mock.base })
+  try {
+    const first = rpc(bridge.base, '/mcp/image', 'tools/call', { name: 'create_image', arguments: { model: 'gpt-image-1', prompt: 'test' } })
+    await started
+    const second = await rpc(bridge.base, '/mcp/image', 'tools/call', { name: 'create_image', arguments: { model: 'gpt-image-1', prompt: 'test' } })
+    assert.equal(second.body.result.isError, true)
+    assert.match(second.body.result.content[0].text, /no request was submitted or charged/)
+    assert.equal(calls, 1)
+    release(); await first
+  } finally { release(); await stopBridge(bridge); await stopMock(mock) }
 })

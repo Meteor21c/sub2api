@@ -11,6 +11,22 @@
         </button>
       </header>
 
+      <section class="card p-5" aria-labelledby="balance-panel-title">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div><h2 id="balance-panel-title" class="text-lg font-semibold">上游余额</h2><p class="mt-1 text-sm text-gray-500">仅站点所有者可见 · 原币种展示 · 最多复用15秒 · {{ balances ? businessTime(balances.generatedAt) : '尚未读取' }}</p></div>
+          <button class="btn btn-secondary min-h-[44px]" :disabled="balanceLoading" @click="loadBalances">{{ balanceLoading ? '正在读取…' : '刷新余额' }}</button>
+        </div>
+        <p v-if="balanceError" role="alert" class="mt-3 text-red-600">{{ balanceError }}</p>
+        <div v-if="balances" class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <article v-for="account in balances.accounts" :key="account.id" class="rounded-lg border border-gray-100 p-4 dark:border-dark-600">
+            <div class="flex items-center justify-between gap-2"><h3 class="font-medium">{{ account.name }}</h3><span class="text-sm" :class="account.status === 'ready' ? 'text-emerald-600' : 'text-amber-700 dark:text-amber-400'">{{ balanceStatus(account.status) }}</span></div>
+            <p class="mt-2 text-xl font-semibold tabular-nums">{{ balanceMoney(account.currency, account.balance) }}</p>
+            <p class="mt-1 text-sm text-gray-500">{{ account.planName || '账户余额' }} · 预警线 {{ balanceMoney(account.currency, account.threshold) }}</p>
+            <p class="mt-1 break-all text-sm text-gray-500">{{ account.baseUrl }}</p>
+          </article>
+        </div>
+      </section>
+
       <section class="card flex flex-wrap items-end justify-between gap-4 p-5">
         <div class="flex flex-wrap items-end gap-4">
           <div>
@@ -146,7 +162,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import { businessMonitorAPI, type BusinessPeriod, type BusinessReport, type BusinessWallet } from '@/api/admin/businessMonitor'
+import { businessMonitorAPI, type BusinessPeriod, type BusinessReport, type BusinessWallet, type BusinessBalanceSnapshot } from '@/api/admin/businessMonitor'
 import { businessMoney, businessTime, shanghaiDay, businessIncludedRevenue } from './businessMonitorFormatting'
 
 const periods: { value: BusinessPeriod; label: string }[] = [{ value: 'day', label: '日' }, { value: 'week', label: '周' }, { value: 'month', label: '月' }, { value: 'year', label: '年' }]
@@ -154,6 +170,9 @@ const period = ref<BusinessPeriod>('day')
 const today = shanghaiDay()
 const date = ref(today)
 const report = ref<BusinessReport | null>(null)
+const balances = ref<BusinessBalanceSnapshot | null>(null)
+const balanceLoading = ref(false)
+const balanceError = ref('')
 const loading = ref(false)
 const refreshing = ref(false)
 const error = ref('')
@@ -192,9 +211,21 @@ async function viewDay(value: string) { period.value = 'day'; date.value = value
 async function refreshToday() {
   if (busy.value) return
   refreshing.value = true; error.value = ''
-  try { const result = await businessMonitorAPI.refresh(); period.value = 'day'; date.value = shanghaiDay(); report.value = result }
+  try { const result = await businessMonitorAPI.refresh(); period.value = 'day'; date.value = shanghaiDay(); report.value = result; await loadBalances() }
   catch (e) { error.value = messageOf(e) }
   finally { refreshing.value = false }
+}
+function balanceStatus(status: string): string { return ({ ready: '正常', low: '余额偏低', error: '查询失败', waiting: '等待凭据' } as Record<string, string>)[status] || '待检查' }
+function balanceMoney(currency: string, value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return `${currency || '$'}${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+}
+async function loadBalances() {
+  if (balanceLoading.value) return
+  balanceLoading.value = true; balanceError.value = ''
+  try { balances.value = await businessMonitorAPI.getBalances() }
+  catch (e) { balanceError.value = messageOf(e) }
+  finally { balanceLoading.value = false }
 }
 function statusText(status: string): string { return ({ ok: '范围内', partial: '数据待完善', overspend: '消耗偏高', loss: '疑似亏损', uncovered: '未覆盖余额', excluded: '暂不计入' } as Record<string, string>)[status] || '待检查' }
 function statusClass(status: string): string {
@@ -225,7 +256,7 @@ async function saveAdjustment(clear: boolean) {
   } catch (e) { adjustError.value = messageOf(e) }
   finally { saving.value = false }
 }
-onMounted(loadReport)
+onMounted(() => { void loadReport(); void loadBalances() })
 </script>
 
 <style scoped>

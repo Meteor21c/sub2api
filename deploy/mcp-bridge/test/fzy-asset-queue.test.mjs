@@ -625,3 +625,53 @@ test('stop can be awaited while a provider operation is in flight', async t => {
   await Promise.all([work, stopping])
   assert.equal(stopped, true)
 })
+
+test('two distinct scopes progress together while cleanup, re-entry and shutdown stay exclusive', async t => {
+  const f = await fixture(t, { concurrency: 2 })
+  let started, release
+  const bothStarted = new Promise(resolve => { started = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  let active = 0, maximum = 0
+  f.mock.hooks.group = async payload => {
+    active++
+    maximum = Math.max(maximum, active)
+    if (active === 2) started()
+    await gate
+    active--
+    return response({ code: 200, data: { groupId: payload.name } })
+  }
+  const jobs = await Promise.all([1, 2, 3].map(id => f.enqueue({ owner: `user-${id}` })))
+  const work = f.queue.tick()
+  await bothStarted
+  assert.equal(await f.queue.tick(), false)
+  assert.equal((await f.queue.cleanup({ force: true })).skipped, true)
+  assert.equal(f.mock.counts.groups, 2, 'third scope waits for a later batch')
+  let stopped = false
+  const stopping = f.queue.stop().then(() => { stopped = true })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(stopped, false)
+  release()
+  await Promise.all([work, stopping])
+  assert.equal(maximum, 2)
+  for (let index = 0; index < jobs.length; index++) await f.reach(jobs[index], 'video_generating', TOKEN, `user-${index + 1}`)
+  assert.equal(f.mock.counts.groups, 3)
+  assert.equal(f.mock.counts.videos, 3)
+  for (let index = 0; index < 4; index++) await f.step()
+  assert.equal(f.mock.counts.videos, 3, 'no duplicate paid submissions after parallel work')
+})
+
+test('shared scope remains serialized with concurrency two and shared material imports only once', async t => {
+  const f = await fixture(t, { concurrency: 2 })
+  const first = await f.enqueue()
+  const second = await f.enqueue()
+  await f.step()
+  assert.equal(f.mock.counts.groups, 1)
+  await f.reach(first)
+  await f.reach(second)
+  assert.equal(f.mock.counts.groups, 1)
+  assert.equal(f.mock.counts.uploads, 1)
+  assert.equal(f.mock.counts.videos, 2)
+  for (const concurrency of [0, -1, 3, 1.5, NaN]) {
+    await assert.rejects(createFzyAssetQueue({ ...f.options, concurrency }), /concurrency/)
+  }
+})

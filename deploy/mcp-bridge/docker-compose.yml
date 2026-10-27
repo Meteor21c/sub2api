@@ -4,6 +4,9 @@ services:
     image: meteor-mcp-bridge:local
     container_name: meteor-mcp-bridge
     restart: unless-stopped
+    mem_limit: 640m
+    cpus: 1.0
+    pids_limit: 128
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -19,6 +22,16 @@ services:
       MCP_ASSET_SIGNING_SECRET: "${MCP_ASSET_SIGNING_SECRET:?MCP_ASSET_SIGNING_SECRET is required}"
       MCP_DATA_DIR: "/data"
       FZYINGHE_BASE_URL: "https://api-aigc.fzyinghe.com"
+      NODE_OPTIONS: "--max-old-space-size=256"
+      FZY_ASSET_CONCURRENCY: "${FZY_ASSET_CONCURRENCY:-2}"
+      MCP_OWNER_STORAGE_BYTES: "268435456"
+      MCP_GLOBAL_STORAGE_BYTES: "2147483648"
+      MCP_VIDEO_CACHE_ENABLED: "${MCP_VIDEO_CACHE_ENABLED:-true}"
+      MCP_VIDEO_CACHE_MAX_BYTES: "5368709120"
+      MCP_VIDEO_CACHE_OWNER_BYTES: "536870912"
+      MCP_VIDEO_CACHE_FILE_BYTES: "268435456"
+      MCP_VIDEO_CACHE_TTL_SECONDS: "86400"
+      MCP_VIDEO_CACHE_MIN_FREE_BYTES: "10737418240"
       FZY_AUTO_ASSETS_ENABLED: "${FZY_AUTO_ASSETS_ENABLED:-true}"
     volumes:
       - ./data:/data

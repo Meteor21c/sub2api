@@ -924,6 +924,7 @@ func registerBusinessMonitorRoutes(admin *gin.RouterGroup, h *handler.Handlers) 
 	finance := admin.Group("/business-monitor")
 	finance.GET("/access", h.Admin.BusinessMonitor.Access)
 	finance.GET("/report", h.Admin.BusinessMonitor.Report)
+	finance.GET("/balances", h.Admin.BusinessMonitor.Balances)
 	finance.POST("/refresh", h.Admin.BusinessMonitor.Refresh)
 	finance.PUT("/credit-override", h.Admin.BusinessMonitor.SetCreditOverride)
 }

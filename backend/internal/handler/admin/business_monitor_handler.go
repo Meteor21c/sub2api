@@ -45,6 +45,20 @@ func (h *BusinessMonitorHandler) Access(c *gin.Context) {
 	response.Success(c, gin.H{"enabled": h != nil && h.svc != nil && h.svc.OwnerID() > 0, "allowed": h.allowed(c)})
 }
 
+func (h *BusinessMonitorHandler) Balances(c *gin.Context) {
+	if !h.authorize(c) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
+	defer cancel()
+	snapshot, err := h.svc.CurrentBalances(ctx)
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "上游余额暂时不可用，请稍后重试")
+		return
+	}
+	response.Success(c, snapshot)
+}
+
 func (h *BusinessMonitorHandler) Report(c *gin.Context) {
 	if !h.authorize(c) {
 		return

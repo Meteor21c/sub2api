@@ -2,7 +2,7 @@ name: Build Business Monitor Image
 
 on:
   push:
-    branches: [codex/business-monitor]
+    branches: [codex/business-monitor, codex/server-safety-media-cache-20261028]
   workflow_dispatch:
 
 permissions:
@@ -62,7 +62,7 @@ jobs:
         run: pnpm typecheck
       - name: Finance frontend tests
         working-directory: frontend
-        run: pnpm exec vitest run src/views/admin/__tests__/businessMonitor.spec.ts
+        run: pnpm exec vitest run src/views/admin/__tests__/businessMonitor.spec.ts src/views/admin/__tests__/businessMonitorBalances.spec.ts
   image:
     needs: validate
     runs-on: ubuntu-latest

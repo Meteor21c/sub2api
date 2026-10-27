@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - codex/mcp-bridge-storage-expiry
+      - codex/server-safety-media-cache-20261028
     paths:
       - deploy/mcp-bridge/**
       - .github/workflows/mcp-bridge-image.yml

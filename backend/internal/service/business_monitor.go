@@ -26,25 +26,26 @@ var businessLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 // BusinessMonitorService only reads usage, account metadata and a fixed balance
 // endpoint. Its writes are confined to its own monitoring tables.
 type BusinessMonitorService struct {
-	db          *sql.DB
-	ownerID     int64
-	snapshotURL string
-	aliases     map[string]string
-	client      *http.Client
-	mu          sync.Mutex
-	lastCollect time.Time
-	lastCleanup time.Time
-	startOnce   sync.Once
-	stopOnce    sync.Once
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
+	db            *sql.DB
+	ownerID       int64
+	snapshotURL   string
+	snapshotToken string
+	aliases       map[string]string
+	client        *http.Client
+	mu            sync.Mutex
+	lastCollect   time.Time
+	lastCleanup   time.Time
+	startOnce     sync.Once
+	stopOnce      sync.Once
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 func NewBusinessMonitorService(db *sql.DB) *BusinessMonitorService {
 	ownerID, _ := strconv.ParseInt(strings.TrimSpace(os.Getenv("BUSINESS_MONITOR_OWNER_ID")), 10, 64)
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &BusinessMonitorService{db: db, ownerID: ownerID, snapshotURL: strings.TrimSpace(os.Getenv("BUSINESS_MONITOR_SNAPSHOT_URL")), aliases: map[string]string{}, ctx: ctx, cancel: cancel,
+	s := &BusinessMonitorService{db: db, ownerID: ownerID, snapshotURL: strings.TrimSpace(os.Getenv("BUSINESS_MONITOR_SNAPSHOT_URL")), snapshotToken: strings.TrimSpace(os.Getenv("BUSINESS_MONITOR_SNAPSHOT_TOKEN")), aliases: map[string]string{}, ctx: ctx, cancel: cancel,
 		client: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
 	var aliases map[string]string
 	if err := json.Unmarshal([]byte(os.Getenv("BUSINESS_MONITOR_ALIASES_JSON")), &aliases); err == nil {
@@ -130,15 +131,65 @@ func (s *BusinessMonitorService) walletKey(raw string) string {
 	return key
 }
 
-type businessSnapshot struct {
+// BusinessMonitorBalanceSnapshot deliberately exposes only the fields needed by
+// the owner balance panel. Unknown fields from the monitor never reach a browser.
+type BusinessMonitorBalanceSnapshot struct {
 	GeneratedAt time.Time `json:"generatedAt"`
 	Accounts    []struct {
-		ID      string   `json:"id"`
-		Name    string   `json:"name"`
-		BaseURL string   `json:"baseUrl"`
-		Balance *float64 `json:"balance"`
-		Status  string   `json:"status"`
+		ID        string   `json:"id"`
+		Name      string   `json:"name"`
+		BaseURL   string   `json:"baseUrl"`
+		Balance   *float64 `json:"balance"`
+		Status    string   `json:"status"`
+		Currency  string   `json:"currency"`
+		PlanName  string   `json:"planName"`
+		Threshold float64  `json:"threshold"`
 	} `json:"accounts"`
+}
+
+// CurrentBalances uses the same fixed endpoint and service credential as the
+// sampler. Authorization for interactive callers is enforced by the owner-only
+// handler; the credential stays on this server.
+func (s *BusinessMonitorService) CurrentBalances(ctx context.Context) (*BusinessMonitorBalanceSnapshot, error) {
+	return s.fetchBalanceSnapshot(ctx)
+}
+
+func (s *BusinessMonitorService) fetchBalanceSnapshot(ctx context.Context) (*BusinessMonitorBalanceSnapshot, error) {
+	u, err := url.Parse(s.snapshotURL)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
+		return nil, errors.New("invalid business monitor snapshot endpoint")
+	}
+	// Fixed operator endpoint; no query credentials and no redirect forwarding.
+	host := strings.ToLower(u.Hostname())
+	local := host == "127.0.0.1" || host == "::1" || host == "localhost" || host == "meteor-monitor"
+	if (!local && (host != "monitor.meteor21c.fun" || u.Scheme != "https" || u.Port() != "" && u.Port() != "443")) || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("business monitor endpoint is not allowlisted")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) // #nosec G704 -- Operator endpoint validated by the host allowlist above.
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	if s.snapshotToken != "" {
+		request.Header.Set("Authorization", "Bearer "+s.snapshotToken)
+	}
+	resp, err := s.client.Do(request) // #nosec G704 -- Allowlisted endpoint with redirects disabled.
+	if err != nil {
+		return nil, errors.New("balance snapshot request failed")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("balance snapshot returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024+1))
+	if err != nil || len(body) > 256*1024 {
+		return nil, errors.New("balance snapshot response unavailable or too large")
+	}
+	var snapshot BusinessMonitorBalanceSnapshot
+	if err := json.Unmarshal(body, &snapshot); err != nil || len(snapshot.Accounts) == 0 || len(snapshot.Accounts) > 100 {
+		return nil, errors.New("invalid balance snapshot response")
+	}
+	return &snapshot, nil
 }
 
 func (s *BusinessMonitorService) collect(ctx context.Context, force bool) error {
@@ -150,17 +201,6 @@ func (s *BusinessMonitorService) collect(ctx context.Context, force bool) error 
 	}
 	if time.Since(s.lastCollect) < minimum {
 		return nil
-	}
-	u, err := url.Parse(s.snapshotURL)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil {
-		return errors.New("invalid business monitor snapshot endpoint")
-	}
-	// This operator setting is never accepted from an HTTP request. Restrict it
-	// to the existing monitor or an explicitly local service; disallow redirects.
-	host := strings.ToLower(u.Hostname())
-	local := host == "127.0.0.1" || host == "::1" || host == "localhost" || host == "meteor-monitor"
-	if (!local && (host != "monitor.meteor21c.fun" || u.Scheme != "https" || u.Port() != "" && u.Port() != "443")) || u.RawQuery != "" || u.Fragment != "" {
-		return errors.New("business monitor endpoint is not allowlisted")
 	}
 	// A transaction-scoped lock prevents duplicate sampling across replicas.
 	lock, err := s.db.BeginTx(ctx, nil)
@@ -175,27 +215,11 @@ func (s *BusinessMonitorService) collect(ctx context.Context, force bool) error 
 	if !acquired {
 		return nil
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) // #nosec G704 -- Fixed operator endpoint validated against the host allowlist above; no user input.
+	snapshot, err := s.fetchBalanceSnapshot(ctx)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Accept", "application/json")
-	resp, err := s.client.Do(request) // #nosec G704 -- Allowlisted endpoint only; redirects disabled by the dedicated client.
-	if err != nil {
-		return errors.New("balance snapshot request failed") // Never log URL credentials or response bodies.
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("balance snapshot returned HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024+1))
-	if err != nil || len(body) > 256*1024 {
-		return errors.New("balance snapshot response unavailable or too large")
-	}
-	var snapshot businessSnapshot
-	if err := json.Unmarshal(body, &snapshot); err != nil || len(snapshot.Accounts) == 0 || len(snapshot.Accounts) > 100 {
-		return errors.New("invalid balance snapshot response")
-	}
+
 	now := time.Now()
 	observed := snapshot.GeneratedAt
 	if observed.IsZero() || observed.After(now.Add(time.Minute)) || observed.Before(now.Add(-2*time.Minute)) {
