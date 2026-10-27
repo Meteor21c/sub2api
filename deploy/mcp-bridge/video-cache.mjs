@@ -164,7 +164,7 @@ export async function createVideoCache({ directory, fetchRemote, log = () => {},
       controllers.add(controller)
       const abort = () => controller.abort()
       if (signal?.aborted) controller.abort(); else signal?.addEventListener('abort', abort, { once: true })
-      const timer = setTimeout(() => controller.abort(), 120000)
+      const timer = setTimeout(() => controller.abort(), 300000)
       timer.unref()
       let remote
       let published = false

@@ -142,7 +142,8 @@ pinned to the actual HTTP(S) connection.
   task lookup. Holding a still-valid capability permits download until its
   expiry; key revocation/logout does not instantly revoke an issued capability.
 - Live downloads and disk reads stop when clients disconnect or the two-minute
-  delivery deadline expires. Up to **8 GET** downloads and **2 HEAD** probes
+  delivery deadline expires (10 minutes for GET, 30 seconds for HEAD; background
+  cache fills have a separate 5-minute bound). Up to **8 GET** downloads and **2 HEAD** probes
   run at once. HEAD uses HEAD upstream, or a one-byte probe if unsupported.
   Cached files support a single byte Range, including suffix/open-ended forms.
 - Temporary uploads/generated images retain their **24-hour** expiry and

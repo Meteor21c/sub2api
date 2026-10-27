@@ -12,7 +12,9 @@ export function parseSingleRange(value, size) {
   return { start, end, partial: true }
 }
 
-export function requestLifetime(req, res, timeoutMs = 120000) {
+// Bound slow clients without cutting off legitimate downloads on low-bandwidth
+// routes (a 15MiB video at 40KiB/s already needs over six minutes).
+export function requestLifetime(req, res, timeoutMs = req.method === 'HEAD' ? 30000 : 600000) {
   const controller = new AbortController()
   const abort = () => { if (!res.writableFinished) controller.abort() }
   req.once('aborted', abort)
