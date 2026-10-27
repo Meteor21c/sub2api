@@ -1,7 +1,7 @@
 FROM node:22-alpine
 
 WORKDIR /app
-COPY package.json server.mjs ./
+COPY package.json server.mjs fzy-asset-queue.mjs ./
 COPY test ./test
 
 RUN mkdir -p /data/materials /data/assets /data/tasks \

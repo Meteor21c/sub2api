@@ -7,7 +7,7 @@
   const IMAGE_STORE = "images";
   const VIDEO_STORAGE_PREFIX = "meteor-media:video-history:v1";
   const RESULT_TTL_MS = 24 * 60 * 60 * 1000;
-  const PENDING_TTL_MS = 20 * 60 * 1000;
+  const PENDING_TTL_MS = 60 * 60 * 1000;
   const HISTORY_LIMIT = 12;
   const MAX_IMAGE_BYTES = 128 * 1024 * 1024;
   const RASTER_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
@@ -310,6 +310,7 @@
         const quote = safeQuote(record.quote);
         const settlement = safeSettlement(record.settlement);
         const tokenUsage = safeTokenUsage(record.tokenUsage);
+        const assetMetadata = globalThis.MeteorVideoAssetStatus?.read(record) || {};
         return {
           id: String(record.id || ""),
           createdAt: Number(record.createdAt),
@@ -323,6 +324,7 @@
           ...(quote ? { quote } : {}),
           ...(settlement ? { settlement } : {}),
           ...(tokenUsage ? { tokenUsage } : {}),
+          ...assetMetadata,
         };
       })
       .filter((record) => record.id);
@@ -373,6 +375,8 @@
       quote: safeQuote(entry.quote ?? existing.quote),
       settlement: safeSettlement(entry.settlement ?? existing.settlement),
       tokenUsage: safeTokenUsage(entry.tokenUsage ?? existing.tokenUsage),
+      assetStage: entry.assetStage ?? existing.assetStage,
+      assetProgress: entry.assetProgress ?? existing.assetProgress,
     });
     return writeVideos(records, expectedScope);
   }

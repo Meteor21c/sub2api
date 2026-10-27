@@ -93,6 +93,7 @@ func (s *OpenAIGatewayService) reconcileFZYVideoJob(ctx context.Context, repo FZ
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Meteor-Billing-Only", "1")
+	applyFZYAssetRequestHeaders(req.Header, account, fzyAssetRequestIdentity{userID: job.UserID})
 	resp, err := (&http.Client{Timeout: 12 * time.Second}).Do(req)
 	if err != nil {
 		return err

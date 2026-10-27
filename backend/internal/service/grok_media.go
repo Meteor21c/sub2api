@@ -745,8 +745,9 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		}
 		upstreamReq.Header.Set("Content-Type", contentType)
 	}
-	// 账号级请求头覆写最后应用，配置值优先于内置默认头。
+	// 账号级覆写优先于内置默认头；内部素材归属随后按可信身份绑定。
 	account.ApplyHeaderOverrides(upstreamReq.Header)
+	applyFZYAssetContextHeaders(upstreamReq.Header, c, account)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -851,6 +852,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		applyGrokCLIHeaders(statusReq.Header)
 	}
 	account.ApplyHeaderOverrides(statusReq.Header)
+	applyFZYAssetContextHeaders(statusReq.Header, c, account)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -914,6 +916,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 			applyGrokCLIHeaders(contentReq.Header)
 		}
 		account.ApplyHeaderOverrides(contentReq.Header)
+		applyFZYAssetContextHeaders(contentReq.Header, c, account)
 	}
 
 	contentResp, err := s.httpUpstream.Do(contentReq, proxyURL, account.ID, account.Concurrency)

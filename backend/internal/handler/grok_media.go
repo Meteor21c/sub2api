@@ -74,6 +74,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
 	}
+	service.SetFZYAssetOwner(c, subject.UserID)
 
 	reqLog := requestLogger(
 		c,
@@ -412,6 +413,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			if preview, marshalErr := json.Marshal(fzyReservation.PricingPreview()); marshalErr == nil {
 				c.Header("X-Meteor-Video-Billing", base64.RawURLEncoding.EncodeToString(preview))
 			}
+			service.SetFZYAssetReservation(c, fzyReservation.ID)
 		}
 		forwardStart := time.Now()
 		writerSizeBeforeForward := c.Writer.Size()

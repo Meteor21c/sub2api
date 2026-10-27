@@ -31,7 +31,7 @@ async function startBridge(overrides = {}) {
   const nodeBinary = process.env.NODE_BINARY || process.execPath
   const child = spawn(nodeBinary, ['server.mjs'], {
     cwd: fileURLToPath(new URL('..', import.meta.url)),
-    env: { ...process.env, NODE_ENV: 'test', PORT: String(port), MCP_DATA_DIR: dir, MCP_ASSET_SIGNING_SECRET: 'test-secret', MCP_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, SUB2API_URL: 'http://127.0.0.1:9', ...overrides },
+    env: { ...process.env, NODE_ENV: 'test', FZY_AUTO_ASSETS_ENABLED: 'false', PORT: String(port), MCP_DATA_DIR: dir, MCP_ASSET_SIGNING_SECRET: 'test-secret', MCP_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, SUB2API_URL: 'http://127.0.0.1:9', ...overrides },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   await new Promise((resolve, reject) => {

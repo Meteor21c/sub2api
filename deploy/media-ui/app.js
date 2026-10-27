@@ -561,6 +561,7 @@
     if (Number($("video-duration").value) < min) $("video-duration").value = String(min);
     if (Number($("video-duration").value) > max) $("video-duration").value = String(max);
     $("video-duration-hint").textContent = model ? `当前模型允许 ${min}–${max} 秒。` : "选择模型后显示时长范围。";
+    $("video-asset-hint").hidden = !model.startsWith("doubao-seedance-");
     if (family === "kling" && $("video-mode").value === "text_with_reference") $("video-mode").value = "text_with_reference";
     updateVideoPricing();
   }
@@ -682,6 +683,7 @@
 
   function videoInfo(data, fallbackId = "") {
     const candidates = [data, data?.data, data?.task, data?.data?.task].filter(Boolean);
+    const assetMetadata = MeteorVideoAssetStatus.read(data);
     let status = "";
     let url = "";
     let reason = "";
@@ -694,10 +696,8 @@
       reason ||= String(item.fail_reason || item.error?.message || item.message || "").trim();
       tokenUsage ||= MeteorVideoPricing.tokenUsage(item.provider_token_usage || item.token_usage);
     }
-    if (["success", "succeeded", "completed", "complete", "done", "succeed"].includes(status) || url) status = "success";
-    else if (["failure", "failed", "error", "cancelled", "canceled"].includes(status)) status = "failure";
-    else status = "pending";
-    return { id, status, url, reason, tokenUsage };
+    status = MeteorVideoAssetStatus.taskStatus(status, url, assetMetadata.assetStage);
+    return { id, status, url, reason, tokenUsage, ...assetMetadata };
   }
 
   async function userJSON(path, scope) {
@@ -763,7 +763,8 @@
     status.className = "task-status";
     const pill = document.createElement("span");
     pill.className = `status-pill ${info.status === "success" ? "success" : info.status === "failure" ? "error" : ""}`.trim();
-    pill.textContent = info.status === "success" ? "已完成" : info.status === "failure" ? "失败" : "处理中";
+    const preparation = MeteorVideoAssetStatus.describe(info);
+    pill.textContent = preparation.label;
     const id = document.createElement("span");
     id.className = "task-id";
     id.textContent = info.id ? `任务 ID：${info.id}` : "等待任务 ID…";
@@ -772,6 +773,12 @@
     promptNode.className = "task-prompt";
     promptNode.textContent = prompt;
     card.append(head, status, promptNode);
+    if (preparation.detail) {
+      const detail = document.createElement("small");
+      detail.className = "task-stage-detail";
+      detail.textContent = preparation.detail;
+      card.append(detail);
+    }
     const quote = info.quote;
     const settled = info.settlement;
     const tokens = info.tokenUsage;
@@ -921,7 +928,9 @@
         }
         if (info.status === "failure") throw new ApiError(info.reason || "视频任务失败");
         if (Date.now() >= deadline) return info;
-        await sleep(5000);
+        const preparation = MeteorVideoAssetStatus.describe(info);
+        if (preparation.detail) setStatus("video", preparation.detail);
+        await sleep(MeteorVideoAssetStatus.pollInterval(info));
       } while (true);
     } finally {
       state.video.polling.delete(pollKey);
@@ -1026,7 +1035,8 @@
       state.video.taskId = taskId;
       const createdAt = Date.now();
       rememberVideo({ ...videoInfo(data, taskId), keyId, prompt, model, createdAt, quote: creationQuote || currentVideoQuote() }, scope, epoch);
-      setStatus("video", `任务已提交：${taskId}`, "success");
+      const preparation = MeteorVideoAssetStatus.describe(videoInfo(data, taskId));
+      setStatus("video", preparation.detail || `任务已提交：${taskId}`, preparation.detail ? "" : "success");
       const final = await pollVideo(taskId, key, keyId, prompt, model, createdAt, scope, epoch);
       if (final?.status === "success") setStatus("video", "视频生成完成", "success");
       else if (final?.status === "pending") setStatus("video", "任务仍在处理中，稍后返回本页可继续查询");

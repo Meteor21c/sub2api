@@ -115,6 +115,7 @@ globalThis.window = {
   atob: value => Buffer.from(value, 'base64').toString('binary'),
 }
 
+await import('../video-asset-status.js')
 await import('../media-history.js')
 const history = globalThis.MeteorMediaHistory
 
@@ -279,4 +280,40 @@ test('video pruning drops expired and malformed rows and exposes only safe metad
     },
   ])
   assert.doesNotMatch(JSON.stringify(rows), /extraSecret|secret/)
+})
+
+test('asset review history survives reload and preserves progress when a later poll omits it', () => {
+  login(7)
+  const scope = history.userScope()
+  history.upsertVideo({
+    id: 'meteorasset-prepare-1', keyId: '9', model: 'doubao-seedance-2.0-mini',
+    assetStage: 'asset_reviewing', assetProgress: { total: 2, active: 1, processing: 1, failed: 0, token: 'do-not-store' },
+    providerToken: 'do-not-store', groupId: 'do-not-store', assetId: 'do-not-store',
+  }, scope)
+  const [restored] = history.readVideos(scope)
+  assert.equal(restored.status, 'pending')
+  assert.equal(restored.assetStage, 'asset_reviewing')
+  assert.deepEqual(restored.assetProgress, { total: 2, active: 1, processing: 1, failed: 0 })
+  assert.doesNotMatch(JSON.stringify(localStorage.entries()), /do-not-store/)
+
+  history.upsertVideo({ id: restored.id, status: 'pending' }, scope)
+  assert.deepEqual(history.readVideos(scope)[0].assetProgress, restored.assetProgress)
+  history.upsertVideo({ id: restored.id, status: 'pending', assetStage: 'video_generating', assetProgress: { total: 2, active: 2, processing: 0, failed: 0 } }, scope)
+  assert.equal(history.readVideos(scope)[0].assetStage, 'video_generating')
+
+  login(8)
+  assert.deepEqual(history.readVideos(), [])
+  assert.deepEqual(history.upsertVideo({ id: restored.id, assetStage: 'failed' }, scope), [])
+  login(7)
+  assert.equal(history.readVideos(scope)[0].assetStage, 'video_generating')
+})
+
+test('malformed asset metadata is discarded and automatic polling covers the review timeout', () => {
+  const [record] = history.pruneVideos([{
+    id: 'untrusted-progress', createdAt: Date.now(), status: 'pending',
+    assetStage: 'run-script', assetProgress: { total: 1, active: 8 },
+  }])
+  assert.equal(record.assetStage, undefined)
+  assert.equal(record.assetProgress, undefined)
+  assert.equal(history.PENDING_TTL_MS, 60 * 60 * 1000)
 })

@@ -5,11 +5,13 @@ import fs from 'node:fs/promises'
 import fsc from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { createFzyAssetQueue } from './fzy-asset-queue.mjs'
 
 const PORT = Number(process.env.PORT || 3102)
 const SUB2API_URL = (process.env.SUB2API_URL || 'http://sub2api:8080').replace(/\/$/, '')
 const PUBLIC_BASE_URL = (process.env.MCP_PUBLIC_BASE_URL || 'https://api.meteor21c.fun').replace(/\/$/, '')
 const FZYINGHE_BASE_URL = (process.env.FZYINGHE_BASE_URL || 'https://api-aigc.fzyinghe.com').replace(/\/$/, '')
+const FZY_AUTO_ASSETS_ENABLED = process.env.FZY_AUTO_ASSETS_ENABLED !== 'false'
 const ASSET_SECRET = process.env.MCP_ASSET_SIGNING_SECRET || ''
 const DATA_DIR = process.env.MCP_DATA_DIR || '/data'
 const MATERIAL_DIR = path.join(DATA_DIR, 'materials')
@@ -45,6 +47,19 @@ await Promise.all([
   fs.mkdir(ASSET_DIR, { recursive: true }),
   fs.mkdir(TASK_DIR, { recursive: true }),
 ])
+
+// Keep asset preparation outside the video-create HTTP request. The gateway
+// binds this durable task ID to its existing reservation and later settles (or
+// refunds) it through the normal authenticated status endpoint.
+const fzyAssetQueue = FZY_AUTO_ASSETS_ENABLED && ASSET_SECRET ? await createFzyAssetQueue({
+  dataDir: path.join(DATA_DIR, 'fzy-asset-queue'),
+  secret: ASSET_SECRET,
+  baseURL: FZYINGHE_BASE_URL,
+  fingerprint: fzyReferenceFingerprint,
+  intervalMs: process.env.NODE_ENV === 'test' ? Number(process.env.FZY_ASSET_TEST_INTERVAL_MS) || 5000 : 5000,
+  log,
+}) : null
+fzyAssetQueue?.start()
 
 function log(message, extra = {}) {
   // Never log Authorization headers, request bodies, or provider URLs.
@@ -98,6 +113,42 @@ function canonicalSub2APIToken(token) {
 
 function ownerHash(token) {
   return crypto.createHash('sha256').update(token).digest('hex')
+}
+
+function fzyRequestOwner(req) {
+  const owner = String(req.headers['x-meteor-fzy-owner'] || '')
+  return /^user-[1-9]\d{0,18}$/.test(owner) ? owner : ''
+}
+
+function fzyAssetTask(id) {
+  return /^meteorasset-[A-Za-z0-9_-]+$/.test(String(id || ''))
+}
+
+function fzyAssetProgress(job) {
+  return {
+    stage: job.stage,
+    ...(job.assetProgress ? { asset_progress: job.assetProgress } : {}),
+  }
+}
+
+async function fzyReferenceFingerprint(rawURL, type) {
+  const url = new URL(rawURL)
+  // Local uploads get a content hash, so uploading the same file again under
+  // a fresh signed URL still reuses its approved upstream asset. Remote URLs
+  // are keyed by URL, avoiding an extra video download on this small server.
+  if (url.origin === new URL(PUBLIC_BASE_URL).origin && url.pathname.startsWith('/mcp/assets/')) {
+    const id = decodeURIComponent(url.pathname.slice('/mcp/assets/'.length))
+    if (!safeId(id) || !verifyAssetQuery(id, url.searchParams, 'read')) throw new Error('参考素材链接无效或已过期')
+    const meta = await readMeta(id)
+    if (!meta || meta.kind !== 'material' || !meta.uploaded || meta.id !== id || meta.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error('参考素材已过期，请重新上传')
+    const file = dataPath(meta)
+    const info = await fs.stat(file)
+    if (!info.isFile() || info.size <= 0 || info.size > MAX_MATERIAL || info.size !== meta.sizeBytes) throw new Error('参考素材文件无效')
+    const hash = crypto.createHash('sha256').update(type).update('\0')
+    for await (const chunk of fsc.createReadStream(file)) hash.update(chunk)
+    return hash.digest('hex')
+  }
+  return crypto.createHash('sha256').update(type).update('\0').update(url.toString()).digest('hex')
 }
 
 function randomId() {
@@ -755,7 +806,9 @@ async function createVideo(token, args) {
     const encoded = result.response.headers.get('x-meteor-video-billing') || ''
     if (encoded && encoded.length < 4096) billing = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
   } catch { /* Older Sub2API releases do not provide a pricing snapshot. */ }
-  const structured = { task_id: taskID, id: taskID, status: 'PENDING', model, raw: result.data, ...(billing ? { billing } : {}) }
+  const structured = { task_id: taskID, id: taskID, status: 'PENDING', model, raw: result.data,
+    ...(result.data?.stage ? { stage: result.data.stage, asset_progress: result.data.asset_progress } : {}),
+    ...(billing ? { billing } : {}) }
   return mcpToolResult([{ type: 'text', text: JSON.stringify(structured) }], structured)
 }
 
@@ -769,7 +822,9 @@ function mapVideoStatus(taskID, raw) {
   if (['failed', 'failure', 'cancelled', 'canceled', 'error'].includes(rawStatus)) status = 'FAILURE'
   return {
     task_id: taskID, id: taskID, status,
-    data: { task_id: taskID, id: taskID, status, result_url: url || undefined, video_url: url || undefined, fail_reason: failure || undefined, token_usage: tokenUsage, raw },
+    ...(raw?.stage ? { stage: raw.stage, asset_progress: raw.asset_progress } : {}),
+    data: { task_id: taskID, id: taskID, status, result_url: url || undefined, video_url: url || undefined, fail_reason: failure || undefined, token_usage: tokenUsage,
+      ...(raw?.stage ? { stage: raw.stage, asset_progress: raw.asset_progress } : {}), raw },
     raw,
   }
 }
@@ -956,13 +1011,14 @@ function normalizedReferences(values) {
 }
 
 async function validateFzyReferences(body) {
+  if (extractReferenceURLs(body).length > 9) return false
   const values = [
     ...extractReferenceURLs(body),
     String(body?.start_image_url || '').trim(),
     String(body?.end_image_url || '').trim(),
   ].filter(Boolean).map((value) => splitReference(value).url)
   for (const value of values) {
-    if (!(await checkedPublicURL(value))) return false
+    if (value.length > 8192 || !(await checkedPublicURL(value))) return false
   }
   return true
 }
@@ -999,11 +1055,15 @@ function buildFzyBody(body) {
   const audio = body?.audio === undefined ? !fzyKlingModels.has(model) : Boolean(body.audio)
   if (fzyDoubaoModels.has(model)) {
     const content = [{ type: 'text', text: prompt }]
-    for (const raw of [...refs.map((item) => item.url), start, end].filter(Boolean)) {
-      const ext = referenceExtension(raw)
-      if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) content.push({ type: 'image_url', image_url: { url: raw }, role: 'reference_image' })
-      else if (ext === '.mp4') content.push({ type: 'video_url', video_url: { url: raw }, role: 'reference_video' })
-      else if (['.mp3', '.wav'].includes(ext)) content.push({ type: 'audio_url', audio_url: { url: raw }, role: 'reference_audio' })
+    const media = [...refs]
+    if (start && !media.some((item) => item.prefix === 'start' && item.url === start)) media.push({ prefix: 'start', url: start })
+    if (end && !media.some((item) => item.prefix === 'end' && item.url === end)) media.push({ prefix: 'end', url: end })
+    for (const { prefix, url } of media) {
+      const ext = referenceExtension(url)
+      const kind = ext === '.mp4' ? 'video' : ['.mp3', '.wav'].includes(ext) ? 'audio' : 'image'
+      const role = kind === 'image' && prefix === 'start' ? 'first_frame'
+        : kind === 'image' && prefix === 'end' ? 'last_frame' : `reference_${kind}`
+      content.push({ type: `${kind}_url`, [`${kind}_url`]: { url }, role })
     }
     return { model, content, generate_audio: audio, ratio, resolution, duration, watermark: false }
   }
@@ -1078,14 +1138,29 @@ async function handleFzyProvider(req, res, parsed) {
       text(res, 404, 'Not found'); return
     }
     if (!taskID || taskID.length > 512 || /[\u0000\r\n/\\]/.test(taskID)) { text(res, 404, 'Not found'); return }
+    const libraryTask = fzyAssetTask(taskID)
+    const libraryOwner = fzyRequestOwner(req)
+    const libraryJob = libraryTask && fzyAssetQueue ? await fzyAssetQueue.lookup(taskID, token, libraryOwner) : null
+    if (libraryTask && !libraryJob) { text(res, 404, 'Not found'); return }
+    if (libraryJob?.stage === 'failed' && !libraryJob.upstreamTaskID) {
+      json(res, 200, { id: taskID, status: 'failed', model: libraryJob.model, ...fzyAssetProgress(libraryJob),
+        error: { message: typeof libraryJob.error === 'string' ? libraryJob.error : libraryJob.error?.message || '素材处理失败，未提交视频生成' } })
+      return
+    }
+    if (libraryJob && !libraryJob.upstreamTaskID) {
+      if (statusMatch[2] === '/content') { json(res, 409, { error: { message: 'video is not complete' } }); return }
+      json(res, 200, { id: taskID, status: 'pending', model: libraryJob.model, ...fzyAssetProgress(libraryJob) })
+      return
+    }
     let taskMeta = null
     try { taskMeta = JSON.parse(await fs.readFile(taskMetaPath(taskID), 'utf8')) } catch { /* task may have been created before bridge restart */ }
     // This adapter is only reachable from the Sub2API Docker network.  New
     // metadata records the provider-token hash for diagnostics; retain status
     // compatibility for tasks created before that field existed.
     if (taskMeta?.owner && taskMeta.owner !== ownerHash(token)) { text(res, 404, 'Not found'); return }
-    const model = normalizeModel(taskMeta?.model || 'doubao-seedance-2.0-fast')
-    const upstream = await fetch(fzyTaskEndpoint(model, taskID), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(120000) })
+    const model = normalizeModel(libraryJob?.model || taskMeta?.model || 'doubao-seedance-2.0-fast')
+    const providerTaskID = libraryJob?.upstreamTaskID || taskID
+    const upstream = await fetch(fzyTaskEndpoint(model, providerTaskID), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(120000) })
     const buffer = Buffer.from(await upstream.arrayBuffer())
     const raw = parseJSON(buffer) || {}
     const envelopeStatus = fzyEnvelopeStatus(raw, upstream.status)
@@ -1098,6 +1173,13 @@ async function handleFzyProvider(req, res, parsed) {
     const tokenUsage = videoTokenUsage(raw)
     const success = ['success', 'succeeded', 'succeed', 'completed', 'done'].includes(String(task.status).toLowerCase()) || Boolean(task.resultURL)
     const failure = ['failed', 'failure', 'expired', 'cancelled', 'canceled', 'error'].includes(String(task.status).toLowerCase())
+    if (libraryJob && (success || failure)) {
+      try { await fzyAssetQueue.observeTerminal(taskID, token, libraryOwner, failure ? 'failed' : 'done') } catch {
+        // A failed local checkpoint must not change a known provider outcome
+        // or prevent the gateway's idempotent billing/refund from completing.
+        log('asset_terminal_checkpoint_failed', { task_id: taskID })
+      }
+    }
     if (statusMatch[2] === '/content') {
       if (!success || !task.resultURL) { json(res, 409, { error: { message: 'video is not complete' } }); return }
       const resultURL = await checkedPublicURL(task.resultURL)
@@ -1114,13 +1196,14 @@ async function handleFzyProvider(req, res, parsed) {
       if (!taskMeta?.deliveryURL) {
         try {
           const delivery = await storeRemoteVideo(task.resultURL, ownerHash(token))
-          taskMeta = { ...(taskMeta || {}), model, deliveryURL: delivery.url, deliveryExpiresAt: delivery.expiresAt }
+          taskMeta = { id: taskID, owner: ownerHash(token), ...(taskMeta || {}), model, deliveryURL: delivery.url, deliveryExpiresAt: delivery.expiresAt }
           await writeJSONAtomic(taskMetaPath(taskID), taskMeta)
         } catch (error) { log('video_delivery_store_failed', { task_id: taskID, error: error.message }) }
       }
     }
     const url = billingOnly ? task.resultURL : first(taskMeta?.deliveryURL, task.resultURL)
-    json(res, 200, failure ? { id: taskID, status: 'failed', model, error: { message: task.reason || 'video generation failed' } } : success ? { id: taskID, status: 'done', model, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}) } : { id: taskID, status: 'pending', model })
+    const progress = libraryJob ? { ...fzyAssetProgress(libraryJob), stage: failure ? 'failed' : success ? 'completed' : 'video_generating' } : {}
+    json(res, 200, failure ? { id: taskID, status: 'failed', model, ...progress, error: { message: task.reason || 'video generation failed' } } : success ? { id: taskID, status: 'done', model, ...progress, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}) } : { id: taskID, status: 'pending', model, ...progress })
     return
   }
   if (req.method === 'POST' && (relative === '/videos/generations' || relative === '/videos')) {
@@ -1146,6 +1229,23 @@ async function handleFzyProvider(req, res, parsed) {
       json(res, 400, { error: { message: 'reference URLs must be public HTTP/HTTPS URLs' } }); return
     }
     const requestBody = buildFzyBody(body)
+    if (FZY_AUTO_ASSETS_ENABLED && fzyDoubaoModels.has(model) && requestBody.content.some((item) => ['image_url', 'video_url', 'audio_url'].includes(item.type))) {
+      const owner = fzyRequestOwner(req)
+      if (!owner || !fzyAssetQueue) {
+        json(res, 503, { error: { type: 'asset_library_unavailable', message: '素材服务暂不可用，请稍后重试' } }); return
+      }
+      try {
+        const reservation = String(req.headers['x-meteor-fzy-reservation'] || '')
+        const job = await fzyAssetQueue.enqueue({ token, owner, model, requestBody,
+          ...(/^[A-Za-z0-9_-]{1,128}$/.test(reservation) ? { idempotencyKey: reservation } : {}),
+        })
+        json(res, 200, { id: job.id, request_id: job.id, status: 'pending', model, ...fzyAssetProgress(job) })
+      } catch (error) {
+        log('asset_enqueue_failed', { model })
+        json(res, 503, { error: { type: 'asset_library_unavailable', message: error?.message || '素材处理暂不可用，请稍后重试' } })
+      }
+      return
+    }
     const upstream = await fetch(fzyTaskEndpoint(model), { method: 'POST', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'Content-Type': 'application/json', ...(req.headers['idempotency-key'] ? { 'Idempotency-Key': req.headers['idempotency-key'] } : {}) }, body: JSON.stringify(requestBody), signal: AbortSignal.timeout(120000) })
     const buffer = Buffer.from(await upstream.arrayBuffer())
     const raw = parseJSON(buffer) || {}
@@ -1187,4 +1287,6 @@ server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
 server.listen(PORT, '0.0.0.0', () => log('started', { port: PORT, sub2api: SUB2API_URL, public_base: PUBLIC_BASE_URL }))
 
-for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => server.close(() => process.exit(0)))
+for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => {
+  void Promise.resolve(fzyAssetQueue?.stop()).finally(() => server.close(() => process.exit(0)))
+})

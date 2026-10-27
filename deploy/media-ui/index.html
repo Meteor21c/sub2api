@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="description" content="图片与视频生成">
     <title>图片与视频生成 · 流星 API</title>
-    <link rel="stylesheet" href="./styles.css?v=20260927-image-delivery">
+    <link rel="stylesheet" href="./styles.css?v=20261027-fzy-assets">
   </head>
   <body>
     <div class="shell">
@@ -179,6 +179,7 @@
               <label for="video-reference-urls">远程参考地址（可选，每行一个）</label>
               <textarea id="video-reference-urls" rows="3" placeholder="https://example.com/reference.png"></textarea>
               <small>请使用可公开访问的 HTTP/HTTPS 地址。</small>
+              <small id="video-asset-hint" hidden>盈合 Seedance 参考素材会自动入库，审核通过后自动生成。相同素材可复用，7 天未使用会清理；审核失败会退回预扣。</small>
             </div>
 
             <div class="field">
@@ -229,9 +230,10 @@
     </div>
     <script src="./account-keys.js?v=20260928-preserve-session" defer></script>
     <script src="./image-options.js" defer></script>
-    <script src="./media-history.js?v=20260926-gemini-native" defer></script>
+    <script src="./video-asset-status.js?v=20261027-fzy-assets" defer></script>
+    <script src="./media-history.js?v=20261027-fzy-assets" defer></script>
     <script src="./image-results.js?v=20260927-image-delivery" defer></script>
     <script src="./video-pricing.js?v=20260926-gemini-native" defer></script>
-    <script src="./app.js?v=20260928-preserve-session" defer></script>
+    <script src="./app.js?v=20261027-fzy-assets" defer></script>
   </body>
 </html>
