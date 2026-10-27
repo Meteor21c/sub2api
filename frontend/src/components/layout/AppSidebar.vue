@@ -214,6 +214,7 @@ import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
+import { businessMonitorAPI } from '@/api/admin/businessMonitor'
 
 interface NavItem {
   path: string
@@ -264,6 +265,7 @@ const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
+const businessMonitorAllowed = ref(false)
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 
@@ -806,6 +808,7 @@ const customMenuItemsForAdmin = computed(() => {
 const adminNavItems = computed((): NavItem[] => {
   const baseItems: NavItem[] = [
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: DashboardIcon },
+    ...(businessMonitorAllowed.value ? [{ path: '/admin/business-monitor', label: '经营监测', icon: ChartIcon }] : []),
     { path: '/admin/ops', label: t('nav.ops'), icon: ChartIcon, featureFlag: flagOpsMonitoring },
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon },
@@ -972,6 +975,19 @@ if (
   isDark.value = true
   document.documentElement.classList.add('dark')
 }
+
+watch(
+  () => [authStore.user?.id, isAdmin.value] as const,
+  async ([userID, admin]) => {
+    businessMonitorAllowed.value = false
+    if (!admin || !userID) return
+    try {
+      const access = await businessMonitorAPI.getAccess()
+      if (authStore.user?.id === userID) businessMonitorAllowed.value = access.allowed
+    } catch { businessMonitorAllowed.value = false }
+  },
+  { immediate: true }
+)
 
 // Fetch admin settings (for feature-gated nav items like Ops).
 watch(
