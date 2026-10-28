@@ -216,8 +216,7 @@ import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
-import { businessMonitorAPI } from '@/api/admin/businessMonitor'
-import { canvasPilotAPI } from '@/api/canvasPilot'
+import { useSidebarAccess } from '@/composables/useSidebarAccess'
 import { isLegacyBalanceMonitorMenu } from '@/utils/customMenuNavigation'
 
 interface NavItem {
@@ -270,8 +269,7 @@ const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
-const businessMonitorAllowed = ref(false)
-const canvasPilotAllowed = ref(false)
+const { businessMonitorAllowed, canvasPilotAllowed } = useSidebarAccess()
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 
@@ -982,24 +980,6 @@ if (
   isDark.value = true
   document.documentElement.classList.add('dark')
 }
-
-watch(
-  () => [authStore.user?.id, isAdmin.value] as const,
-  async ([userID, admin]) => {
-    businessMonitorAllowed.value = false
-    canvasPilotAllowed.value = false
-    if (!userID) return
-    void canvasPilotAPI.getAccess().then(access => {
-      if (authStore.user?.id === userID) canvasPilotAllowed.value = access.allowed
-    }).catch(() => { canvasPilotAllowed.value = false })
-    if (!admin) return
-    try {
-      const access = await businessMonitorAPI.getAccess()
-      if (authStore.user?.id === userID) businessMonitorAllowed.value = access.allowed
-    } catch { businessMonitorAllowed.value = false }
-  },
-  { immediate: true }
-)
 
 // Fetch admin settings (for feature-gated nav items like Ops).
 watch(

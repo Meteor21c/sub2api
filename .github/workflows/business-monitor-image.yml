@@ -79,7 +79,7 @@ jobs:
         run: pnpm typecheck
       - name: Registration schedule and legacy balance navigation tests
         working-directory: frontend
-        run: pnpm exec vitest run src/views/admin/__tests__/SettingsView.spec.ts src/views/auth/__tests__/RegisterView.spec.ts src/views/user/__tests__/CustomPageView.spec.ts src/views/user/__tests__/CustomPageView.race.spec.ts src/utils/__tests__/customMenuNavigation.spec.ts src/components/layout/__tests__/AppSidebar.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts
+        run: pnpm exec vitest run src/views/admin/__tests__/SettingsView.spec.ts src/views/auth/__tests__/RegisterView.spec.ts src/views/user/__tests__/CustomPageView.spec.ts src/views/user/__tests__/CustomPageView.race.spec.ts src/utils/__tests__/customMenuNavigation.spec.ts src/components/layout/__tests__/AppSidebar.spec.ts src/composables/__tests__/useSidebarAccess.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts
       - name: Finance frontend tests
         working-directory: frontend
         run: pnpm exec vitest run src/views/admin/__tests__/businessMonitor.spec.ts src/views/admin/__tests__/businessMonitorBalances.spec.ts
