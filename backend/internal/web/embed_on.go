@@ -167,6 +167,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	}
 
 	// Cache miss - fetch settings and render
+	renderStartedAt := time.Now()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
 
@@ -187,7 +188,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	}
 
 	rendered := s.injectSettings(settingsJSON)
-	s.cache.Set(rendered, settingsJSON)
+	s.cache.SetAt(rendered, settingsJSON, renderStartedAt)
 
 	// Replace nonce placeholder with actual nonce before serving
 	content := replaceNoncePlaceholder(rendered, nonce)

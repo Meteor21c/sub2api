@@ -42,6 +42,11 @@ func (s *AuthService) SendPendingOAuthVerifyCode(ctx context.Context, email stri
 	if s == nil || s.emailService == nil {
 		return nil, ErrServiceUnavailable
 	}
+	if s.settingService != nil {
+		if err := s.settingService.CheckRegistrationSchedule(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
 		return nil, err
 	}
@@ -113,8 +118,8 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 	if s == nil {
 		return nil, nil, ErrServiceUnavailable
 	}
-	if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
-		return nil, nil, ErrRegDisabled
+	if err := s.checkOAuthRegistrationAllowed(ctx, signupSource); err != nil {
+		return nil, nil, err
 	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
@@ -163,6 +168,9 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		SignupSource: signupSource,
 	}
 
+	if err := s.checkOAuthRegistrationAllowed(ctx, signupSource); err != nil {
+		return nil, nil, err
+	}
 	if err := s.createUserWithRegistrationEmailGuard(ctx, user); err != nil {
 		switch {
 		case errors.Is(err, ErrEmailExists):
@@ -195,8 +203,8 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 	if s == nil {
 		return nil, nil, ErrServiceUnavailable
 	}
-	if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
-		return nil, nil, ErrRegDisabled
+	if err := s.checkOAuthRegistrationAllowed(ctx, signupSource); err != nil {
+		return nil, nil, err
 	}
 
 	email = strings.TrimSpace(strings.ToLower(email))
@@ -250,6 +258,9 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 		SignupSource: signupSource,
 	}
 
+	if err := s.checkOAuthRegistrationAllowed(ctx, signupSource); err != nil {
+		return nil, nil, err
+	}
 	if err := s.createUserWithRegistrationEmailGuard(ctx, user); err != nil {
 		switch {
 		case errors.Is(err, ErrEmailExists):
@@ -280,6 +291,11 @@ func (s *AuthService) FinalizeOAuthEmailAccount(
 ) error {
 	if s == nil || user == nil || user.ID <= 0 {
 		return ErrServiceUnavailable
+	}
+	if s.settingService != nil {
+		if err := s.settingService.CheckRegistrationSchedule(ctx); err != nil {
+			return err
+		}
 	}
 
 	signupSource = normalizeOAuthSignupSource(signupSource)

@@ -210,6 +210,11 @@ export interface LoginAgreementDocument {
 
 export interface PublicSettings {
   registration_enabled: boolean
+  registration_schedule_enabled?: boolean
+  registration_schedule_start?: string
+  registration_schedule_end?: string
+  registration_schedule_timezone?: string
+  registration_schedule_closed?: boolean
   email_verify_enabled: boolean
   force_email_on_third_party_signup: boolean
   registration_email_suffix_whitelist: string[]

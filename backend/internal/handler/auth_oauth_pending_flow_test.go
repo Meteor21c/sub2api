@@ -1332,7 +1332,9 @@ func TestOAuthExistingUserLoginDoesNotApplyPromoCode(t *testing.T) {
 }
 
 func TestCreateOIDCOAuthAccountExistingEmailReturnsChoicePendingSessionState(t *testing.T) {
-	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "owner@example.com", "135790")
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		settingValues: closedOAuthRegistrationScheduleSettings(),
+	})
 	ctx := context.Background()
 
 	existingUser, err := client.User.Create().
@@ -1576,7 +1578,9 @@ func TestCreateOIDCOAuthAccountRejectsEmailOutsideWhitelistWhenQuotaDisabled(t *
 }
 
 func TestSendPendingOAuthVerifyCodeExistingEmailReturnsBindLoginState(t *testing.T) {
-	handler, client := newOAuthPendingFlowTestHandlerWithEmailVerification(t, false, "owner@example.com", "135790")
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		settingValues: closedOAuthRegistrationScheduleSettings(),
+	})
 	ctx := context.Background()
 
 	existingUser, err := client.User.Create().
@@ -1854,7 +1858,9 @@ func TestCreateOIDCOAuthAccountRollsBackPostBindFailureBeforeIdentityCanCommit(t
 }
 
 func TestBindOIDCOAuthLoginBindsExistingUserAndConsumesSession(t *testing.T) {
-	handler, client := newOAuthPendingFlowTestHandler(t, false)
+	handler, client := newOAuthPendingFlowTestHandlerWithDependencies(t, oauthPendingFlowTestHandlerOptions{
+		settingValues: closedOAuthRegistrationScheduleSettings(),
+	})
 	ctx := context.Background()
 
 	passwordHash, err := handler.authService.HashPassword("secret-123")

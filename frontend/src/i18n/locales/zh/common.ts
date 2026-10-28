@@ -236,6 +236,7 @@ export default {
     rememberMe: '记住我',
     dontHaveAccount: '还没有账户？',
     alreadyHaveAccount: '已有账户？',
+    registrationScheduleClosed: '注册开放时间：每天 {start}–{end}（北京时间），请在开放时间内注册。',
     registrationDisabled: '注册功能暂时关闭，请联系管理员。',
     emailLabel: '邮箱',
     emailPlaceholder: '请输入邮箱',

@@ -162,8 +162,11 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (str
 // RegisterWithVerification 用户注册（支持邮件验证、优惠码、邀请码和邀请返利码），返回token和用户。
 func (s *AuthService) RegisterWithVerification(ctx context.Context, email, password, verifyCode, promoCode, invitationCode, affiliateCode string) (string, *User, error) {
 	// 检查是否开放注册（默认关闭：settingService 未配置时不允许注册）
-	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
+	if s.settingService == nil {
 		return "", nil, ErrRegDisabled
+	}
+	if err := s.settingService.CheckRegistrationAllowed(ctx); err != nil {
+		return "", nil, err
 	}
 
 	// 防止用户注册 LinuxDo OAuth 合成邮箱，避免第三方登录与本地账号发生碰撞。
@@ -245,6 +248,9 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		Status:       StatusActive,
 	}
 
+	if err := s.settingService.CheckRegistrationAllowed(ctx); err != nil {
+		return "", nil, err
+	}
 	if err := s.createUserAndClaimInvitation(ctx, user, invitationRedeemCode); err != nil {
 		// 优先检查邮箱冲突错误（竞态条件下可能发生）
 		switch {
@@ -307,8 +313,11 @@ type SendVerifyCodeResult struct {
 // SendVerifyCode 发送邮箱验证码（同步方式）
 func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale ...string) error {
 	// 检查是否开放注册（默认关闭）
-	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
+	if s.settingService == nil {
 		return ErrRegDisabled
+	}
+	if err := s.settingService.CheckRegistrationAllowed(ctx); err != nil {
+		return err
 	}
 
 	if isReservedEmail(email) {
@@ -346,9 +355,11 @@ func (s *AuthService) SendVerifyCodeAsync(ctx context.Context, email string, loc
 	logger.LegacyPrintf("service.auth", "[Auth] SendVerifyCodeAsync called for email: %s", email)
 
 	// 检查是否开放注册（默认关闭）
-	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
-		logger.LegacyPrintf("service.auth", "%s", "[Auth] Registration is disabled")
+	if s.settingService == nil {
 		return nil, ErrRegDisabled
+	}
+	if err := s.settingService.CheckRegistrationAllowed(ctx); err != nil {
+		return nil, err
 	}
 
 	if isReservedEmail(email) {
@@ -587,8 +598,11 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			// OAuth 首次登录视为注册（fail-close：settingService 未配置时不允许注册）
-			if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
+			if s.settingService == nil {
 				return "", nil, ErrRegDisabled
+			}
+			if err := s.settingService.CheckRegistrationAllowed(ctx); err != nil {
+				return "", nil, err
 			}
 
 			randomPassword, err := randomHexString(32)
@@ -620,6 +634,9 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 				SignupSource: signupSource,
 			}
 
+			if err := s.settingService.CheckRegistrationAllowed(ctx); err != nil {
+				return "", nil, err
+			}
 			if err := s.userRepo.Create(ctx, newUser); err != nil {
 				if errors.Is(err, ErrEmailExists) {
 					// 并发场景：GetByEmail 与 Create 之间用户被创建。
@@ -676,6 +693,25 @@ func (s *AuthService) canBypassRegistrationDisabledForOAuth(ctx context.Context,
 	return cfg.CorpRestrictionPolicy == "internal_only"
 }
 
+// checkOAuthRegistrationAllowed preserves the provider's master-switch exception,
+// while applying daily opening hours unconditionally for new account creation.
+func (s *AuthService) checkOAuthRegistrationAllowed(ctx context.Context, signupSource string) error {
+	if s.settingService == nil {
+		return ErrRegDisabled
+	}
+	policy, err := s.settingService.getRegistrationPolicy(ctx)
+	if err != nil {
+		return ErrRegDisabled
+	}
+	if err := policy.scheduleError(s.settingService.registrationTime()); err != nil {
+		return err
+	}
+	if !policy.enabled && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource) {
+		return ErrRegDisabled
+	}
+	return nil
+}
+
 // LoginOrRegisterOAuthWithTokenPair 用于第三方 OAuth/SSO 登录，返回完整的 TokenPair。
 // 与 LoginOrRegisterOAuth 功能相同，但返回 TokenPair 而非单个 token。
 // invitationCode 仅在邀请码注册模式下新用户注册时使用；已有账号登录时忽略。
@@ -716,8 +752,8 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			// OAuth 首次登录视为注册
-			if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
-				return nil, nil, ErrRegDisabled
+			if err := s.checkOAuthRegistrationAllowed(ctx, signupSource); err != nil {
+				return nil, nil, err
 			}
 
 			// 检查是否需要邀请码
@@ -778,6 +814,9 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				defer func() { _ = tx.Rollback() }()
 				txCtx := dbent.NewTxContext(ctx, tx)
 
+				if err := s.checkOAuthRegistrationAllowed(ctx, signupSource); err != nil {
+					return nil, nil, err
+				}
 				if err := s.userRepo.Create(txCtx, newUser); err != nil {
 					if errors.Is(err, ErrEmailExists) {
 						user, err = s.userRepo.GetByEmail(ctx, email)
@@ -806,6 +845,9 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 					s.bindOAuthAffiliate(ctx, user.ID, affiliateCode)
 				}
 			} else {
+				if err := s.checkOAuthRegistrationAllowed(ctx, signupSource); err != nil {
+					return nil, nil, err
+				}
 				if err := s.userRepo.Create(ctx, newUser); err != nil {
 					if errors.Is(err, ErrEmailExists) {
 						user, err = s.userRepo.GetByEmail(ctx, email)

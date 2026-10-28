@@ -157,6 +157,9 @@ func (s *SettingService) GetFrontendURL(ctx context.Context) string {
 func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings, error) {
 	keys := []string{
 		SettingKeyRegistrationEnabled,
+		SettingKeyRegistrationScheduleEnabled,
+		SettingKeyRegistrationScheduleStart,
+		SettingKeyRegistrationScheduleEnd,
 		SettingKeyEmailVerifyEnabled,
 		SettingKeyForceEmailOnThirdPartySignup,
 		SettingKeyRegistrationEmailSuffixWhitelist,
@@ -299,8 +302,15 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		balanceLowNotifyThreshold = v
 	}
 
+	registration := registrationPolicyFromSettings(settings)
+	scheduleClosed := registration.scheduleEnabled && !registration.contains(s.registrationTime())
 	return &PublicSettings{
-		RegistrationEnabled:                 settings[SettingKeyRegistrationEnabled] == "true",
+		RegistrationEnabled:                 registration.enabled && !scheduleClosed,
+		RegistrationScheduleEnabled:         registration.scheduleEnabled,
+		RegistrationScheduleStart:           registration.start,
+		RegistrationScheduleEnd:             registration.end,
+		RegistrationScheduleTimezone:        RegistrationScheduleTimezone,
+		RegistrationScheduleClosed:          registration.enabled && scheduleClosed,
 		EmailVerifyEnabled:                  emailVerifyEnabled,
 		ForceEmailOnThirdPartySignup:        settings[SettingKeyForceEmailOnThirdPartySignup] == "true",
 		RegistrationEmailSuffixWhitelist:    registrationEmailSuffixWhitelist,
@@ -561,6 +571,11 @@ func (s *SettingService) IsUserErrorViewAllowed(ctx context.Context) bool {
 // drift automatically (see setting_service_injection_test.go).
 type PublicSettingsInjectionPayload struct {
 	RegistrationEnabled                 bool                     `json:"registration_enabled"`
+	RegistrationScheduleEnabled         bool                     `json:"registration_schedule_enabled"`
+	RegistrationScheduleStart           string                   `json:"registration_schedule_start"`
+	RegistrationScheduleEnd             string                   `json:"registration_schedule_end"`
+	RegistrationScheduleTimezone        string                   `json:"registration_schedule_timezone"`
+	RegistrationScheduleClosed          bool                     `json:"registration_schedule_closed"`
 	EmailVerifyEnabled                  bool                     `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist    []string                 `json:"registration_email_suffix_whitelist"`
 	RegistrationEmailDomainQuotaEnabled bool                     `json:"registration_email_domain_quota_enabled"`
@@ -655,6 +670,11 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 
 	return &PublicSettingsInjectionPayload{
 		RegistrationEnabled:                 settings.RegistrationEnabled,
+		RegistrationScheduleEnabled:         settings.RegistrationScheduleEnabled,
+		RegistrationScheduleStart:           settings.RegistrationScheduleStart,
+		RegistrationScheduleEnd:             settings.RegistrationScheduleEnd,
+		RegistrationScheduleTimezone:        settings.RegistrationScheduleTimezone,
+		RegistrationScheduleClosed:          settings.RegistrationScheduleClosed,
 		EmailVerifyEnabled:                  settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:    settings.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled: settings.RegistrationEmailDomainQuotaEnabled,

@@ -21,7 +21,7 @@
             <Icon name="exclamationCircle" size="md" class="text-amber-500" />
           </div>
           <p class="text-sm text-amber-700 dark:text-amber-400">
-            {{ t('auth.registrationDisabled') }}
+            {{ registrationClosedMessage }}
           </p>
         </div>
       </div>
@@ -421,6 +421,20 @@ const confirmPassword = ref('')
 
 // Public settings
 const registrationEnabled = ref<boolean>(true)
+const registrationScheduleClosed = ref(false)
+const registrationScheduleStart = ref('09:00')
+const registrationScheduleEnd = ref('22:00')
+const registrationScheduleMessage = computed(() =>
+  t('auth.registrationScheduleClosed', {
+    start: registrationScheduleStart.value,
+    end: registrationScheduleEnd.value
+  })
+)
+const registrationClosedMessage = computed(() =>
+  registrationScheduleClosed.value
+    ? registrationScheduleMessage.value
+    : t('auth.registrationDisabled')
+)
 const emailVerifyEnabled = ref<boolean>(false)
 // Public settings are injected into the app store before Vue mounts. Use that
 // value for the first render so a disabled promo-code field never flashes
@@ -564,6 +578,9 @@ onMounted(async () => {
   try {
     const settings = await getPublicSettings()
     registrationEnabled.value = settings.registration_enabled
+    registrationScheduleClosed.value = settings.registration_schedule_closed === true
+    registrationScheduleStart.value = settings.registration_schedule_start || '09:00'
+    registrationScheduleEnd.value = settings.registration_schedule_end || '22:00'
     emailVerifyEnabled.value = settings.email_verify_enabled
     promoCodeEnabled.value = settings.promo_code_enabled
     invitationCodeEnabled.value = settings.invitation_code_enabled
@@ -1109,6 +1126,11 @@ async function handleRegister(): Promise<void> {
 }
 
 function buildRegistrationErrorMessage(error: unknown, fallback: string): string {
+  if (extractApiErrorCode(error) === 'REGISTRATION_SCHEDULE_CLOSED') {
+    registrationScheduleClosed.value = true
+    registrationEnabled.value = false
+    return registrationScheduleMessage.value
+  }
   if (extractApiErrorCode(error) === 'EMAIL_DOMAIN_REGISTRATION_LIMIT') {
     return t('auth.emailDomainRegistrationLimit')
   }

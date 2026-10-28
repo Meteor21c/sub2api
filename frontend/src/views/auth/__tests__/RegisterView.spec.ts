@@ -52,10 +52,15 @@ vi.mock('vue-i18n', () => ({
     }
   }),
   useI18n: () => ({
-    t: (key: string) =>
-      key === 'auth.emailDomainRegistrationLimit'
-        ? '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
-        : key,
+    t: (key: string, params?: Record<string, string>) => {
+      if (key === 'auth.emailDomainRegistrationLimit') {
+        return '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
+      }
+      if (key === 'auth.registrationScheduleClosed') {
+        return `注册开放时间：每天 ${params?.start}–${params?.end}（北京时间），请在开放时间内注册。`
+      }
+      return key
+    },
     locale: { value: 'en' }
   })
 }))
@@ -107,6 +112,75 @@ describe('RegisterView', () => {
     verifyActionMock.mockResolvedValue({ token: 'ticket', randstr: 'randstr' })
     getPublicSettingsMock.mockResolvedValue(publicSettings)
     registerMock.mockResolvedValue({})
+  })
+
+  it('shows the Beijing registration window when the backend reports scheduled closure', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      registration_enabled: false,
+      registration_schedule_enabled: true,
+      registration_schedule_closed: true,
+      registration_schedule_start: '08:30',
+      registration_schedule_end: '21:45'
+    })
+    const wrapper = mountRegister()
+    await flushPromises()
+    expect(wrapper.text()).toContain('每天 08:30–21:45（北京时间）')
+    expect(wrapper.find('form').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('uses the generic disabled message when the master registration switch is off', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      registration_enabled: false,
+      registration_schedule_enabled: true,
+      registration_schedule_closed: false
+    })
+    const wrapper = mountRegister()
+    await flushPromises()
+    expect(wrapper.text()).toContain('auth.registrationDisabled')
+    expect(wrapper.text()).not.toContain('北京时间')
+    expect(wrapper.find('form').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('preserves the registration form while schedule limits are disabled', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      registration_schedule_enabled: false,
+      registration_schedule_closed: false
+    })
+    const wrapper = mountRegister()
+    await flushPromises()
+    expect(wrapper.find('form').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('每天 09:00–22:00')
+    wrapper.unmount()
+  })
+
+  it('handles a backend schedule closure after the registration page was opened', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: false,
+      registration_schedule_enabled: true,
+      registration_schedule_start: '09:00',
+      registration_schedule_end: '22:00'
+    })
+    registerMock.mockRejectedValueOnce({
+      reason: 'REGISTRATION_SCHEDULE_CLOSED',
+      message: 'raw backend message'
+    })
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('new@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('#confirmPassword').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+    expect(showErrorMock).toHaveBeenCalledWith('注册开放时间：每天 09:00–22:00（北京时间），请在开放时间内注册。')
+    expect(wrapper.find('form').exists()).toBe(false)
+    expect(wrapper.text()).toContain('每天 09:00–22:00（北京时间）')
+    wrapper.unmount()
   })
 
   it('does not flash the promo-code field before disabled settings finish loading', async () => {

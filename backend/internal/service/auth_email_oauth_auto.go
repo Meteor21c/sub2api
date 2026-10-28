@@ -155,8 +155,8 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 }
 
 func (s *AuthService) createEmailOAuthUser(ctx context.Context, email, username, providerType, invitationCode, affiliateCode string) (*User, error) {
-	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
-		return nil, ErrRegDisabled
+	if err := s.checkOAuthRegistrationAllowed(ctx, providerType); err != nil {
+		return nil, err
 	}
 	invitationRedeemCode, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode)
 	if err != nil {
@@ -189,6 +189,9 @@ func (s *AuthService) createEmailOAuthUser(ctx context.Context, email, username,
 		RPMLimit:     defaultRPMLimit,
 		Status:       StatusActive,
 		SignupSource: providerType,
+	}
+	if err := s.checkOAuthRegistrationAllowed(ctx, providerType); err != nil {
+		return nil, err
 	}
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		if errors.Is(err, ErrEmailExists) {

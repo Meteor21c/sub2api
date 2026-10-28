@@ -1756,6 +1756,12 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 		c.JSON(http.StatusOK, buildPendingOAuthSessionStatusPayload(session))
 		return
 	}
+	if h.settingSvc != nil {
+		if err := h.settingSvc.CheckRegistrationSchedule(c.Request.Context()); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 	if err := h.ensureBackendModeAllowsNewUserLogin(c.Request.Context()); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -1873,6 +1879,16 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 				return
 			}
 			respondPendingOAuthBindingApplyError(c, err)
+			return
+		}
+	}
+	if h.settingSvc != nil {
+		if err := h.settingSvc.CheckRegistrationSchedule(c.Request.Context()); err != nil {
+			_ = tx.Rollback()
+			if rollbackCreatedUser(err) {
+				return
+			}
+			response.ErrorFrom(c, err)
 			return
 		}
 	}

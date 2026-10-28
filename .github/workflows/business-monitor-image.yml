@@ -2,7 +2,7 @@ name: Build Business Monitor Image
 
 on:
   push:
-    branches: [codex/business-monitor, codex/server-safety-media-cache-20261028]
+    branches: [codex/business-monitor, codex/server-safety-media-cache-20261028, codex/registration-schedule-20261028]
   workflow_dispatch:
 
 permissions:
@@ -46,6 +46,11 @@ jobs:
         env:
           BUSINESS_MONITOR_TEST_DSN: postgres://postgres:business-ci@localhost:5432/business_ci?sslmode=disable
         run: go test -tags unit ./cmd/server ./internal/service ./internal/handler/admin -run '^TestBusinessMonitor|^TestProvideCleanup' -count=1 -timeout=5m
+      - name: Registration policy, settings and OAuth entrypoint tests
+        working-directory: backend
+        run: |
+          go test -tags unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/server -run 'Registration|OAuth|Setting|TestAPIContracts' -count=1 -timeout=5m
+          go test -tags embed internal/web/html_cache.go internal/web/registration_cache_test.go -count=1
       - uses: pnpm/action-setup@v6
         with:
           version: 9
@@ -60,6 +65,9 @@ jobs:
       - name: Frontend type check
         working-directory: frontend
         run: pnpm typecheck
+      - name: Registration schedule and legacy balance navigation tests
+        working-directory: frontend
+        run: pnpm exec vitest run src/views/admin/__tests__/SettingsView.spec.ts src/views/auth/__tests__/RegisterView.spec.ts src/views/user/__tests__/CustomPageView.spec.ts src/views/user/__tests__/CustomPageView.race.spec.ts src/utils/__tests__/customMenuNavigation.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts
       - name: Finance frontend tests
         working-directory: frontend
         run: pnpm exec vitest run src/views/admin/__tests__/businessMonitor.spec.ts src/views/admin/__tests__/businessMonitorBalances.spec.ts

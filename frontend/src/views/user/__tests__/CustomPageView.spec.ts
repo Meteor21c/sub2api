@@ -3,7 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import CustomPageView from '../CustomPageView.vue'
 
-const { appStore, routeHarness } = vi.hoisted(() => ({
+const { appStore, routeHarness, replaceRoute } = vi.hoisted(() => ({
+  replaceRoute: vi.fn(),
   appStore: {
     publicSettingsLoaded: true,
     cachedPublicSettings: { custom_menu_items: [{ id: 'docs', url: 'https://example.com/docs' }] },
@@ -18,7 +19,7 @@ vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div
 vi.mock('vue-router', async () => {
   const { reactive } = await import('vue')
   routeHarness.proxy ||= reactive(routeHarness.state)
-  return { useRoute: () => routeHarness.proxy }
+  return { useRoute: () => routeHarness.proxy, useRouter: () => ({ replace: replaceRoute }) }
 })
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }) }))
 vi.mock('@/stores', () => ({ useAppStore: () => appStore }))
@@ -75,6 +76,7 @@ function click(button: HTMLElement, detail = 1) {
 
 describe('custom page open button', () => {
   beforeEach(() => {
+    replaceRoute.mockReset()
     const route = routeHarness.proxy || routeHarness.state
     route.name = 'CustomPage'
     route.params.id = 'docs'
@@ -89,6 +91,19 @@ describe('custom page open button', () => {
   afterEach(() => {
     wrappers.splice(0).forEach(wrapper => wrapper.unmount())
     vi.unstubAllGlobals()
+  })
+
+  it('redirects the retired balance dashboard to the native guarded admin page without embedding it', async () => {
+    const route = routeHarness.proxy || routeHarness.state
+    route.params.id = 'meteor-monitor'
+    appStore.cachedPublicSettings.custom_menu_items = [
+      { id: 'meteor-monitor', url: 'https://monitor.meteor21c.fun/' }
+    ]
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(replaceRoute).toHaveBeenCalledWith('/admin/business-monitor')
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.find('.custom-open-fab').exists()).toBe(false)
   })
 
   it.each([undefined, false, true])('honors the per-menu hide button setting %s while keeping the iframe', (hidden) => {

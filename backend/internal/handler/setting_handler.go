@@ -37,6 +37,8 @@ func (h *SettingHandler) SetNotificationEmailService(notificationEmailService *s
 // GetPublicSettings 获取公开设置
 // GET /api/v1/settings/public
 func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
+	// Effective registration availability changes at schedule boundaries.
+	c.Header("Cache-Control", "no-store")
 	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -45,6 +47,11 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 
 	response.Success(c, dto.PublicSettings{
 		RegistrationEnabled:                 settings.RegistrationEnabled,
+		RegistrationScheduleEnabled:         settings.RegistrationScheduleEnabled,
+		RegistrationScheduleStart:           settings.RegistrationScheduleStart,
+		RegistrationScheduleEnd:             settings.RegistrationScheduleEnd,
+		RegistrationScheduleTimezone:        settings.RegistrationScheduleTimezone,
+		RegistrationScheduleClosed:          settings.RegistrationScheduleClosed,
 		EmailVerifyEnabled:                  settings.EmailVerifyEnabled,
 		ForceEmailOnThirdPartySignup:        settings.ForceEmailOnThirdPartySignup,
 		RegistrationEmailSuffixWhitelist:    settings.RegistrationEmailSuffixWhitelist,

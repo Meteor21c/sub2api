@@ -536,13 +536,16 @@ func buildDingTalkSyntheticEmail(userID string) string {
 	return "dingtalk-" + strings.ToLower(strings.TrimSpace(userID)) + service.DingTalkConnectSyntheticEmailDomain
 }
 
-// isDingTalkSignupBlocked 当注册总开关关闭且未开启钉钉企业模式豁免
-// （policy=internal_only + dingtalk_connect_bypass_registration=true）时返回 true。
+// isDingTalkSignupBlocked 在注册时段关闭，或注册总开关关闭且未开启
+// 钉钉企业模式豁免（policy=internal_only + dingtalk_connect_bypass_registration=true）时返回 true。
 // 镜像 service.AuthService.canBypassRegistrationDisabledForOAuth 用于 OAuth callback
 // 早期路由决策：注册被拦 → 跳过补邮箱页直接进 bind_login，避免用户填完表单才报错。
 func (h *AuthHandler) isDingTalkSignupBlocked(ctx context.Context, cfg config.DingTalkConnectConfig) bool {
 	if h.settingSvc == nil {
 		return false
+	}
+	if err := h.settingSvc.CheckRegistrationSchedule(ctx); err != nil {
+		return true
 	}
 	if h.settingSvc.IsRegistrationEnabled(ctx) {
 		return false

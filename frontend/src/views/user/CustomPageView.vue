@@ -2,7 +2,10 @@
   <AppLayout>
     <div class="custom-page-layout">
       <div class="card flex-1 min-h-0 overflow-hidden">
-        <div v-if="retainedMediaKind" v-show="activeMediaKind" class="custom-embed-shell">
+        <div v-if="nativePagePath" class="flex h-full items-center justify-center py-12">
+          <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
+        </div>
+        <div v-else-if="retainedMediaKind" v-show="activeMediaKind" class="custom-embed-shell">
           <iframe
             :src="mediaEmbeddedUrl"
             class="custom-embed-frame"
@@ -11,14 +14,14 @@
           ></iframe>
         </div>
 
-        <div v-if="!activeMediaKind && loading" class="flex h-full items-center justify-center py-12">
+        <div v-if="!nativePagePath && !activeMediaKind && loading" class="flex h-full items-center justify-center py-12">
           <div
             class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"
           ></div>
         </div>
 
         <div
-          v-else-if="!activeMediaKind && !menuItem"
+          v-else-if="!nativePagePath && !activeMediaKind && !menuItem"
           class="flex h-full items-center justify-center p-10 text-center"
         >
           <div class="max-w-md">
@@ -37,7 +40,7 @@
         </div>
 
         <!-- Markdown mode with TOC -->
-        <div v-else-if="!activeMediaKind && isMarkdownMode" class="flex h-full overflow-hidden">
+        <div v-else-if="!nativePagePath && !activeMediaKind && isMarkdownMode" class="flex h-full overflow-hidden">
           <!-- TOC Sidebar -->
           <aside
             v-show="tocVisible"
@@ -86,7 +89,7 @@
         </div>
 
         <!-- URL not configured -->
-        <div v-else-if="!activeMediaKind && !isValidUrl" class="flex h-full items-center justify-center p-10 text-center">
+        <div v-else-if="!nativePagePath && !activeMediaKind && !isValidUrl" class="flex h-full items-center justify-center p-10 text-center">
           <div class="max-w-md">
             <div
               class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700"
@@ -103,7 +106,7 @@
         </div>
 
         <!-- Iframe embed mode -->
-        <div v-else-if="!activeMediaKind" ref="embedShell" class="custom-embed-shell">
+        <div v-else-if="!nativePagePath && !activeMediaKind" ref="embedShell" class="custom-embed-shell">
           <a
             v-if="!menuItem?.hide_open_button"
             ref="openButton"
@@ -136,7 +139,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useResizeObserver } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
@@ -146,6 +149,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { buildApiUrl } from '@/api/client'
 import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
+import { isLegacyBalanceMonitorMenu } from '@/utils/customMenuNavigation'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
@@ -161,6 +165,7 @@ const props = withDefaults(defineProps<{ mediaOnly?: boolean }>(), {
 
 const { t, locale } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const adminSettingsStore = useAdminSettingsStore()
@@ -257,6 +262,14 @@ const menuItem = computed(() => {
   return null
 })
 
+// Native admin routes retain their own access guard; never embed the retired dashboard.
+const nativePagePath = computed(() =>
+  menuItem.value && isLegacyBalanceMonitorMenu(menuItem.value) ? '/admin/business-monitor' : ''
+)
+watch(nativePagePath, (path) => {
+  if (path) void router.replace(path)
+}, { immediate: true })
+
 const activeMediaKind = computed(() => menuItem.value ? requestedMediaKind.value : '')
 
 watch(
@@ -280,7 +293,7 @@ const markdownSlug = computed(() => {
 const isMarkdownMode = computed(() => !!markdownSlug.value && !activeMediaKind.value)
 
 const embeddedUrl = computed(() => {
-  if (!menuItem.value || isMarkdownMode.value) return ''
+  if (!menuItem.value || isMarkdownMode.value || nativePagePath.value) return ''
   return buildEmbeddedUrl(
     menuItem.value.url,
     authStore.user?.id,

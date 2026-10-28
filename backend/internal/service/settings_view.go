@@ -13,6 +13,9 @@ func firstNonEmpty(values ...string) string {
 
 type SystemSettings struct {
 	RegistrationEnabled                 bool
+	RegistrationScheduleEnabled         bool
+	RegistrationScheduleStart           string
+	RegistrationScheduleEnd             string
 	EmailVerifyEnabled                  bool
 	RegistrationEmailSuffixWhitelist    []string
 	RegistrationEmailDomainQuotaEnabled bool // 白名单非空时放行非白名单域名限量注册（默认关闭）
@@ -327,7 +330,12 @@ type DefaultSubscriptionSetting struct {
 }
 
 type PublicSettings struct {
+	RegistrationScheduleTimezone        string
+	RegistrationScheduleClosed          bool
 	RegistrationEnabled                 bool
+	RegistrationScheduleEnabled         bool
+	RegistrationScheduleStart           string
+	RegistrationScheduleEnd             string
 	EmailVerifyEnabled                  bool
 	ForceEmailOnThirdPartySignup        bool
 	RegistrationEmailSuffixWhitelist    []string

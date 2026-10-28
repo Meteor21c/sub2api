@@ -24,6 +24,9 @@ import (
 type UpdateSettingsRequest struct {
 	// 注册设置
 	RegistrationEnabled                 bool                         `json:"registration_enabled"`
+	RegistrationScheduleEnabled         *bool                        `json:"registration_schedule_enabled"`
+	RegistrationScheduleStart           *string                      `json:"registration_schedule_start"`
+	RegistrationScheduleEnd             *string                      `json:"registration_schedule_end"`
 	EmailVerifyEnabled                  bool                         `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist    []string                     `json:"registration_email_suffix_whitelist"`
 	RegistrationEmailDomainQuotaEnabled *bool                        `json:"registration_email_domain_quota_enabled"` // 非白名单域名限量注册开关（省略=保持现值）
@@ -529,6 +532,23 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	passkeyEnabled := previousSettings.PasskeyEnabled
 	if req.PasskeyEnabled != nil {
 		passkeyEnabled = *req.PasskeyEnabled
+	}
+	registrationScheduleEnabled := previousSettings.RegistrationScheduleEnabled
+	if req.RegistrationScheduleEnabled != nil {
+		registrationScheduleEnabled = *req.RegistrationScheduleEnabled
+	}
+	registrationScheduleStart := previousSettings.RegistrationScheduleStart
+	if req.RegistrationScheduleStart != nil {
+		registrationScheduleStart = *req.RegistrationScheduleStart
+	}
+	registrationScheduleEnd := previousSettings.RegistrationScheduleEnd
+	if req.RegistrationScheduleEnd != nil {
+		registrationScheduleEnd = *req.RegistrationScheduleEnd
+	}
+	// Validate even while disabled, so enabling a saved schedule is predictable.
+	if err := service.ValidateRegistrationSchedule(registrationScheduleStart, registrationScheduleEnd); err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 	registrationEmailDomainQuotaEnabled := previousSettings.RegistrationEmailDomainQuotaEnabled
 	if req.RegistrationEmailDomainQuotaEnabled != nil {
@@ -1528,6 +1548,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AccountSchedulingThresholds: req.AccountSchedulingThresholds,
 
 		RegistrationEnabled:                 req.RegistrationEnabled,
+		RegistrationScheduleEnabled:         registrationScheduleEnabled,
+		RegistrationScheduleStart:           registrationScheduleStart,
+		RegistrationScheduleEnd:             registrationScheduleEnd,
 		EmailVerifyEnabled:                  req.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:    req.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled: registrationEmailDomainQuotaEnabled,
@@ -2196,6 +2219,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 	payload := dto.SystemSettings{
 		RegistrationEnabled:                                    updatedSettings.RegistrationEnabled,
+		RegistrationScheduleEnabled:                            updatedSettings.RegistrationScheduleEnabled,
+		RegistrationScheduleStart:                              updatedSettings.RegistrationScheduleStart,
+		RegistrationScheduleEnd:                                updatedSettings.RegistrationScheduleEnd,
 		EmailVerifyEnabled:                                     updatedSettings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:                       updatedSettings.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled:                    updatedSettings.RegistrationEmailDomainQuotaEnabled,

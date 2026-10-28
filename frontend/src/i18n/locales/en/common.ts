@@ -236,6 +236,7 @@ export default {
     rememberMe: 'Remember me',
     dontHaveAccount: "Don't have an account?",
     alreadyHaveAccount: 'Already have an account?',
+    registrationScheduleClosed: 'Registration is open daily {start}–{end} (Beijing time). Please register during these hours.',
     registrationDisabled: 'Registration is currently disabled. Please contact the administrator.',
     emailLabel: 'Email',
     emailPlaceholder: 'Enter your email',

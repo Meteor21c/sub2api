@@ -215,6 +215,7 @@ import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { businessMonitorAPI } from '@/api/admin/businessMonitor'
+import { isLegacyBalanceMonitorMenu } from '@/utils/customMenuNavigation'
 
 interface NavItem {
   path: string
@@ -800,7 +801,7 @@ const customMenuItemsForUser = computed(() => {
 
 const customMenuItemsForAdmin = computed(() => {
   return adminSettingsStore.customMenuItems
-    .filter((item) => item.visibility === 'admin')
+    .filter((item) => item.visibility === 'admin' && !isLegacyBalanceMonitorMenu(item))
     .sort((a, b) => a.sort_order - b.sort_order)
 })
 

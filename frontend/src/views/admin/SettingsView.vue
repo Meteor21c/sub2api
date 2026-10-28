@@ -1451,6 +1451,60 @@
                 <Toggle v-model="form.registration_enabled" />
               </div>
 
+              <!-- Daily registration window (Beijing time) -->
+              <div class="border-t border-gray-100 pt-4 dark:border-dark-700" data-testid="registration-schedule-settings">
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.registration.scheduleEnabled") }}
+                    </label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.registration.scheduleHint") }}
+                    </p>
+                  </div>
+                  <Toggle v-model="form.registration_schedule_enabled" data-testid="registration-schedule-toggle" />
+                </div>
+                <div class="mt-3 flex flex-wrap items-end gap-3">
+                  <div>
+                    <label for="registration-schedule-start" class="mb-1 block text-sm text-gray-600 dark:text-gray-300">
+                      {{ t("admin.settings.registration.scheduleStart") }}
+                    </label>
+                    <input
+                      id="registration-schedule-start"
+                      v-model="form.registration_schedule_start"
+                      data-testid="registration-schedule-start"
+                      type="time"
+                      step="60"
+                      required
+                      :disabled="!form.registration_schedule_enabled"
+                      class="input w-36 disabled:opacity-50"
+                    />
+                  </div>
+                  <span class="pb-2 text-gray-400">–</span>
+                  <div>
+                    <label for="registration-schedule-end" class="mb-1 block text-sm text-gray-600 dark:text-gray-300">
+                      {{ t("admin.settings.registration.scheduleEnd") }}
+                    </label>
+                    <input
+                      id="registration-schedule-end"
+                      v-model="form.registration_schedule_end"
+                      data-testid="registration-schedule-end"
+                      type="time"
+                      step="60"
+                      required
+                      :disabled="!form.registration_schedule_enabled"
+                      class="input w-36 disabled:opacity-50"
+                    />
+                  </div>
+                  <span class="pb-2 text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.registration.scheduleTimezone") }}
+                  </span>
+                </div>
+                <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.registration.scheduleOvernightHint") }}
+                </p>
+              </div>
+
               <!-- Email Verification -->
               <div
                 class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
@@ -9775,6 +9829,9 @@ type SettingsForm = Omit<
   | "openai_oauth_scheduling_rate_multiplier"
 > & {
   /** Form always binds a concrete boolean (SystemSettings marks this optional). */
+  registration_schedule_enabled: boolean;
+  registration_schedule_start: string;
+  registration_schedule_end: string;
   channel_monitor_hide_throughput: boolean;
   channel_monitor_show_quota: boolean;
   channel_monitor_hide_user_ranking: boolean;
@@ -9832,6 +9889,9 @@ function platformQuotaRows(map: DefaultPlatformQuotasMap | undefined): string[] 
 
 const form = reactive<SettingsForm>({
   registration_enabled: true,
+  registration_schedule_enabled: false,
+  registration_schedule_start: "09:00",
+  registration_schedule_end: "22:00",
   email_verify_enabled: false,
   registration_email_suffix_whitelist: [],
   registration_email_domain_quota_enabled: false,
@@ -11213,6 +11273,9 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.registration_schedule_enabled = settings.registration_schedule_enabled === true;
+    form.registration_schedule_start = settings.registration_schedule_start || "09:00";
+    form.registration_schedule_end = settings.registration_schedule_end || "22:00";
     paymentRechargeFeeTiersLoaded.value = Array.isArray(settings.payment_recharge_fee_tiers);
     form.payment_recharge_fee_tiers = normalizePaymentRechargeFeeTiers(settings.payment_recharge_fee_tiers);
     resetPaymentRechargeFeeTierDrafts();
@@ -11480,6 +11543,16 @@ const siteBillingModeHint = computed(() =>
 async function saveSettings() {
   saving.value = true;
   try {
+    const scheduleTimePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+    if (
+      !scheduleTimePattern.test(form.registration_schedule_start) ||
+      !scheduleTimePattern.test(form.registration_schedule_end) ||
+      form.registration_schedule_start === form.registration_schedule_end
+    ) {
+      appStore.showError(t("admin.settings.registration.scheduleInvalid"));
+      return;
+    }
+
     const normalizedTableDefaultPageSize = Math.floor(
       Number(form.table_default_page_size),
     );
@@ -11639,6 +11712,9 @@ async function saveSettings() {
 
     const payload: UpdateSettingsRequest = {
       registration_enabled: form.registration_enabled,
+      registration_schedule_enabled: form.registration_schedule_enabled,
+      registration_schedule_start: form.registration_schedule_start,
+      registration_schedule_end: form.registration_schedule_end,
       email_verify_enabled: form.email_verify_enabled,
       registration_email_suffix_whitelist:
         registrationEmailSuffixWhitelistTags.value.map((suffix) =>

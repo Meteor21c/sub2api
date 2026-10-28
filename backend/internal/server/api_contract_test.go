@@ -715,6 +715,9 @@ func TestAPIContracts(t *testing.T) {
 				"message": "success",
 				"data": {
 					"registration_enabled": true,
+					"registration_schedule_enabled": false,
+					"registration_schedule_start": "09:00",
+					"registration_schedule_end": "22:00",
 					"email_verify_enabled": false,
 					"registration_email_suffix_whitelist": [],
 					"registration_email_domain_quota_enabled": false,
@@ -1074,6 +1077,9 @@ func TestAPIContracts(t *testing.T) {
 				"message": "success",
 				"data": {
 					"registration_enabled": true,
+					"registration_schedule_enabled": false,
+					"registration_schedule_start": "09:00",
+					"registration_schedule_end": "22:00",
 					"email_verify_enabled": false,
 					"registration_email_suffix_whitelist": [],
 					"registration_email_domain_quota_enabled": false,

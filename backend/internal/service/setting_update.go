@@ -99,6 +99,14 @@ func (s *SettingService) refreshCachedSettingsAfterWrite(ctx context.Context, se
 }
 
 func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, settings *SystemSettings) (map[string]string, error) {
+	// Legacy service callers omit the new fields. Preserve valid defaults for that zero value.
+	if !settings.RegistrationScheduleEnabled && settings.RegistrationScheduleStart == "" && settings.RegistrationScheduleEnd == "" {
+		settings.RegistrationScheduleStart = DefaultRegistrationScheduleStart
+		settings.RegistrationScheduleEnd = DefaultRegistrationScheduleEnd
+	}
+	if err := ValidateRegistrationSchedule(settings.RegistrationScheduleStart, settings.RegistrationScheduleEnd); err != nil {
+		return nil, err
+	}
 	if err := s.validateDefaultSubscriptionGroups(ctx, settings.DefaultSubscriptions); err != nil {
 		return nil, err
 	}
@@ -163,6 +171,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// 注册设置
 	updates[SettingKeyRegistrationEnabled] = strconv.FormatBool(settings.RegistrationEnabled)
+	updates[SettingKeyRegistrationScheduleEnabled] = strconv.FormatBool(settings.RegistrationScheduleEnabled)
+	updates[SettingKeyRegistrationScheduleStart] = settings.RegistrationScheduleStart
+	updates[SettingKeyRegistrationScheduleEnd] = settings.RegistrationScheduleEnd
 	updates[SettingKeyEmailVerifyEnabled] = strconv.FormatBool(settings.EmailVerifyEnabled)
 	registrationEmailSuffixWhitelistJSON, err := json.Marshal(settings.RegistrationEmailSuffixWhitelist)
 	if err != nil {

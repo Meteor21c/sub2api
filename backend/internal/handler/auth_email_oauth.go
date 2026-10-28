@@ -433,6 +433,14 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		response.ErrorFrom(c, err)
 		return
 	}
+	if h.settingSvc != nil {
+		if err := h.settingSvc.CheckRegistrationSchedule(c.Request.Context()); err != nil {
+			_ = tx.Rollback()
+			_ = h.authService.RollbackOAuthEmailAccountCreation(c.Request.Context(), user.ID, strings.TrimSpace(req.InvitationCode))
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		_ = h.authService.RollbackOAuthEmailAccountCreation(c.Request.Context(), user.ID, strings.TrimSpace(req.InvitationCode))
 		response.ErrorFrom(c, infraerrors.InternalServer("PENDING_AUTH_BIND_APPLY_FAILED", "failed to consume pending oauth session").WithCause(err))

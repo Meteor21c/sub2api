@@ -16,12 +16,7 @@ import (
 
 // IsRegistrationEnabled 检查是否开放注册
 func (s *SettingService) IsRegistrationEnabled(ctx context.Context) bool {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationEnabled)
-	if err != nil {
-		// 安全默认：如果设置不存在或查询出错，默认关闭注册
-		return false
-	}
-	return value == "true"
+	return s.CheckRegistrationAllowed(ctx) == nil
 }
 
 // IsEmailVerifyEnabled 检查是否开启邮件验证

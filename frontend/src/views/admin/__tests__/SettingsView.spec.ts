@@ -725,6 +725,86 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockResolvedValue(undefined);
   });
 
+  it("defaults registration scheduling to disabled and preserves the default window", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openSecurityTab(wrapper);
+
+    const toggle = wrapper.get<HTMLInputElement>('[data-testid="registration-schedule-toggle"]');
+    const start = wrapper.get<HTMLInputElement>('[data-testid="registration-schedule-start"]');
+    const end = wrapper.get<HTMLInputElement>('[data-testid="registration-schedule-end"]');
+    expect(toggle.element.checked).toBe(false);
+    expect(start.element.value).toBe("09:00");
+    expect(end.element.value).toBe("22:00");
+    expect(start.element.disabled).toBe(true);
+    expect(end.element.disabled).toBe(true);
+
+    await wrapper.get("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      registration_schedule_enabled: false,
+      registration_schedule_start: "09:00",
+      registration_schedule_end: "22:00",
+    }));
+    wrapper.unmount();
+  });
+
+  it("loads and saves a registration window crossing midnight", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      registration_schedule_enabled: true,
+      registration_schedule_start: "08:30",
+      registration_schedule_end: "21:45",
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openSecurityTab(wrapper);
+
+    const toggle = wrapper.get<HTMLInputElement>('[data-testid="registration-schedule-toggle"]');
+    const start = wrapper.get<HTMLInputElement>('[data-testid="registration-schedule-start"]');
+    const end = wrapper.get<HTMLInputElement>('[data-testid="registration-schedule-end"]');
+    expect(toggle.element.checked).toBe(true);
+    expect(start.element.value).toBe("08:30");
+    expect(end.element.value).toBe("21:45");
+    await start.setValue("22:30");
+    await end.setValue("06:15");
+    await toggle.setValue(false);
+    await toggle.setValue(true);
+    expect(start.element.value).toBe("22:30");
+    expect(end.element.value).toBe("06:15");
+
+    await wrapper.get("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(showError).not.toHaveBeenCalledWith("admin.settings.registration.scheduleInvalid");
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      registration_schedule_enabled: true,
+      registration_schedule_start: "22:30",
+      registration_schedule_end: "06:15",
+    }));
+    wrapper.unmount();
+  });
+
+  it("rejects equal or missing registration window endpoints before saving", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openSecurityTab(wrapper);
+    await wrapper.get('[data-testid="registration-schedule-toggle"]').setValue(true);
+    const end = wrapper.get('[data-testid="registration-schedule-end"]');
+    await end.setValue("09:00");
+    await wrapper.get("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(showError).toHaveBeenCalledWith("admin.settings.registration.scheduleInvalid");
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    showError.mockClear();
+    await end.setValue("");
+    await wrapper.get("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(showError).toHaveBeenCalledWith("admin.settings.registration.scheduleInvalid");
+    expect(updateSettings).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
   it("loads and saves the open button visibility for each custom menu", async () => {
     const menuItems = [
       { id: "docs", label: "Docs", url: "https://example.com/docs", icon_svg: "", visibility: "user", sort_order: 0 },
