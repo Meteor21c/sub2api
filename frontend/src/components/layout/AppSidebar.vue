@@ -35,6 +35,16 @@
       <template v-if="isAdmin">
         <!-- Admin Section -->
         <div class="sidebar-section">
+          <a
+            v-if="canvasPilotAllowed"
+            href="/studio/canvas"
+            class="sidebar-link mb-1"
+            :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
+            :title="sidebarCollapsed ? '创作画布（试用）' : undefined"
+          >
+            <PlayIcon class="h-5 w-5 flex-shrink-0" />
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">创作画布（试用）</span>
+          </a>
           <template v-for="item in adminNavItems" :key="item.path">
             <!-- Collapsible group (has children) -->
             <template v-if="item.children?.length">
@@ -215,6 +225,7 @@ import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { businessMonitorAPI } from '@/api/admin/businessMonitor'
+import { canvasPilotAPI } from '@/api/canvasPilot'
 import { isLegacyBalanceMonitorMenu } from '@/utils/customMenuNavigation'
 
 interface NavItem {
@@ -267,6 +278,7 @@ const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
 const businessMonitorAllowed = ref(false)
+const canvasPilotAllowed = ref(false)
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 
@@ -981,7 +993,11 @@ watch(
   () => [authStore.user?.id, isAdmin.value] as const,
   async ([userID, admin]) => {
     businessMonitorAllowed.value = false
+    canvasPilotAllowed.value = false
     if (!admin || !userID) return
+    void canvasPilotAPI.getAccess().then(access => {
+      if (authStore.user?.id === userID) canvasPilotAllowed.value = access.allowed
+    }).catch(() => { canvasPilotAllowed.value = false })
     try {
       const access = await businessMonitorAPI.getAccess()
       if (authStore.user?.id === userID) businessMonitorAllowed.value = access.allowed

@@ -46,6 +46,18 @@ jobs:
         env:
           BUSINESS_MONITOR_TEST_DSN: postgres://postgres:business-ci@localhost:5432/business_ci?sslmode=disable
         run: go test -tags unit ./cmd/server ./internal/service ./internal/handler/admin -run '^TestBusinessMonitor|^TestProvideCleanup' -count=1 -timeout=5m
+      - name: Validate canvas metadata migration twice
+        env:
+          PGPASSWORD: business-ci
+        run: |
+          psql -h localhost -U postgres -d business_ci -v ON_ERROR_STOP=1 -c 'CREATE TABLE IF NOT EXISTS users(id BIGINT PRIMARY KEY)'
+          psql -h localhost -U postgres -d business_ci -v ON_ERROR_STOP=1 -f backend/migrations/249_canvas_pilot_projects.sql
+          psql -h localhost -U postgres -d business_ci -v ON_ERROR_STOP=1 -f backend/migrations/249_canvas_pilot_projects.sql
+      - name: Canvas owner isolation, revision conflicts and quota transactions
+        working-directory: backend
+        env:
+          CANVAS_PILOT_TEST_DSN: postgres://postgres:business-ci@localhost:5432/business_ci?sslmode=disable
+        run: go test -tags unit ./internal/service ./internal/handler -run '^TestCanvas' -count=1 -timeout=5m
       - name: Registration policy, settings and OAuth entrypoint tests
         working-directory: backend
         run: |

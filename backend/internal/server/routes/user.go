@@ -25,6 +25,22 @@ func RegisterUserRoutes(
 	// 用户管理面变更类操作入审计（含 TOTP 启用/禁用、step-up 验证、密码修改等安全事件）
 	authenticated.Use(gin.HandlerFunc(auditLog))
 	{
+		// Owner-only canvas pilot. The second authorization check in every handler
+		// prevents administrator keys and other administrators impersonating the owner.
+		if h.CanvasPilot != nil {
+			canvas := authenticated.Group("/canvas")
+			canvas.Use(func(c *gin.Context) {
+				// This group is reached only after JWTAuth, which does not set
+				// the audit auth-method marker used by owner-only handlers.
+				c.Set("auth_method", "jwt")
+				c.Next()
+			})
+			canvas.GET("/access", h.CanvasPilot.Access)
+			canvas.GET("/projects", h.CanvasPilot.List)
+			canvas.POST("/projects", h.CanvasPilot.Save)
+			canvas.POST("/projects/sync", h.CanvasPilot.Sync)
+			canvas.POST("/projects/delete", h.CanvasPilot.Delete)
+		}
 		// 用户接口
 		user := authenticated.Group("/user")
 		{
