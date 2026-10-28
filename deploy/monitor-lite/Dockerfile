@@ -4,7 +4,7 @@ ENV NODE_ENV=production \
     UV_THREADPOOL_SIZE=2 \
     TZ=Asia/Shanghai
 WORKDIR /app
-COPY lite ./lite
+COPY lite/*.mjs ./lite/
 COPY --chmod=755 docker/vps-lite-entrypoint.sh /usr/local/bin/meteor-monitor-entrypoint
 EXPOSE 3100
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:3100/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

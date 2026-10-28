@@ -20,7 +20,7 @@ test("snapshot bearer rejects missing, malformed, query and empty configuration"
 async function launch(t, token) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(UPSTREAM_|SMTP_|ALERT_)/.test(name)));
   const child = spawn(process.execPath, [fileURLToPath(new URL("../server.mjs", import.meta.url))], {
-    env: { ...env, HOST: "127.0.0.1", PORT: "0", MONITOR_SNAPSHOT_TOKEN: token },
+    env: { ...env, HOST: "127.0.0.1", PORT: "0", MONITOR_SNAPSHOT_TOKEN: token, ALERT_CRON_TOKEN: "fixture-private-alert-token" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(async () => { if (child.exitCode === null) { child.kill("SIGTERM"); await once(child, "exit"); } });
@@ -58,9 +58,23 @@ test("HTTP monitor never returns financial data without service bearer; owner br
   const cachedUnauthorized = await fetch(origin + "/api/snapshot");
   assert.equal(cachedUnauthorized.status, 401, "a warm private cache still requires auth");
   assert.ok(!(await cachedUnauthorized.text()).includes("accounts"));
-  const homepage = await fetch(origin + "/", { redirect: "manual" });
-  assert.equal(homepage.status, 303);
-  assert.equal(homepage.headers.get("location"), "https://api.meteor21c.fun/admin/business-monitor");
+  for (const method of ["GET", "HEAD"]) {
+    const homepage = await fetch(origin + "/", { method, redirect: "manual" });
+    assert.equal(homepage.status, 303);
+    assert.equal(homepage.headers.get("location"), "https://api.meteor21c.fun/admin/business-monitor");
+    assert.equal(homepage.headers.get("cache-control"), "no-store");
+    assert.equal(homepage.headers.get("referrer-policy"), "no-referrer");
+    assert.equal(await homepage.text(), "");
+  }
+  for (const path of ["/app.js", "/styles.css", "/index.html"]) {
+    const retired = await fetch(origin + path);
+    assert.equal(retired.status, 404);
+    assert.equal(retired.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await retired.json(), { success: false, message: "not found" });
+  }
+  for (const path of ["/api/alerts/check", "/api/newapi/alerts/check"]) {
+    assert.equal((await fetch(origin + path, { method: "POST" })).status, 401);
+  }
   assert.equal((await fetch(origin + "/healthz")).status, 200);
 });
 

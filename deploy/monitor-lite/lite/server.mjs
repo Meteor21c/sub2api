@@ -2,13 +2,10 @@ import { createHash } from "node:crypto";
 import { snapshotAuthorized } from "./authorization.mjs";
 import { createSnapshotReader } from "./snapshot-cache.mjs";
 import { once } from "node:events";
-import { readFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
-import { dirname, join } from "node:path";
 import readline from "node:readline";
 import tls from "node:tls";
-import { fileURLToPath } from "node:url";
 
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || "3100");
@@ -36,16 +33,6 @@ const UPSTREAMS = [
     && String(process.env.UPSTREAM_HC_ATOM_USER_ID || "").trim()
   )
 ));
-
-const publicRoot = join(dirname(fileURLToPath(import.meta.url)), "public");
-const staticFiles = new Map(await Promise.all([
-  ["/", "index.html", "text/html; charset=utf-8"],
-  ["/styles.css", "styles.css", "text/css; charset=utf-8"],
-  ["/app.js", "app.js", "text/javascript; charset=utf-8"],
-].map(async ([route, filename, contentType]) => [
-  route,
-  { body: await readFile(join(publicRoot, filename)), contentType },
-])));
 
 let lastAlertDay = "";
 // Small private JSON cache; all HTTP callers pass authorization first.
@@ -503,18 +490,6 @@ const server = http.createServer(async (request, response) => {
         "Referrer-Policy": "no-referrer",
       });
       response.end();
-      return;
-    }
-    const asset = request.method === "GET" ? staticFiles.get(url.pathname) : null;
-    if (asset) {
-      response.writeHead(200, {
-        "Content-Type": asset.contentType,
-        "Content-Length": asset.body.length,
-        "Cache-Control": url.pathname === "/" ? "no-cache" : "public, max-age=3600",
-        "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "no-referrer",
-      });
-      response.end(asset.body);
       return;
     }
     sendJson(response, 404, { success: false, message: "not found" });

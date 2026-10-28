@@ -2,7 +2,7 @@ name: Build Secured Balance Monitor Image
 
 on:
   push:
-    branches: [codex/server-safety-media-cache-20261028]
+    branches: [codex/server-safety-media-cache-20261028, codex/retire-monitor-ui-20261028]
     paths:
       - deploy/monitor-lite/**
       - .github/workflows/monitor-lite-image.yml
