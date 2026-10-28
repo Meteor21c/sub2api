@@ -33,6 +33,13 @@ token. Verify main-site sampling, private snapshot authorization, alert-cron
 configuration, root redirect and retired assets returning 404. No main-site
 restart is required to retire this frontend.
 
+`docker/nginx-monitor.conf` is the legacy domain's Nginx configuration: keep ACME
+certificate renewal, redirect only `/`, and return 404 for all old assets and API
+paths. Install it after backing up the current vhost, run `nginx -t`, then reload
+Nginx. Main-site collection and the loopback alert cron do not use this vhost.
+Remove only the legacy `meteor-monitor` entry from `settings.custom_menu_items`,
+preserving the image/video entries and all other settings.
+
 ## Initial secured-service rollout
 
 1. Back up compose/env/database; retain old main and monitor images/releases.
