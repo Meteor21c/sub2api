@@ -2,7 +2,7 @@ name: Build Business Monitor Image
 
 on:
   push:
-    branches: [codex/business-monitor, codex/server-safety-media-cache-20261028, codex/registration-schedule-20261028]
+    branches: [codex/business-monitor, codex/server-safety-media-cache-20261028, codex/registration-schedule-20261028, codex/canvas-pilot-20261028]
   workflow_dispatch:
 
 permissions:
