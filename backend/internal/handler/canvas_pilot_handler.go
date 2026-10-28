@@ -39,7 +39,11 @@ func (h *CanvasPilotHandler) authorize(c *gin.Context) (int64, bool) {
 func (h *CanvasPilotHandler) Access(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Header("Vary", "Authorization")
-	response.Success(c, gin.H{"enabled": h != nil && h.svc != nil && h.svc.Enabled(), "allowed": h.allowed(c), "limits": gin.H{"maxProjects": service.CanvasMaxProjects, "maxProjectBytes": service.CanvasMaxProjectBytes, "maxOwnerBytes": service.CanvasMaxOwnerBytes}})
+	subject, authenticated := middleware.GetAuthSubjectFromContext(c)
+	role, roleOK := middleware.GetUserRoleFromContext(c)
+	enabled := h != nil && h.svc != nil && h.svc.Enabled()
+	allowed := enabled && authenticated && subject.UserID > 0 && roleOK && (role == "admin" || role == "user") && c.GetString("auth_method") == "jwt"
+	response.Success(c, gin.H{"enabled": enabled, "allowed": allowed, "limits": gin.H{"maxProjects": service.CanvasMaxProjects, "maxProjectBytes": service.CanvasMaxProjectBytes, "maxOwnerBytes": service.CanvasMaxOwnerBytes}})
 }
 
 func canvasError(c *gin.Context, err error) {

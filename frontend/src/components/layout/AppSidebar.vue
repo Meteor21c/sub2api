@@ -31,20 +31,16 @@
 
     <!-- Navigation -->
     <nav ref="sidebarNavRef" class="sidebar-nav scrollbar-hide">
+      <div v-if="canvasPilotAllowed" class="sidebar-section">
+        <a href="/studio" class="sidebar-link mb-1" :class="{ 'sidebar-link-collapsed': sidebarCollapsed }" :title="sidebarCollapsed ? '流星创作台' : undefined" @click="closeMobile">
+          <PlayIcon class="h-5 w-5 flex-shrink-0" />
+          <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">流星创作台</span>
+        </a>
+      </div>
       <!-- Admin View: Admin menu first, then personal menu -->
       <template v-if="isAdmin">
         <!-- Admin Section -->
         <div class="sidebar-section">
-          <a
-            v-if="canvasPilotAllowed"
-            href="/studio/canvas"
-            class="sidebar-link mb-1"
-            :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-            :title="sidebarCollapsed ? '创作画布（试用）' : undefined"
-          >
-            <PlayIcon class="h-5 w-5 flex-shrink-0" />
-            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">创作画布（试用）</span>
-          </a>
           <template v-for="item in adminNavItems" :key="item.path">
             <!-- Collapsible group (has children) -->
             <template v-if="item.children?.length">
@@ -994,10 +990,11 @@ watch(
   async ([userID, admin]) => {
     businessMonitorAllowed.value = false
     canvasPilotAllowed.value = false
-    if (!admin || !userID) return
+    if (!userID) return
     void canvasPilotAPI.getAccess().then(access => {
       if (authStore.user?.id === userID) canvasPilotAllowed.value = access.allowed
     }).catch(() => { canvasPilotAllowed.value = false })
+    if (!admin) return
     try {
       const access = await businessMonitorAPI.getAccess()
       if (authStore.user?.id === userID) businessMonitorAllowed.value = access.allowed

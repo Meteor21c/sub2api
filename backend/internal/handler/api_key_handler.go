@@ -339,6 +339,53 @@ func (h *APIKeyHandler) GetAvailableGroups(c *gin.Context) {
 	response.Success(c, out)
 }
 
+// GetCreativeGroupPricing exposes only sale-price rules for an accessible group.
+// Internal routing, account identifiers and profit controls remain admin-only.
+func (h *APIKeyHandler) GetCreativeGroupPricing(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Vary", "Authorization")
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "请先登录")
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "分组编号无效")
+		return
+	}
+	groups, err := h.apiKeyService.GetAvailableGroups(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	for _, group := range groups {
+		if group.ID == id {
+			response.Success(c, creativeGroupPricing(group))
+			return
+		}
+	}
+	response.Forbidden(c, "当前账户无权使用此分组")
+}
+
+func creativeGroupPricing(group service.Group) gin.H {
+	rules := make([]gin.H, 0, len(group.ModelPricing))
+	for _, rule := range group.ModelPricing {
+		intervals := make([]gin.H, 0, len(rule.Intervals))
+		for _, interval := range rule.Intervals {
+			intervals = append(intervals, gin.H{"tier_label": interval.TierLabel, "per_request_price": interval.PerRequestPrice})
+		}
+		rules = append(rules, gin.H{
+			"models": rule.Models, "billing_mode": rule.BillingMode,
+			"input_price": rule.InputPrice, "output_price": rule.OutputPrice,
+			"cache_read_price": rule.CacheReadPrice, "image_input_price": rule.ImageInputPrice,
+			"image_output_price": rule.ImageOutputPrice, "per_request_price": rule.PerRequestPrice,
+			"intervals": intervals, "time_pricing": rule.TimePricing,
+		})
+	}
+	return gin.H{"id": group.ID, "model_pricing": rules}
+}
+
 // GetUserGroupRates 获取当前用户的专属分组倍率配置
 // GET /api/v1/groups/rates
 func (h *APIKeyHandler) GetUserGroupRates(c *gin.Context) {
