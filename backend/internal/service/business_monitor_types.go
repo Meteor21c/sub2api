@@ -5,20 +5,22 @@ import "time"
 // Financial amounts use the owner's configured 1:1 bookkeeping unit. They are
 // operational estimates, not a substitute for a supplier settlement ledger.
 type BusinessMonitorSummary struct {
-	Revenue               float64  `json:"revenue"`
-	SubscriptionUsage     float64  `json:"subscription_usage"`
-	ExcludedMediaRevenue  float64  `json:"excluded_media_revenue"`
-	ExcludedMediaRequests int64    `json:"excluded_media_requests"`
-	ExpectedCost          *float64 `json:"expected_cost"`
-	GrossProfit           *float64 `json:"gross_profit"`
-	BalanceCost           *float64 `json:"balance_cost"`
-	ObservedProfit        *float64 `json:"observed_profit"`
-	Deviation             *float64 `json:"deviation"`
-	AnomalyCount          int      `json:"anomaly_count"`
-	Partial               bool     `json:"partial"`
+	Estimate              BusinessMonitorEstimate `json:"estimate"`
+	Revenue               float64                 `json:"revenue"`
+	SubscriptionUsage     float64                 `json:"subscription_usage"`
+	ExcludedMediaRevenue  float64                 `json:"excluded_media_revenue"`
+	ExcludedMediaRequests int64                   `json:"excluded_media_requests"`
+	ExpectedCost          *float64                `json:"expected_cost"`
+	GrossProfit           *float64                `json:"gross_profit"`
+	BalanceCost           *float64                `json:"balance_cost"`
+	ObservedProfit        *float64                `json:"observed_profit"`
+	Deviation             *float64                `json:"deviation"`
+	AnomalyCount          int                     `json:"anomaly_count"`
+	Partial               bool                    `json:"partial"`
 }
 
 type BusinessMonitorWallet struct {
+	Estimate                       *BusinessMonitorEstimate   `json:"estimate,omitempty"`
 	Key                            string                     `json:"key"`
 	BaseURL                        string                     `json:"base_url"`
 	Name                           string                     `json:"name"`
@@ -70,16 +72,17 @@ type BusinessMonitorCostBasis struct {
 }
 
 type BusinessMonitorDaily struct {
-	Date                  string   `json:"date"`
-	Revenue               float64  `json:"revenue"`
-	SubscriptionUsage     float64  `json:"subscription_usage"`
-	ExcludedMediaRevenue  float64  `json:"excluded_media_revenue"`
-	ExcludedMediaRequests int64    `json:"excluded_media_requests"`
-	ExpectedCost          *float64 `json:"expected_cost"`
-	GrossProfit           *float64 `json:"gross_profit"`
-	BalanceCost           *float64 `json:"balance_cost"`
-	ObservedProfit        *float64 `json:"observed_profit"`
-	Partial               bool     `json:"partial"`
+	Estimate              BusinessMonitorEstimate `json:"estimate"`
+	Date                  string                  `json:"date"`
+	Revenue               float64                 `json:"revenue"`
+	SubscriptionUsage     float64                 `json:"subscription_usage"`
+	ExcludedMediaRevenue  float64                 `json:"excluded_media_revenue"`
+	ExcludedMediaRequests int64                   `json:"excluded_media_requests"`
+	ExpectedCost          *float64                `json:"expected_cost"`
+	GrossProfit           *float64                `json:"gross_profit"`
+	BalanceCost           *float64                `json:"balance_cost"`
+	ObservedProfit        *float64                `json:"observed_profit"`
+	Partial               bool                    `json:"partial"`
 }
 
 type BusinessMonitorRateChange struct {

@@ -23,3 +23,15 @@ export function businessTime(value: string | null | undefined): string {
     hour: '2-digit', minute: '2-digit', hour12: false
   }).format(new Date(value))
 }
+
+export function estimateMoney(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? '暂无成本数据' : businessMoney(value)
+}
+
+export function businessCoverage(estimate: { revenue: number; covered_requests: number; uncovered_requests: number }, totalRevenue: number): string {
+  const requests = estimate.covered_requests + estimate.uncovered_requests
+  const ratio = totalRevenue > 0 ? estimate.revenue / totalRevenue : requests > 0 ? estimate.covered_requests / requests : 0
+  const percent = Math.max(0, Math.min(100, ratio * 100))
+  // Do not round a partial period up to apparently complete coverage.
+  return `${percent < 100 && percent > 99.9 ? '99.9' : percent.toFixed(1)}%`
+}

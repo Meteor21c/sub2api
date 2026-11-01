@@ -190,4 +190,8 @@ INSERT INTO accounts(id,name,credentials,extra) VALUES(1,'test supplier','{"base
 	if err != nil || report.Summary.ExpectedCost != nil || report.Summary.GrossProfit != nil || report.Summary.ExcludedMediaRequests != 2 {
 		t.Fatalf("unknown text usage must not be silently excluded: report=%+v err=%v", report, err)
 	}
+	e := report.Summary.Estimate
+	if e.Cost == nil || *e.Cost != 3 || e.GrossProfit == nil || *e.GrossProfit != 1 || e.Revenue != 4 || e.UncoveredRevenue != 11 || e.UncoveredRequests != 3 {
+		t.Fatalf("mixed-wallet overview lost covered usage or included unknown profit: %+v", e)
+	}
 }

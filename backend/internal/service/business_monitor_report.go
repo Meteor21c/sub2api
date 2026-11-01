@@ -463,8 +463,10 @@ func (s *BusinessMonitorService) Report(ctx context.Context, period, date string
 			continue
 		}
 		summary := businessSummarize(wallets)
-		report.Daily = append(report.Daily, BusinessMonitorDaily{Date: key, Revenue: summary.Revenue, SubscriptionUsage: summary.SubscriptionUsage, ExcludedMediaRevenue: summary.ExcludedMediaRevenue, ExcludedMediaRequests: summary.ExcludedMediaRequests, ExpectedCost: summary.ExpectedCost, GrossProfit: summary.GrossProfit, BalanceCost: summary.BalanceCost, ObservedProfit: summary.ObservedProfit, Partial: summary.Partial})
+		report.Daily = append(report.Daily, BusinessMonitorDaily{Estimate: summary.Estimate, Date: key, Revenue: summary.Revenue, SubscriptionUsage: summary.SubscriptionUsage, ExcludedMediaRevenue: summary.ExcludedMediaRevenue, ExcludedMediaRequests: summary.ExcludedMediaRequests, ExpectedCost: summary.ExpectedCost, GrossProfit: summary.GrossProfit, BalanceCost: summary.BalanceCost, ObservedProfit: summary.ObservedProfit, Partial: summary.Partial})
 		for _, w := range wallets {
+			estimate := businessWalletEstimate(w)
+			w.Estimate = &estimate
 			if existing, ok := walletSums[w.Key]; ok {
 				businessMergeWallet(existing, w)
 			} else {
@@ -526,6 +528,7 @@ func businessSummarize(wallets []BusinessMonitorWallet) BusinessMonitorSummary {
 	knownBalance, knownProfit, knownDeviation := 0, 0, 0
 	var requests int64
 	for _, w := range wallets {
+		businessMergeEstimate(&s.Estimate, businessWalletEstimate(w))
 		s.Revenue += w.Revenue
 		s.SubscriptionUsage += w.SubscriptionUsage
 		s.ExcludedMediaRevenue += w.ExcludedMediaRevenue
@@ -573,6 +576,9 @@ func businessSummarize(wallets []BusinessMonitorWallet) BusinessMonitorSummary {
 }
 
 func businessMergeWallet(to *BusinessMonitorWallet, from BusinessMonitorWallet) {
+	estimate := businessWalletEstimate(*to)
+	businessMergeEstimate(&estimate, businessWalletEstimate(from))
+	to.Estimate = &estimate
 	// An all-excluded day has no estimate, not an unknown included cost.
 	// It must not invalidate a different day's known, included estimates.
 	if businessOnlyExcludedMedia(to) {

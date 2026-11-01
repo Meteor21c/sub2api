@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { businessMoney, businessTime, shanghaiDay, businessIncludedRevenue } from '../businessMonitorFormatting'
+import { businessMoney, businessTime, shanghaiDay, businessIncludedRevenue, businessCoverage, estimateMoney } from '../businessMonitorFormatting'
 
 describe('经营监测数据口径', () => {
   it('排除待确认媒体消费时，收入端同步扣除但不改变原始总额', () => {
@@ -26,5 +26,16 @@ describe('经营监测数据口径', () => {
   it('无效采样时间不能伪装成当前时间', () => {
     expect(businessTime(null)).toBe('尚无记录')
     expect(businessTime('not-a-date')).toBe('尚无记录')
+  })
+})
+
+
+describe('估算覆盖率', () => {
+  it('不会将缺少的小额消费四舍五入成全部覆盖', () => {
+    expect(businessCoverage({ revenue: 111, covered_requests: 100, uncovered_requests: 10 }, 111.07)).toBe('99.9%')
+    expect(businessCoverage({ revenue: 111, covered_requests: 100, uncovered_requests: 0 }, 111)).toBe('100.0%')
+    expect(businessCoverage({ revenue: 0, covered_requests: 2, uncovered_requests: 2 }, 0)).toBe('50.0%')
+    expect(estimateMoney(0)).toBe('¥0.00')
+    expect(estimateMoney(null)).toBe('暂无成本数据')
   })
 })

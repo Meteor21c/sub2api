@@ -1,7 +1,16 @@
 import { apiClient } from '../client'
 
 export type BusinessPeriod = 'day' | 'week' | 'month' | 'year'
+export interface BusinessEstimate {
+  revenue: number
+  cost: number | null
+  gross_profit: number | null
+  covered_requests: number
+  uncovered_revenue: number
+  uncovered_requests: number
+}
 export interface BusinessSummary {
+  estimate: BusinessEstimate
   revenue: number
   subscription_usage: number
   excluded_media_revenue: number
@@ -15,6 +24,7 @@ export interface BusinessSummary {
   partial: boolean
 }
 export interface BusinessWallet {
+  estimate: BusinessEstimate
   key: string
   base_url: string
   name: string
@@ -43,6 +53,7 @@ export interface BusinessWallet {
   rate_status: string
 }
 export interface BusinessDaily {
+  estimate: BusinessEstimate
   date: string
   revenue: number
   subscription_usage: number
