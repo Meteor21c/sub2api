@@ -278,13 +278,15 @@ type OpenAIForwardResult struct {
 	FirstTokenMs          *int
 	ClientDisconnect      bool
 	ImageCount            int
-	ImageSize             string
-	ImageInputSize        string
-	ImageOutputSize       string
-	ImageOutputSizes      []string
-	ImageSizeSource       string
-	ImageSizeBreakdown    map[string]int
-	VideoCount            int
+	// ImageEndpoint limits optional per-image billing to dedicated image APIs.
+	ImageEndpoint      bool
+	ImageSize          string
+	ImageInputSize     string
+	ImageOutputSize    string
+	ImageOutputSizes   []string
+	ImageSizeSource    string
+	ImageSizeBreakdown map[string]int
+	VideoCount         int
 	// FZYVideoBill is a create-time, key-specific token tariff reservation.
 	// It is only populated for the FZY Doubao bridge, never for xAI or Kling.
 	FZYVideoBill    *FZYVideoBillingJob
