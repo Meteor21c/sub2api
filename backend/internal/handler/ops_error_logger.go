@@ -2155,6 +2155,17 @@ func isKnownOpsErrorType(t string) bool {
 }
 
 func normalizeOpsErrorType(errType string, code string) string {
+	// Generic SSE error envelopes do not identify the failure's origin. Preserve
+	// specific client/business errors, but use our stable upstream stream codes
+	// before falling back to api_error (which is classified as platform/internal).
+	if errType == "api_error" || !isKnownOpsErrorType(errType) {
+		switch strings.TrimSpace(code) {
+		case service.OpenAIUpstreamHTTP2StreamErrorCode,
+			service.OpenAIUpstreamStreamReadErrorCode,
+			service.OpenAIUpstreamStreamTruncatedCode:
+			return "upstream_error"
+		}
+	}
 	if errType != "" && isKnownOpsErrorType(errType) {
 		return errType
 	}

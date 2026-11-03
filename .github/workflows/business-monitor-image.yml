@@ -2,7 +2,7 @@ name: Build Business Monitor Image
 
 on:
   push:
-    branches: [codex/business-overview-estimates-20261101, codex/business-monitor, codex/server-safety-media-cache-20261028, codex/registration-schedule-20261028, codex/canvas-pilot-20261028, codex/studio-public-users-20261028]
+    branches: [codex/stream-dns-defaults-20261103, codex/business-overview-estimates-20261101, codex/business-monitor, codex/server-safety-media-cache-20261028, codex/registration-schedule-20261028, codex/canvas-pilot-20261028, codex/studio-public-users-20261028]
   workflow_dispatch:
 
 permissions:
@@ -63,6 +63,12 @@ jobs:
         run: |
           go test -tags unit ./internal/service ./internal/handler ./internal/handler/admin ./internal/server -run 'Registration|OAuth|Setting|TestAPIContracts' -count=1 -timeout=5m
           go test -tags embed internal/web/html_cache.go internal/web/registration_cache_test.go -count=1
+      - name: Stream failure attribution and default HTTP transport tests
+        working-directory: backend
+        run: |
+          go test -tags unit ./internal/handler -run 'TestOpsErrorLogger|TestLogOpsStreamError|TestNormalizeOpsErrorType|TestClassifyOps' -count=1 -timeout=5m
+          go test -tags unit ./internal/service -run 'Test.*UpstreamStream|Test.*StreamReadError' -count=1 -timeout=5m
+          go test -tags unit ./internal/config ./internal/repository -run 'Test.*HTTP2|Test.*ProtocolMode' -count=1 -timeout=5m
       - uses: pnpm/action-setup@v6
         with:
           version: 9

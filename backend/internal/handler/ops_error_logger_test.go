@@ -535,6 +535,51 @@ func TestOpsCaptureWriter_CapturesSplitDataOnlyTerminalMarkers(t *testing.T) {
 	}
 }
 
+func TestOpsErrorLoggerMiddleware_GenericUpstreamStreamFailure(t *testing.T) {
+	for _, code := range []string{
+		service.OpenAIUpstreamHTTP2StreamErrorCode,
+		service.OpenAIUpstreamStreamReadErrorCode,
+		service.OpenAIUpstreamStreamTruncatedCode,
+	} {
+		for _, envelope := range []string{"flat", "nested"} {
+			t.Run(code+"/"+envelope, func(t *testing.T) {
+				setupOpsErrorLogTestQueue(t, 2)
+				gin.SetMode(gin.TestMode)
+				ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+				router := gin.New()
+				router.Use(OpsErrorLoggerMiddleware(ops))
+				router.POST("/v1/responses", func(c *gin.Context) {
+					setOpsRequestContext(c, "test-model", true)
+					c.Header("Content-Type", "text/event-stream")
+					c.Status(http.StatusOK)
+					// Reproduce the real in-band failure without pre-marked context.
+					// Include prior output and split writes as on a live stream.
+					_, _ = c.Writer.WriteString("event: response.output_text.delta\ndata: {\"delta\":\"partial\"}\n\nevent: er")
+					_, _ = c.Writer.WriteString("ror\ndata: ")
+					if envelope == "flat" {
+						_, _ = c.Writer.WriteString(`{"code":"` + code + `","message":"Upstream stream failed","param":null,"sequence_number":0,"type":"error"}`)
+					} else {
+						_, _ = c.Writer.WriteString(`{"type":"error","error":{"type":"api_error","code":"` + code + `","message":"Upstream stream failed"}}`)
+					}
+					_, _ = c.Writer.WriteString("\n\n")
+				})
+				recorder := httptest.NewRecorder()
+				router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+				require.Equal(t, http.StatusOK, recorder.Code, "wire response must remain unchanged")
+				require.Equal(t, int64(1), OpsErrorLogQueueLength())
+				job := <-opsErrorLogQueue
+				require.Equal(t, http.StatusBadGateway, job.entry.StatusCode)
+				require.Equal(t, "upstream_error", job.entry.ErrorType)
+				require.Equal(t, "upstream", job.entry.ErrorPhase)
+				require.Equal(t, "provider", job.entry.ErrorOwner)
+				require.Equal(t, "upstream_http", job.entry.ErrorSource)
+				require.False(t, job.entry.IsBusinessLimited, "stream failures must count towards SLA")
+				require.Contains(t, job.entry.ErrorBody, code)
+			})
+		}
+	}
+}
+
 func TestOpsErrorLoggerMiddleware_StreamFailureUsesTerminalErrorOverAttemptContext(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 	gin.SetMode(gin.TestMode)
@@ -803,6 +848,11 @@ func TestNormalizeOpsErrorType(t *testing.T) {
 
 		// Known type overrides conflicting code-based mapping.
 		{"known type overrides conflicting code", "rate_limit_error", "INSUFFICIENT_BALANCE", "rate_limit_error"},
+		{"generic HTTP2 stream failure", "api_error", service.OpenAIUpstreamHTTP2StreamErrorCode, "upstream_error"},
+		{"generic read failure", "api_error", service.OpenAIUpstreamStreamReadErrorCode, "upstream_error"},
+		{"unknown truncated stream failure", "error", service.OpenAIUpstreamStreamTruncatedCode, "upstream_error"},
+		{"specific request error preserved", "invalid_request_error", service.OpenAIUpstreamHTTP2StreamErrorCode, "invalid_request_error"},
+		{"genuine internal error preserved", "api_error", "INTERNAL_ERROR", "api_error"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
