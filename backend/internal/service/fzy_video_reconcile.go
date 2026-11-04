@@ -132,6 +132,7 @@ func (s *OpenAIGatewayService) reconcileFZYVideoJob(ctx context.Context, repo FZ
 		Usage: usage, VideoCount: 1, FZYVideoBill: job,
 		VideoDurationSeconds: int(gjson.GetBytes(body, "video.duration").Int()),
 		Duration:             time.Since(job.CreatedAt),
+		FZYVideoUsage:        ParseFZYVideoProviderUsage(body),
 	}
 	return s.RecordUsage(ctx, &OpenAIRecordUsageInput{
 		Result: result, APIKey: key, User: user, Account: account,

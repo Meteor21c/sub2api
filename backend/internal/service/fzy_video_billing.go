@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -16,18 +17,19 @@ var ErrFZYVideoBillingUnavailable = errors.New("FZY video scenario billing is un
 var ErrFZYVideoInsufficientBalance = errors.New("insufficient balance for video reservation")
 
 type FZYVideoBillingJob struct {
-	ID              string
-	UserID          int64
-	APIKeyID        int64
-	AccountID       int64
-	TaskID          string
-	Price           FZYVideoPriceSnapshot
-	HoldAmount      float64
-	ActualAmount    float64
-	OutputTokens    int
-	Status          string
-	DurationSeconds int
-	CreatedAt       time.Time
+	ID                       string
+	UserID                   int64
+	APIKeyID                 int64
+	AccountID                int64
+	TaskID                   string
+	Price                    FZYVideoPriceSnapshot
+	HoldAmount               float64
+	ActualAmount             float64
+	OutputTokens             int
+	Status                   string
+	DurationSeconds          int
+	EstimatedSurchargeAmount float64
+	CreatedAt                time.Time
 }
 
 func (j *FZYVideoBillingJob) PricingPreview() map[string]any {
@@ -47,6 +49,13 @@ func (j *FZYVideoBillingJob) PricingPreview() map[string]any {
 		"provider_discount_rate": j.Price.DiscountRate, "markup_rate": j.Price.MarkupRate,
 		"sale_rate_to_official": discount.Mul(markup).String(), "precharge_amount": j.HoldAmount,
 		"balance_conversion": "1 CNY = 1 USD balance unit", "duration": j.DurationSeconds,
+		"estimated_surcharge_amount": j.EstimatedSurchargeAmount,
+	}
+	if len(j.Price.Surcharges) > 0 {
+		row["surcharges"] = j.Price.Surcharges
+	}
+	if j.Price.FrameRate > 0 {
+		row["frame_rate"] = j.Price.FrameRate
 	}
 	if j.Price.IsPerSecond() {
 		official, _ := decimal.NewFromString(j.Price.OfficialPerSecond)
@@ -79,7 +88,7 @@ func IsFZYTokenVideoAccount(account *Account, model string) bool {
 }
 func IsFZYPricedVideoAccount(account *Account, model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
-	return IsFZYTokenVideoAccount(account, model) || IsFZYVideoBridgeAccount(account) && (model == "kling-v3" || model == "kling-v3-omni")
+	return IsFZYTokenVideoAccount(account, model) || IsFZYVideoBridgeAccount(account) && (model == "kling-v3" || model == "kling-v3-omni" || model == "minimax-h3" || model == "tencent-mps-superres")
 }
 
 func IsFZYVideoBridgeAccount(account *Account) bool {
@@ -123,8 +132,30 @@ func (s *OpenAIGatewayService) PrepareFZYVideoBilling(ctx context.Context, accou
 	if resolution == "" {
 		resolution = "720p"
 	}
-	var hold float64
-	if price.IsPerSecond() {
+	var hold, estimatedSurcharge float64
+	if price.Model == "MiniMax-H3" {
+		inputValue := gjson.GetBytes(body, "input_video_seconds")
+		if !inputValue.Exists() {
+			inputValue = gjson.GetBytes(body, "inputVideoSeconds")
+		}
+		inputSeconds := inputValue.Float()
+		images := fzyRequestImageCount(body)
+		if math.IsNaN(inputSeconds) || math.IsInf(inputSeconds, 0) || inputSeconds < 0 || inputSeconds > 86400 || images > 10 {
+			return nil, errors.New("video input estimate is unsupported")
+		}
+		output := float64(duration)
+		usage := &FZYVideoProviderUsage{OutputSeconds: &output, InputSeconds: &inputSeconds, InputImageCount: &images}
+		_, sale, e := price.priceUnitsForProviderUsage(0, duration, usage)
+		if e != nil {
+			return nil, e
+		}
+		hold = sale.Round(UsageBillingMonetaryScale).InexactFloat64()
+		base, _ := decimal.NewFromString(price.SalePerSecond)
+		estimatedSurcharge = sale.Sub(base.Mul(decimal.NewFromInt(int64(duration)))).Round(UsageBillingMonetaryScale).InexactFloat64()
+	} else if price.Model == "tencent-mps-superres" {
+		// The provider reports actual tokens only on completion; this is a budget hold, never fabricated usage.
+		hold = 0.2
+	} else if price.IsPerSecond() {
 		hold, err = price.CostForUsage(0, duration)
 		if err != nil {
 			return nil, err
@@ -145,7 +176,7 @@ func (s *OpenAIGatewayService) PrepareFZYVideoBilling(ctx context.Context, accou
 	}
 	return &FZYVideoBillingJob{
 		ID: uuid.NewString(), UserID: user.ID, APIKeyID: apiKey.ID, AccountID: account.ID,
-		Price: price, HoldAmount: hold, DurationSeconds: duration, Status: "reserved", CreatedAt: time.Now().UTC(),
+		Price: price, HoldAmount: hold, EstimatedSurchargeAmount: estimatedSurcharge, DurationSeconds: duration, Status: "reserved", CreatedAt: time.Now().UTC(),
 	}, nil
 }
 
@@ -153,6 +184,16 @@ func (s *OpenAIGatewayService) PrepareFZYVideoBilling(ctx context.Context, accou
 // Reserve its documented maximum so the precharge covers that existing mode.
 func fzyVideoReservationDuration(model string, body []byte) (int, error) {
 	minDuration, maxDuration := 4, 15
+	if model == "tencent-mps-superres" {
+		duration := gjson.GetBytes(body, "sourceDurationSeconds").Float()
+		if duration == 0 {
+			duration = gjson.GetBytes(body, "source_duration_seconds").Float()
+		}
+		if math.IsNaN(duration) || math.IsInf(duration, 0) || duration <= 0 || duration > 86400 {
+			return 0, errors.New("source video duration is invalid")
+		}
+		return int(duration + 0.999999), nil
+	}
 	switch model {
 	case "kling-v3", "kling-v3-omni":
 		minDuration = 3
@@ -249,11 +290,14 @@ func fzyVideoDuration(job *FZYVideoBillingJob, duration int) int {
 	return 0
 }
 func calculateFZYVideoCost(job *FZYVideoBillingJob, outputTokens, duration int) (*CostBreakdown, error) {
+	return calculateFZYVideoCostForProviderUsage(job, outputTokens, duration, nil)
+}
+func calculateFZYVideoCostForProviderUsage(job *FZYVideoBillingJob, outputTokens, duration int, usage *FZYVideoProviderUsage) (*CostBreakdown, error) {
 	if job == nil {
 		return nil, ErrFZYVideoBillingUnavailable
 	}
 	duration = fzyVideoDuration(job, duration)
-	official, sale, err := job.Price.priceUnits(outputTokens, duration)
+	official, sale, err := job.Price.priceUnitsForProviderUsage(outputTokens, duration, usage)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +310,7 @@ func calculateFZYVideoCost(job *FZYVideoBillingJob, outputTokens, duration int) 
 	return &CostBreakdown{OutputCost: total, TotalCost: total, ActualCost: actual, BillingMode: mode}, nil
 }
 
-func (s *OpenAIGatewayService) applyFZYVideoUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog, params *postUsageBillingParams, job *FZYVideoBillingJob, outputTokens, durationSeconds int) error {
+func (s *OpenAIGatewayService) applyFZYVideoUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog, params *postUsageBillingParams, job *FZYVideoBillingJob, outputTokens, durationSeconds int, usage *FZYVideoProviderUsage) error {
 	repo, err := s.FZYVideoBillingRepository()
 	if err != nil {
 		return err
@@ -278,7 +322,7 @@ func (s *OpenAIGatewayService) applyFZYVideoUsageBilling(ctx context.Context, re
 	if cmd == nil || cmd.RequestID == "" {
 		return ErrFZYVideoBillingUnavailable
 	}
-	providerCost, err := job.Price.ProviderCostForUsage(outputTokens, fzyVideoDuration(job, durationSeconds))
+	providerCost, err := job.Price.ProviderCostForProviderUsage(outputTokens, fzyVideoDuration(job, durationSeconds), usage)
 	if err != nil {
 		return err
 	}

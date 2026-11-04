@@ -240,7 +240,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	longContextBillingGate := openAILongContextBillingGate(billingAccount)
 	modelLongContextExempt := openAISubscriptionLongContextExempt(billingAccount, result)
 	if result.FZYVideoBill != nil {
-		cost, err = calculateFZYVideoCost(result.FZYVideoBill, result.Usage.OutputTokens, result.VideoDurationSeconds)
+		cost, err = calculateFZYVideoCostForProviderUsage(result.FZYVideoBill, result.Usage.OutputTokens, result.VideoDurationSeconds, result.FZYVideoUsage)
 	} else {
 		cost, err = s.calculateOpenAIRecordUsageCost(
 			ctx,
@@ -505,7 +505,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if apiKey.GroupID != nil {
 		accountStatsBaseCost := cost.TotalCost
 		if result.FZYVideoBill != nil {
-			providerCost, providerErr := result.FZYVideoBill.Price.ProviderCostForUsage(result.Usage.OutputTokens, fzyVideoDuration(result.FZYVideoBill, result.VideoDurationSeconds))
+			providerCost, providerErr := result.FZYVideoBill.Price.ProviderCostForProviderUsage(result.Usage.OutputTokens, fzyVideoDuration(result.FZYVideoBill, result.VideoDurationSeconds), result.FZYVideoUsage)
 			if providerErr != nil {
 				return providerErr
 			}
@@ -548,7 +548,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			SimpleModeKeyRateLimitOnly: simpleModeKeyRateLimitOnly,
 		}
 		if result.FZYVideoBill != nil {
-			return s.applyFZYVideoUsageBilling(ctx, requestID, usageLog, params, result.FZYVideoBill, result.Usage.OutputTokens, result.VideoDurationSeconds)
+			return s.applyFZYVideoUsageBilling(ctx, requestID, usageLog, params, result.FZYVideoBill, result.Usage.OutputTokens, result.VideoDurationSeconds, result.FZYVideoUsage)
 		}
 		_, err := applyUsageBilling(ctx, requestID, usageLog, params, s.billingDeps(), s.usageBillingRepo)
 		return err

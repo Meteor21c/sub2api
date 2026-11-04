@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -13,6 +14,12 @@ func (r *usageBillingRepository) ReserveFZYVideo(ctx context.Context, job *servi
 	if r == nil || r.db == nil || job == nil || job.ID == "" || job.HoldAmount <= 0 {
 		return service.ErrFZYVideoBillingUnavailable
 	}
+	price := job.Price
+	price.BillingMode = fzyBillingStringOr(price.BillingMode, "token")
+	snapshot, err := json.Marshal(price)
+	if err != nil {
+		return err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -22,14 +29,16 @@ func (r *usageBillingRepository) ReserveFZYVideo(ctx context.Context, job *servi
 		INSERT INTO fzy_video_billing_jobs
 		(id,user_id,api_key_id,account_id,model,scene_code,scene_name,currency,
 		 official_per_million,discount_rate,markup_rate,sale_per_million,hold_amount,status,
-		 billing_mode,official_per_second,sale_per_second,duration_seconds,resolution)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'reserved',$14,$15,$16,$17,$18)`,
+		 billing_mode,official_per_second,sale_per_second,duration_seconds,resolution,
+		 price_snapshot,estimated_surcharge_amount)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'reserved',$14,$15,$16,$17,$18,$19::jsonb,$20)`,
 		job.ID, job.UserID, job.APIKeyID, job.AccountID, job.Price.Model,
 		job.Price.SceneCode, job.Price.SceneName, job.Price.Currency,
 		job.Price.OfficialPerMillion, job.Price.DiscountRate, job.Price.MarkupRate,
 		job.Price.SalePerMillion, job.HoldAmount,
 		fzyBillingStringOr(job.Price.BillingMode, "token"), fzyBillingStringOr(job.Price.OfficialPerSecond, "0"),
-		fzyBillingStringOr(job.Price.SalePerSecond, "0"), job.DurationSeconds, job.Price.Resolution)
+		fzyBillingStringOr(job.Price.SalePerSecond, "0"), job.DurationSeconds, job.Price.Resolution,
+		string(snapshot), job.EstimatedSurchargeAmount)
 	if err != nil {
 		return err
 	}
@@ -117,9 +126,10 @@ func (r *usageBillingRepository) GetFZYVideoByTask(ctx context.Context, taskID s
 		return nil, service.ErrFZYVideoBillingUnavailable
 	}
 	job := &service.FZYVideoBillingJob{}
+	var snapshot []byte
 	err := r.db.QueryRowContext(ctx, `SELECT id,user_id,api_key_id,account_id,task_id,model,
 		scene_code,scene_name,currency,official_per_million,discount_rate,markup_rate,
-		sale_per_million,hold_amount,COALESCE(actual_amount,0),COALESCE(output_tokens,0),status,created_at,billing_mode,official_per_second,sale_per_second,duration_seconds,resolution
+		sale_per_million,hold_amount,COALESCE(actual_amount,0),COALESCE(output_tokens,0),status,created_at,billing_mode,official_per_second,sale_per_second,duration_seconds,resolution,price_snapshot,estimated_surcharge_amount
 		FROM fzy_video_billing_jobs WHERE task_id=$1 AND user_id=$2 AND api_key_id=$3 AND account_id=$4`,
 		taskID, userID, apiKeyID, accountID).Scan(
 		&job.ID, &job.UserID, &job.APIKeyID, &job.AccountID, &job.TaskID,
@@ -127,11 +137,15 @@ func (r *usageBillingRepository) GetFZYVideoByTask(ctx context.Context, taskID s
 		&job.Price.OfficialPerMillion, &job.Price.DiscountRate, &job.Price.MarkupRate,
 		&job.Price.SalePerMillion, &job.HoldAmount, &job.ActualAmount,
 		&job.OutputTokens, &job.Status, &job.CreatedAt,
-		&job.Price.BillingMode, &job.Price.OfficialPerSecond, &job.Price.SalePerSecond, &job.DurationSeconds, &job.Price.Resolution)
+		&job.Price.BillingMode, &job.Price.OfficialPerSecond, &job.Price.SalePerSecond, &job.DurationSeconds, &job.Price.Resolution,
+		&snapshot, &job.EstimatedSurchargeAmount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := restoreFZYVideoPriceSnapshot(job, snapshot); err != nil {
 		return nil, err
 	}
 	return job, nil
@@ -146,7 +160,7 @@ func (r *usageBillingRepository) ListPendingFZYVideos(ctx context.Context, limit
 	}
 	rows, err := r.db.QueryContext(ctx, `SELECT id,user_id,api_key_id,account_id,task_id,model,
 		scene_code,scene_name,currency,official_per_million,discount_rate,markup_rate,
-		sale_per_million,hold_amount,COALESCE(actual_amount,0),COALESCE(output_tokens,0),status,created_at,billing_mode,official_per_second,sale_per_second,duration_seconds,resolution
+		sale_per_million,hold_amount,COALESCE(actual_amount,0),COALESCE(output_tokens,0),status,created_at,billing_mode,official_per_second,sale_per_second,duration_seconds,resolution,price_snapshot,estimated_surcharge_amount
 		FROM fzy_video_billing_jobs WHERE status='pending' AND task_id IS NOT NULL
 		AND COALESCE(last_checked_at,created_at) < NOW() - INTERVAL '30 seconds'
 		ORDER BY last_checked_at NULLS FIRST,created_at LIMIT $1`, limit)
@@ -157,12 +171,17 @@ func (r *usageBillingRepository) ListPendingFZYVideos(ctx context.Context, limit
 	var jobs []*service.FZYVideoBillingJob
 	for rows.Next() {
 		job := &service.FZYVideoBillingJob{}
+		var snapshot []byte
 		if err := rows.Scan(&job.ID, &job.UserID, &job.APIKeyID, &job.AccountID, &job.TaskID,
 			&job.Price.Model, &job.Price.SceneCode, &job.Price.SceneName, &job.Price.Currency,
 			&job.Price.OfficialPerMillion, &job.Price.DiscountRate, &job.Price.MarkupRate,
 			&job.Price.SalePerMillion, &job.HoldAmount, &job.ActualAmount,
 			&job.OutputTokens, &job.Status, &job.CreatedAt,
-			&job.Price.BillingMode, &job.Price.OfficialPerSecond, &job.Price.SalePerSecond, &job.DurationSeconds, &job.Price.Resolution); err != nil {
+			&job.Price.BillingMode, &job.Price.OfficialPerSecond, &job.Price.SalePerSecond, &job.DurationSeconds, &job.Price.Resolution,
+			&snapshot, &job.EstimatedSurchargeAmount); err != nil {
+			return nil, err
+		}
+		if err := restoreFZYVideoPriceSnapshot(job, snapshot); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)
@@ -188,7 +207,7 @@ func (r *usageBillingRepository) ListStaleFZYReservations(ctx context.Context, l
 	}
 	rows, err := r.db.QueryContext(ctx, `SELECT id,user_id,api_key_id,account_id,model,
 		scene_code,scene_name,currency,official_per_million,discount_rate,markup_rate,
-		sale_per_million,hold_amount,created_at,billing_mode,official_per_second,sale_per_second,duration_seconds,resolution FROM fzy_video_billing_jobs
+		sale_per_million,hold_amount,created_at,billing_mode,official_per_second,sale_per_second,duration_seconds,resolution,price_snapshot,estimated_surcharge_amount FROM fzy_video_billing_jobs
 		WHERE status='reserved' AND task_id IS NULL AND created_at < NOW() - INTERVAL '24 hours'
 		ORDER BY created_at LIMIT $1`, limit)
 	if err != nil {
@@ -198,11 +217,16 @@ func (r *usageBillingRepository) ListStaleFZYReservations(ctx context.Context, l
 	var jobs []*service.FZYVideoBillingJob
 	for rows.Next() {
 		job := &service.FZYVideoBillingJob{Status: "reserved"}
+		var snapshot []byte
 		if err := rows.Scan(&job.ID, &job.UserID, &job.APIKeyID, &job.AccountID,
 			&job.Price.Model, &job.Price.SceneCode, &job.Price.SceneName, &job.Price.Currency,
 			&job.Price.OfficialPerMillion, &job.Price.DiscountRate, &job.Price.MarkupRate,
 			&job.Price.SalePerMillion, &job.HoldAmount, &job.CreatedAt,
-			&job.Price.BillingMode, &job.Price.OfficialPerSecond, &job.Price.SalePerSecond, &job.DurationSeconds, &job.Price.Resolution); err != nil {
+			&job.Price.BillingMode, &job.Price.OfficialPerSecond, &job.Price.SalePerSecond, &job.DurationSeconds, &job.Price.Resolution,
+			&snapshot, &job.EstimatedSurchargeAmount); err != nil {
+			return nil, err
+		}
+		if err := restoreFZYVideoPriceSnapshot(job, snapshot); err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)
@@ -295,4 +319,19 @@ func fzyBillingStringOr(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func restoreFZYVideoPriceSnapshot(job *service.FZYVideoBillingJob, raw []byte) error {
+	var price service.FZYVideoPriceSnapshot
+	if err := json.Unmarshal(raw, &price); err != nil {
+		return fmt.Errorf("invalid frozen video price snapshot: %w", err)
+	}
+	if price.Model == "" {
+		return nil // Reservations made before the snapshot migration.
+	}
+	if price.Model != job.Price.Model || price.SceneCode != job.Price.SceneCode {
+		return errors.New("frozen video price snapshot does not match reservation")
+	}
+	job.Price = price
+	return nil
 }

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ func (h *OpenAIGatewayHandler) FZYVideoPricing(c *gin.Context) {
 	if model == "" && c.Query("catalog") == "true" {
 		model = "doubao-seedance-2.0"
 	}
-	if !strings.HasPrefix(model, "doubao-seedance-") && model != "kling-v3" && model != "kling-v3-omni" {
+	if !strings.HasPrefix(model, "doubao-seedance-") && model != "kling-v3" && model != "kling-v3-omni" && model != "MiniMax-H3" && model != "tencent-mps-superres" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Provider pricing is available only for FZY video models")
 		return
 	}
@@ -36,8 +37,22 @@ func (h *OpenAIGatewayHandler) FZYVideoPricing(c *gin.Context) {
 	if model == "kling-v3" || model == "kling-v3-omni" {
 		resolutionDefault = "1080p"
 	}
+	if model == "MiniMax-H3" {
+		resolutionDefault = "768P"
+	}
 	resolution := strings.TrimSpace(c.DefaultQuery("resolution", resolutionDefault))
-	if resolution != "480p" && resolution != "720p" && resolution != "1080p" && !strings.EqualFold(resolution, "4K") {
+	validResolution := false
+	allowed := []string{"480p", "720p", "1080p", "4K"}
+	if model == "MiniMax-H3" {
+		allowed = []string{"768P", "2K"}
+	}
+	if model == "tencent-mps-superres" {
+		allowed = []string{"720p", "1080p", "2K", "4K"}
+	}
+	for _, value := range allowed {
+		validResolution = validResolution || strings.EqualFold(value, resolution)
+	}
+	if !validResolution {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Invalid video resolution")
 		return
 	}
@@ -56,6 +71,15 @@ func (h *OpenAIGatewayHandler) FZYVideoPricing(c *gin.Context) {
 	if inputVideo {
 		request["reference_images"] = []string{"https://example.invalid/reference.mp4"}
 	}
+	frameRate, e1 := strconv.Atoi(c.DefaultQuery("frame_rate", "30"))
+	images, e2 := strconv.Atoi(c.DefaultQuery("input_image_count", "0"))
+	seconds, e3 := strconv.ParseFloat(c.DefaultQuery("input_video_seconds", "0"), 64)
+	sourceSeconds, e4 := strconv.ParseFloat(c.DefaultQuery("source_duration_seconds", "5"), 64)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || math.IsNaN(sourceSeconds) || math.IsInf(sourceSeconds, 0) || images < 0 || images > 10 || seconds < 0 || seconds > 86400 || sourceSeconds <= 0 || sourceSeconds > 86400 || (frameRate != 30 && frameRate != 60 && frameRate != 120) {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Invalid video input estimate")
+		return
+	}
+	request["frameRate"], request["input_image_count"], request["input_video_seconds"], request["sourceDurationSeconds"] = frameRate, images, seconds, sourceSeconds
 	body, _ := json.Marshal(request)
 	selection, _, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 		c.Request.Context(), apiKey.GroupID, "", "", model, map[int64]struct{}{},

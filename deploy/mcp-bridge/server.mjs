@@ -53,6 +53,8 @@ const fzyDoubaoModels = new Set([
   'doubao-seedance-1.5-pro',
 ])
 const fzyKlingModels = new Set(['kling-v3', 'kling-v3-omni'])
+const fzyAdditionalModels = new Set(['MiniMax-H3', 'tencent-mps-superres'])
+const fzySupportedModel = model => fzyDoubaoModels.has(model) || fzyKlingModels.has(model) || fzyAdditionalModels.has(model)
 
 await Promise.all([
   fs.mkdir(MATERIAL_DIR, { recursive: true }),
@@ -1159,11 +1161,12 @@ function fzyReferenceKind({ prefix, url }) {
 }
 
 async function validateFzyReferences(body) {
-  if (extractReferenceURLs(body).length > 9) return false
+  if (extractReferenceURLs(body).length > (body?.model === 'doubao-seedance-2.5' || body?.model === 'MiniMax-H3' ? 10 : 9)) return false
   const values = [
     ...extractReferenceURLs(body),
     String(body?.start_image_url || '').trim(),
     String(body?.end_image_url || '').trim(),
+    ...(body?.model === 'tencent-mps-superres' ? [String(body?.url || '').trim()] : []),
   ].filter(Boolean).map((value) => splitReference(value).url)
   for (const value of values) {
     if (value.length > 8192 || !(await checkedPublicURL(value))) return false
@@ -1176,12 +1179,14 @@ function fzyTaskEndpoint(model, id = '') {
   // The legacy adapter has two vendor APIs: ordinary Seedance/Kling tasks use
   // /video/generation/tasks, while token-billed Doubao models use the v3 task
   // endpoint. Keep this split for both creation and status polling.
-  const pathPart = fzyDoubaoModels.has(normalizeModel(model)) ? '/v3/video/tasks' : '/video/generation/tasks'
+  const pathPart = !id && model === 'tencent-mps-superres' ? '/video/generation/passthrough/tasks' : fzyDoubaoModels.has(normalizeModel(model)) ? '/v3/video/tasks' : '/video/generation/tasks'
   return `${base}${pathPart}${id ? `/${encodeURIComponent(id)}` : ''}`
 }
 
 function normalizedResolution(model, value) {
   const resolution = String(value || '').trim().toLowerCase()
+  if (model === 'MiniMax-H3') return resolution === '2k' ? '2K' : resolution === '768p' || !resolution ? '768P' : resolution
+  if (model === 'tencent-mps-superres') return resolution || '1080p'
   if (resolution === '4k') return '4K'
   if (resolution) return resolution
   return fzyKlingModels.has(model) ? '1080p' : '720p'
@@ -1189,6 +1194,7 @@ function normalizedResolution(model, value) {
 
 function buildFzyBody(body) {
   const model = normalizeModel(body?.model)
+  if (model === 'tencent-mps-superres') return { model, url: String(body.url || '').trim(), resolution: normalizedResolution(model, body.resolution), frameRate: Number(body.frameRate ?? body.frame_rate), ...(body.sourceDurationSeconds !== undefined ? { sourceDurationSeconds: Number(body.sourceDurationSeconds) } : {}) }
   const prompt = String(body?.prompt || '').trim()
   const duration = asInt(body?.duration, 5) || 5
   const resolution = normalizedResolution(model, body?.resolution)
@@ -1201,7 +1207,7 @@ function buildFzyBody(body) {
   const start = publicURL(startRef.url) || explicitStart
   const end = publicURL(endRef.url) || explicitEnd
   const audio = body?.audio === undefined ? !fzyKlingModels.has(model) : Boolean(body.audio)
-  if (fzyDoubaoModels.has(model)) {
+  if (fzyDoubaoModels.has(model) || model === 'MiniMax-H3') {
     const content = [{ type: 'text', text: prompt }]
     const media = [...refs]
     if (start && !media.some((item) => item.prefix === 'start' && item.url === start)) media.push({ prefix: 'start', url: start })
@@ -1212,6 +1218,7 @@ function buildFzyBody(body) {
         : kind === 'image' && prefix === 'end' ? 'last_frame' : `reference_${kind}`
       content.push({ type: `${kind}_url`, [`${kind}_url`]: { url }, role })
     }
+    if (model === 'MiniMax-H3') return { model, content, ratio, resolution, duration, aigc_watermark: false }
     return { model, content, generate_audio: audio, ratio, resolution, duration, watermark: false }
   }
   if (fzyKlingModels.has(model)) {
@@ -1231,11 +1238,11 @@ function buildFzyBody(body) {
 }
 
 function extractTask(raw) {
-  const data = raw?.data || raw
+  const data = raw?.task || raw?.data?.task || raw?.data || raw
   return {
     id: first(data?.taskId, data?.task_id, data?.id, raw?.taskId, raw?.task_id, raw?.id),
     status: first(data?.status, data?.task_status, raw?.status, raw?.task_status),
-    resultURL: first(data?.resultUrl, data?.result_url, data?.url, data?.content?.video_url, data?.task_result?.videos?.[0]?.url, raw?.resultUrl, raw?.url),
+    resultURL: first(data?.resultUrl, data?.result_url, data?.url, data?.content?.video_url, data?.content?.url, data?.task_result?.videos?.[0]?.url, raw?.resultUrl, raw?.url),
     thumbnailURL: first(data?.thumbnailUrl, data?.thumbnail_url, raw?.thumbnailUrl),
     reason: first(data?.failReason, data?.fail_reason, data?.task_status_msg, data?.error?.message, raw?.message),
     duration: asInt(data?.duration || data?.task_result?.videos?.[0]?.duration, 0),
@@ -1243,14 +1250,34 @@ function extractTask(raw) {
 }
 
 function videoTokenUsage(raw) {
-  const source = raw?.provider_token_usage || raw?.data?.provider_token_usage || raw?.usage || raw?.data?.usage || raw?.token_usage || raw?.data?.token_usage
+  const sources = [raw?.provider_token_usage, raw?.data?.provider_token_usage, raw?.usage, raw?.data?.usage, raw?.task?.usage, raw?.data?.task?.usage, raw?.token_usage, raw?.data?.token_usage]
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue
+    const usage = {}
+    const aliases = { prompt_tokens: ['prompt_tokens', 'input_tokens', 'inputTokens', 'promptTokens'], completion_tokens: ['completion_tokens', 'output_tokens', 'outputTokens', 'completionTokens'], total_tokens: ['total_tokens', 'totalTokens'] }
+    for (const [field, names] of Object.entries(aliases)) {
+      const name = names.find(key => source[key] !== undefined && source[key] !== null && source[key] !== '')
+      const value = name ? Number(source[name]) : NaN
+      if (Number.isSafeInteger(value) && value >= 0) usage[field] = value
+    }
+    if (Object.keys(usage).length) return usage
+  }
+  return undefined
+}
+
+function videoProviderUsage(raw) {
+  const source = raw?.task?.usage || raw?.data?.task?.usage || raw?.usage || raw?.data?.usage
   if (!source || typeof source !== 'object') return undefined
   const usage = {}
-  for (const field of ['prompt_tokens', 'completion_tokens', 'total_tokens']) {
-    const value = Number(source[field])
-    if (Number.isSafeInteger(value) && value >= 0) usage[field] = value
+  for (const field of ['input_seconds', 'output_seconds', 'input_image_count']) {
+    const value = source[field]
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && (field !== 'input_image_count' || Number.isSafeInteger(value))) usage[field] = value
   }
   return Object.keys(usage).length ? usage : undefined
+}
+
+function safeFzyError(message) {
+  return String(message || '视频处理失败，请检查素材后重试').replace(/https?:\/\/[^\s"'<>]+/gi, '[素材地址]').replace(/(?:sk-|yh-)[a-z0-9_-]{12,}/gi, '[密钥]').slice(0, 300)
 }
 
 function fzyEnvelopeStatus(raw, transportStatus = 200) {
@@ -1275,7 +1302,7 @@ async function handleFzyProvider(req, res, parsed) {
   const prefix = '/provider/fzyinghe/v1'
   const relative = pathname.slice(prefix.length)
   if (req.method === 'GET' && relative === '/models') {
-    const models = [...fzyDoubaoModels, ...fzyKlingModels].map((id) => ({ id, object: 'model', owned_by: 'fzyinghe' }))
+    const models = [...fzyDoubaoModels, ...fzyKlingModels, ...fzyAdditionalModels].map((id) => ({ id, object: 'model', owned_by: 'fzyinghe' }))
     json(res, 200, { object: 'list', data: models }); return
   }
   const statusMatch = relative.match(/^\/videos\/([^/]+)(\/content)?$/)
@@ -1315,11 +1342,12 @@ async function handleFzyProvider(req, res, parsed) {
     const envelopeStatus = fzyEnvelopeStatus(raw, upstream.status)
     if (envelopeStatus >= 400) {
       log('provider_error', { operation: 'status', task_id: taskID, status: envelopeStatus, provider_code: Number(raw?.code) || undefined })
-      json(res, envelopeStatus, raw)
+      json(res, envelopeStatus, fzyAdditionalModels.has(model) ? {error:{message:safeFzyError(raw?.message || raw?.error?.message)}} : raw)
       return
     }
     const task = extractTask(raw)
     const tokenUsage = videoTokenUsage(raw)
+    const providerUsage = videoProviderUsage(raw)
     const success = ['success', 'succeeded', 'succeed', 'completed', 'done'].includes(String(task.status).toLowerCase()) || Boolean(task.resultURL)
     const failure = ['failed', 'failure', 'expired', 'cancelled', 'canceled', 'error'].includes(String(task.status).toLowerCase())
     if (libraryJob && (success || failure)) {
@@ -1364,14 +1392,14 @@ async function handleFzyProvider(req, res, parsed) {
     const url = billingOnly ? task.resultURL : (Number(taskMeta?.deliveryExpiresAt) > Math.floor(Date.now() / 1000)
       ? taskMeta.deliveryURL : `${PUBLIC_BASE_URL}/v1/videos/${encodeURIComponent(taskID)}/content`)
     const progress = libraryJob ? { ...fzyAssetProgress(libraryJob), stage: failure ? 'failed' : success ? 'completed' : 'video_generating' } : {}
-    json(res, 200, failure ? { id: taskID, status: 'failed', model, ...progress, error: { message: task.reason || 'video generation failed' } } : success ? { id: taskID, status: 'done', model, ...progress, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}) } : { id: taskID, status: 'pending', model, ...progress })
+    json(res, 200, failure ? { id: taskID, status: 'failed', model, ...progress, error: { message: safeFzyError(task.reason) } } : success ? { id: taskID, status: 'done', model, ...progress, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}), ...(providerUsage ? { provider_video_usage: providerUsage } : {}) } : { id: taskID, status: 'pending', model, ...progress })
     return
   }
   if (req.method === 'POST' && (relative === '/videos/generations' || relative === '/videos')) {
     let body
     try { body = parseJSON(await readRequest(req)) } catch (error) { json(res, error.statusCode || 400, { error: { message: error.message } }); return }
     const model = normalizeModel(body?.model)
-    if (!fzyDoubaoModels.has(model) && !fzyKlingModels.has(model)) {
+    if (!fzySupportedModel(model)) {
       json(res, 400, { error: { message: `unsupported FZYinghe video model: ${body?.model || ''}` } }); return
     }
     // Do not silently coerce an invalid duration to the default.  The
@@ -1379,15 +1407,24 @@ async function handleFzyProvider(req, res, parsed) {
     // adapter sees it, so this guard prevents an accidental paid provider
     // request from a malformed client payload.
     const prompt = String(body?.prompt || '').trim()
-    if (!prompt) { json(res, 400, { error: { message: 'prompt is required' } }); return }
+    if (!prompt && model !== 'tencent-mps-superres') { json(res, 400, { error: { message: 'prompt is required' } }); return }
     if (prompt.length > 1300) { json(res, 400, { error: { message: 'prompt must not exceed 1300 characters' } }); return }
     const [minimumDuration, maximumDuration] = videoDurationRange(model)
     const duration = body?.duration === undefined ? 5 : asInt(body.duration, NaN)
-    if (!Number.isFinite(duration) || duration < minimumDuration || duration > maximumDuration) {
+    if (model !== 'tencent-mps-superres' && (!Number.isFinite(duration) || duration < minimumDuration || duration > maximumDuration)) {
       json(res, 400, { error: { message: `duration must be between ${minimumDuration} and ${maximumDuration} seconds` } }); return
     }
     if (!(await validateFzyReferences(body))) {
       json(res, 400, { error: { message: 'reference URLs must be public HTTP/HTTPS URLs' } }); return
+    }
+    if (model === 'tencent-mps-superres') {
+      if (!String(body?.url || '').trim() || ![30,60,120].includes(Number(body.frameRate ?? body.frame_rate)) || !['720p','1080p','2k','4k'].includes(normalizedResolution(model,body.resolution))) {json(res,400,{error:{message:'请选择源视频、清晰度和帧率档位'}});return}
+    }
+    if (model === 'MiniMax-H3') {
+      if (!['768P','2K'].includes(normalizedResolution(model,body.resolution))) {json(res,400,{error:{message:'请选择768P或2K'}});return}
+      const refs=normalizedReferences(extractReferenceURLs(body));const frames=Boolean(body.start_image_url||body.end_image_url||refs.some(item=>['start','end'].includes(item.prefix)))
+      if (frames && refs.some(item=>!['start','end'].includes(item.prefix))) {json(res,400,{error:{message:'首尾帧与参考素材不能同时使用'}});return}
+      if (refs.length && refs.every(item=>fzyReferenceKind(item)==='audio')) {json(res,400,{error:{message:'参考音频需搭配图片或视频'}});return}
     }
     const requestBody = buildFzyBody(body)
     if (model === 'kling-v3-omni' && requestBody.video_list.length && requestBody.sound !== 'off') {
@@ -1417,7 +1454,7 @@ async function handleFzyProvider(req, res, parsed) {
     const envelopeStatus = fzyEnvelopeStatus(raw, upstream.status)
     if (envelopeStatus >= 400) {
       log('provider_error', { operation: 'create', model, status: envelopeStatus, provider_code: Number(raw?.code) || undefined })
-      json(res, envelopeStatus, raw)
+      json(res, envelopeStatus, fzyAdditionalModels.has(model) ? {error:{message:safeFzyError(raw?.message || raw?.error?.message)}} : raw)
       return
     }
     const task = extractTask(raw)

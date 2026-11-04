@@ -134,3 +134,48 @@ func assertFZYVideoBalance(t *testing.T, ctx context.Context, userID int64, want
 	require.InDelta(t, wantBalance, balance, 1e-8)
 	require.InDelta(t, wantFrozen, frozen, 1e-8)
 }
+
+func TestFZYVideoExtendedPriceSnapshotRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB).(*usageBillingRepository)
+	user := mustCreateUser(t, client, &service.User{Email: "fzy-snapshot-" + uuid.NewString() + "@example.com", Balance: 100})
+	group := mustCreateGroup(t, client, &service.Group{Name: "fzy-snapshot-" + uuid.NewString(), Platform: service.PlatformGrok, RateMultiplier: 1, SubscriptionType: service.SubscriptionTypeStandard})
+	account := mustCreateAccount(t, client, &service.Account{Name: "fzy-snapshot-" + uuid.NewString(), Platform: service.PlatformGrok, Type: service.AccountTypeAPIKey})
+	key := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, GroupID: &group.ID, Key: "sk-fzy-snapshot-" + uuid.NewString()})
+	for _, name := range []string{"MiniMax-H3", "tencent-mps-superres"} {
+		price := service.FZYVideoPriceSnapshot{Model: name, SceneCode: "frozen-scene", Currency: "CNY", BillingMode: "second", OfficialPerMillion: "0", SalePerMillion: "0", OfficialPerSecond: "0.5", SalePerSecond: "0.48875", DiscountRate: "0.85", MarkupRate: "1.15", Resolution: "768P", InputImageCount: 8, ExpectedInputVideo: true,
+			Surcharges: []service.FZYVideoSurcharge{{Code: "input_video_seconds", MetricKey: "h3_input_video_seconds", Unit: "second", OfficialUnitPrice: "0.5", SaleUnitPrice: "0.48875"}, {Code: "extra_images", MetricKey: "h3_input_extra_images", Unit: "image", FreeUnits: 5, OfficialUnitPrice: "0.2", SaleUnitPrice: "0.1955"}}}
+		if name == "tencent-mps-superres" {
+			price.BillingMode, price.FrameRate, price.Resolution = "token", 60, "2K"
+			price.OfficialPerMillion, price.SalePerMillion = "0.5325", "0.52051875"
+			price.Surcharges, price.InputImageCount, price.ExpectedInputVideo = nil, 0, false
+		}
+		job := &service.FZYVideoBillingJob{ID: uuid.NewString(), UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID, Price: price, DurationSeconds: 5, HoldAmount: 5, EstimatedSurchargeAmount: 0.41}
+		require.NoError(t, repo.ReserveFZYVideo(ctx, job))
+		taskID := "snapshot-" + job.ID
+		require.NoError(t, repo.BindFZYVideo(ctx, job.ID, taskID))
+		loaded, err := repo.GetFZYVideoByTask(ctx, taskID, user.ID, key.ID, account.ID)
+		require.NoError(t, err)
+		require.Equal(t, price, loaded.Price)
+		require.InDelta(t, job.EstimatedSurchargeAmount, loaded.EstimatedSurchargeAmount, 1e-8)
+		_, err = integrationDB.ExecContext(ctx, "UPDATE fzy_video_billing_jobs SET last_checked_at=NOW()-INTERVAL '31 seconds' WHERE id=$1", job.ID)
+		require.NoError(t, err)
+		pending, err := repo.ListPendingFZYVideos(ctx, 10)
+		require.NoError(t, err)
+		found := false
+		for _, row := range pending {
+			if row.ID == job.ID {
+				require.Equal(t, price, row.Price)
+				found = true
+			}
+		}
+		require.True(t, found, "reconciliation must load the same frozen tariff")
+		if name == "MiniMax-H3" {
+			output, input, images := 5.0, 2.5, 8
+			actual, err := loaded.Price.ProviderCostForProviderUsage(0, 5, &service.FZYVideoProviderUsage{OutputSeconds: &output, InputSeconds: &input, InputImageCount: &images})
+			require.NoError(t, err)
+			require.InDelta(t, 3.6975, actual, 1e-8, "material charges must survive a database reload")
+		}
+	}
+}

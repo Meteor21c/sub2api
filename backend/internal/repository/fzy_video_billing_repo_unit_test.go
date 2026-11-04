@@ -5,12 +5,69 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+type capturedFZYPrice struct{ value string }
+
+func (a *capturedFZYPrice) Match(value driver.Value) bool {
+	a.value, _ = value.(string)
+	return a.value != ""
+}
+
+func TestFZYVideoExtendedSnapshotSurvivesReserveGetAndReconcile(t *testing.T) {
+	for _, name := range []string{"MiniMax-H3", "tencent-mps-superres"} {
+		t.Run(name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			repo := &usageBillingRepository{db: db}
+			price := service.FZYVideoPriceSnapshot{Model: name, SceneCode: "frozen-scene", Currency: "CNY", BillingMode: "second", OfficialPerMillion: "0", SalePerMillion: "0", OfficialPerSecond: "0.5", SalePerSecond: "0.48875", DiscountRate: "0.85", MarkupRate: "1.15", Resolution: "768P", InputImageCount: 8, ExpectedInputVideo: true,
+				Surcharges: []service.FZYVideoSurcharge{{Code: "input_video_seconds", MetricKey: "h3_input_video_seconds", Unit: "second", OfficialUnitPrice: "0.5", SaleUnitPrice: "0.48875"}, {Code: "extra_images", MetricKey: "h3_input_extra_images", Unit: "image", FreeUnits: 5, OfficialUnitPrice: "0.2", SaleUnitPrice: "0.1955"}}}
+			if name == "tencent-mps-superres" {
+				price.BillingMode, price.FrameRate, price.Resolution = "token", 60, "2K"
+				price.Surcharges, price.InputImageCount, price.ExpectedInputVideo = nil, 0, false
+			}
+			job := &service.FZYVideoBillingJob{ID: "snapshot-1", UserID: 42, APIKeyID: 7, AccountID: 114, Price: price, DurationSeconds: 5, HoldAmount: 5, EstimatedSurchargeAmount: 0.41}
+			captured := &capturedFZYPrice{}
+			args := make([]driver.Value, 20)
+			for i := range args {
+				args[i] = sqlmock.AnyArg()
+			}
+			args[18], args[19] = captured, job.EstimatedSurchargeAmount
+			mock.ExpectBegin()
+			mock.ExpectExec(`INSERT INTO fzy_video_billing_jobs`).WithArgs(args...).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery(`UPDATE users SET balance=balance-`).WithArgs(job.HoldAmount, job.UserID).WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(95))
+			mock.ExpectCommit()
+			require.NoError(t, repo.ReserveFZYVideo(context.Background(), job))
+			var saved service.FZYVideoPriceSnapshot
+			require.NoError(t, json.Unmarshal([]byte(captured.value), &saved))
+			require.Equal(t, price, saved)
+			columns := []string{"id", "user_id", "api_key_id", "account_id", "task_id", "model", "scene_code", "scene_name", "currency", "official_per_million", "discount_rate", "markup_rate", "sale_per_million", "hold_amount", "actual_amount", "output_tokens", "status", "created_at", "billing_mode", "official_per_second", "sale_per_second", "duration_seconds", "resolution", "price_snapshot", "estimated_surcharge_amount"}
+			rows := func() *sqlmock.Rows {
+				return sqlmock.NewRows(columns).AddRow(job.ID, job.UserID, job.APIKeyID, job.AccountID, "provider-task", name, price.SceneCode, price.SceneName, price.Currency, price.OfficialPerMillion, price.DiscountRate, price.MarkupRate, price.SalePerMillion, job.HoldAmount, 0, 0, "pending", time.Now(), price.BillingMode, price.OfficialPerSecond, price.SalePerSecond, job.DurationSeconds, price.Resolution, captured.value, job.EstimatedSurchargeAmount)
+			}
+			mock.ExpectQuery(`SELECT id,user_id,api_key_id,account_id,task_id,model`).WithArgs("provider-task", job.UserID, job.APIKeyID, job.AccountID).WillReturnRows(rows())
+			loaded, err := repo.GetFZYVideoByTask(context.Background(), "provider-task", job.UserID, job.APIKeyID, job.AccountID)
+			require.NoError(t, err)
+			require.Equal(t, price, loaded.Price)
+			require.Equal(t, job.EstimatedSurchargeAmount, loaded.EstimatedSurchargeAmount)
+			mock.ExpectQuery(`SELECT id,user_id,api_key_id,account_id,task_id,model`).WithArgs(3).WillReturnRows(rows())
+			pending, err := repo.ListPendingFZYVideos(context.Background(), 3)
+			require.NoError(t, err)
+			require.Len(t, pending, 1)
+			require.Equal(t, loaded.Price, pending[0].Price)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
 
 func TestFZYVideoReserveIsAtomicAndRequiresBalance(t *testing.T) {
 	ctx := context.Background()

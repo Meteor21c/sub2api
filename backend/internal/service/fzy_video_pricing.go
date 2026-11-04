@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,22 +27,122 @@ var fzyVideoMarkup = decimal.RequireFromString("1.15")
 // The site's explicitly chosen currency policy maps CNY 1 to USD balance 1.
 // Empty BillingMode remains token for reservations created before this change.
 type FZYVideoPriceSnapshot struct {
-	Model              string `json:"model"`
-	SceneCode          string `json:"scene_code"`
-	SceneName          string `json:"scene_name"`
-	Currency           string `json:"currency"`
-	BillingMode        string `json:"billing_mode,omitempty"`
-	OfficialPerMillion string `json:"official_per_million"`
-	DiscountRate       string `json:"discount_rate"`
-	MarkupRate         string `json:"markup_rate"`
-	SalePerMillion     string `json:"sale_per_million"`
-	OfficialPerSecond  string `json:"official_per_second,omitempty"`
-	SalePerSecond      string `json:"sale_per_second,omitempty"`
-	Resolution         string `json:"resolution,omitempty"`
+	Model              string              `json:"model"`
+	SceneCode          string              `json:"scene_code"`
+	SceneName          string              `json:"scene_name"`
+	Currency           string              `json:"currency"`
+	BillingMode        string              `json:"billing_mode,omitempty"`
+	OfficialPerMillion string              `json:"official_per_million"`
+	DiscountRate       string              `json:"discount_rate"`
+	MarkupRate         string              `json:"markup_rate"`
+	SalePerMillion     string              `json:"sale_per_million"`
+	OfficialPerSecond  string              `json:"official_per_second,omitempty"`
+	SalePerSecond      string              `json:"sale_per_second,omitempty"`
+	Resolution         string              `json:"resolution,omitempty"`
+	FrameRate          int                 `json:"frame_rate,omitempty"`
+	Surcharges         []FZYVideoSurcharge `json:"surcharges,omitempty"`
+	ExpectedInputVideo bool                `json:"expected_input_video,omitempty"`
+	InputImageCount    int                 `json:"input_image_count,omitempty"`
 }
 
+// FZYVideoSurcharge freezes only documented, independently reported usage metrics.
+type FZYVideoSurcharge struct {
+	Code              string `json:"code"`
+	MetricKey         string `json:"metric_key"`
+	Unit              string `json:"unit"`
+	FreeUnits         int    `json:"free_units"`
+	OfficialUnitPrice string `json:"official_unit_price"`
+	SaleUnitPrice     string `json:"sale_unit_price"`
+}
+type FZYVideoProviderUsage struct {
+	OutputSeconds   *float64 `json:"output_seconds,omitempty"`
+	InputSeconds    *float64 `json:"input_seconds,omitempty"`
+	InputImageCount *int     `json:"input_image_count,omitempty"`
+}
+
+func ParseFZYVideoProviderUsage(body []byte) *FZYVideoProviderUsage {
+	var usage FZYVideoProviderUsage
+	value := gjson.GetBytes(body, "provider_video_usage")
+	if !value.IsObject() || json.Unmarshal([]byte(value.Raw), &usage) != nil {
+		return nil
+	}
+	return &usage
+}
+func fzyValidSeconds(value *float64) bool {
+	return value != nil && !math.IsNaN(*value) && !math.IsInf(*value, 0) && *value >= 0 && *value <= 86400
+}
+func (p FZYVideoPriceSnapshot) priceUnitsForProviderUsage(outputTokens, durationSeconds int, usage *FZYVideoProviderUsage) (decimal.Decimal, decimal.Decimal, error) {
+	if p.Model != "MiniMax-H3" {
+		return p.priceUnits(outputTokens, durationSeconds)
+	}
+	if len(p.Surcharges) != 2 {
+		return decimal.Zero, decimal.Zero, errors.New("provider input tariff snapshot is missing")
+	}
+	if usage == nil || !fzyValidSeconds(usage.OutputSeconds) || *usage.OutputSeconds <= 0 {
+		return decimal.Zero, decimal.Zero, errors.New("provider output seconds are missing")
+	}
+	official, e1 := decimal.NewFromString(p.OfficialPerSecond)
+	sale, e2 := decimal.NewFromString(p.SalePerSecond)
+	if e1 != nil || e2 != nil || !official.IsPositive() || !sale.IsPositive() {
+		return decimal.Zero, decimal.Zero, errors.New("video frozen price is invalid")
+	}
+	official = official.Mul(decimal.NewFromFloat(*usage.OutputSeconds))
+	sale = sale.Mul(decimal.NewFromFloat(*usage.OutputSeconds))
+	for _, extra := range p.Surcharges {
+		units := decimal.Zero
+		switch extra.Code {
+		case "input_video_seconds":
+			if p.ExpectedInputVideo && !fzyValidSeconds(usage.InputSeconds) {
+				return decimal.Zero, decimal.Zero, errors.New("provider input video seconds are missing")
+			}
+			if usage.InputSeconds != nil {
+				if !fzyValidSeconds(usage.InputSeconds) {
+					return decimal.Zero, decimal.Zero, errors.New("provider input video seconds are invalid")
+				}
+				units = decimal.NewFromFloat(*usage.InputSeconds)
+			}
+		case "extra_images":
+			if p.InputImageCount > extra.FreeUnits && usage.InputImageCount == nil {
+				return decimal.Zero, decimal.Zero, errors.New("provider input image count is missing")
+			}
+			if usage.InputImageCount != nil {
+				if *usage.InputImageCount < 0 || *usage.InputImageCount > 100 {
+					return decimal.Zero, decimal.Zero, errors.New("provider input image count is invalid")
+				}
+				n := *usage.InputImageCount - extra.FreeUnits
+				if n > 0 {
+					units = decimal.NewFromInt(int64(n))
+				}
+			}
+		default:
+			return decimal.Zero, decimal.Zero, errors.New("provider surcharge is unsupported")
+		}
+		op, oe := decimal.NewFromString(extra.OfficialUnitPrice)
+		sp, se := decimal.NewFromString(extra.SaleUnitPrice)
+		if oe != nil || se != nil || !op.IsPositive() || !sp.IsPositive() {
+			return decimal.Zero, decimal.Zero, errors.New("provider surcharge price is invalid")
+		}
+		official = official.Add(op.Mul(units))
+		sale = sale.Add(sp.Mul(units))
+	}
+	return official, sale, nil
+}
+func (p FZYVideoPriceSnapshot) ProviderCostForProviderUsage(tokens, duration int, usage *FZYVideoProviderUsage) (float64, error) {
+	official, _, err := p.priceUnitsForProviderUsage(tokens, duration, usage)
+	if err != nil {
+		return 0, err
+	}
+	discount, err := decimal.NewFromString(p.DiscountRate)
+	if err != nil || !discount.IsPositive() {
+		return 0, errors.New("video provider discount is invalid")
+	}
+	return official.Mul(discount).Round(UsageBillingMonetaryScale).InexactFloat64(), nil
+}
 func (p FZYVideoPriceSnapshot) IsPerSecond() bool { return p.BillingMode == "second" }
 func (p FZYVideoPriceSnapshot) priceUnits(outputTokens, durationSeconds int) (decimal.Decimal, decimal.Decimal, error) {
+	if p.Model == "MiniMax-H3" {
+		return decimal.Zero, decimal.Zero, errors.New("provider video input usage is required")
+	}
 	officialValue, saleValue := p.OfficialPerMillion, p.SalePerMillion
 	units := decimal.NewFromInt(int64(outputTokens)).Div(decimal.NewFromInt(1000000))
 	if p.IsPerSecond() {
@@ -130,6 +232,10 @@ func fzyScenarioResolutions(value string) []string {
 		switch part {
 		case "4k":
 			values = append(values, "4K")
+		case "2k":
+			values = append(values, "2K")
+		case "768p":
+			values = append(values, "768P")
 		case "480p", "720p", "1080p":
 			values = append(values, part)
 		}
@@ -146,6 +252,10 @@ func fzyDocumentedResolutions(model string) []string {
 		return []string{"480p", "720p"}
 	case "kling-v3", "kling-v3-omni":
 		return []string{"720p", "1080p", "4K"}
+	case "MiniMax-H3":
+		return []string{"768P", "2K"}
+	case "tencent-mps-superres":
+		return []string{"720p", "1080p", "2K", "4K"}
 	}
 	return nil
 }
@@ -167,6 +277,12 @@ func fzySupportedSceneResolutions(model, raw string) []string {
 	return allowed
 }
 func fzySceneValidInputs(model string, scene fzyMarketplaceScenario) bool {
+	if model == "MiniMax-H3" {
+		return scene.InputMode == "视频/图片输入"
+	}
+	if model == "tencent-mps-superres" {
+		return scene.InputMode == "视频超分" && fzySceneFrameRate(scene) > 0
+	}
 	if model == "kling-v3-omni" {
 		if !strings.Contains(scene.InputMode, "无参考视频") && !strings.Contains(scene.InputMode, "有参考视频") {
 			return false
@@ -182,6 +298,9 @@ func fzySceneValidInputs(model string, scene fzyMarketplaceScenario) bool {
 	return scene.InputMode == "含输入视频" || scene.InputMode == "无输入视频"
 }
 func fzyScenarioInputs(model string, scene fzyMarketplaceScenario) (inputVideo, audio *bool) {
+	if model == "MiniMax-H3" || model == "tencent-mps-superres" {
+		return nil, nil
+	}
 	boolPtr := func(v bool) *bool { return &v }
 	if model == "kling-v3" || model == "kling-v3-omni" || model == "doubao-seedance-1.5-pro" {
 		audio = boolPtr(strings.Contains(scene.SceneName, "有声"))
@@ -202,7 +321,7 @@ func fzyScenarioSnapshot(entry *fzyMarketplaceEntry, scene fzyMarketplaceScenari
 	if err != nil || !discount.IsPositive() {
 		return empty, errors.New("provider key discount is unavailable")
 	}
-	if scene.InputPricePerMillion != "" || scene.MinPrice != "" || len(scene.Surcharges) != 0 {
+	if scene.InputPricePerMillion != "" || scene.MinPrice != "" || len(scene.Surcharges) != 0 && entry.InnerCode != "MiniMax-H3" {
 		return empty, errors.New("provider scenario has additional charges that are not supported")
 	}
 	currency := firstNonEmpty(scene.PricingCurrency, entry.BillingRule.PricingCurrency)
@@ -210,8 +329,56 @@ func fzyScenarioSnapshot(entry *fzyMarketplaceEntry, scene fzyMarketplaceScenari
 		return empty, errors.New("provider scenario currency is unsupported")
 	}
 	p := FZYVideoPriceSnapshot{Model: entry.InnerCode, SceneCode: scene.SceneCode, SceneName: scene.SceneName, Currency: currency, DiscountRate: discount.String(), MarkupRate: fzyVideoMarkup.String(), BillingMode: "token"}
+	if entry.InnerCode == "MiniMax-H3" {
+		seen := map[string]bool{}
+		for _, raw := range scene.Surcharges {
+			var v struct {
+				Code       string      `json:"code"`
+				MetricKey  string      `json:"metricKey"`
+				UnitPrice  json.Number `json:"unitPrice"`
+				UnitSize   int         `json:"unitSize"`
+				Multiplier json.Number `json:"multiplier"`
+			}
+			if json.Unmarshal(raw, &v) != nil || v.UnitSize != 1 || v.Multiplier.String() != "1" {
+				return empty, errors.New("provider surcharge unit is unsupported")
+			}
+			if seen[v.Code] {
+				return empty, errors.New("provider surcharge is duplicated")
+			}
+			seen[v.Code] = true
+			extra := FZYVideoSurcharge{Code: v.Code, MetricKey: v.MetricKey}
+			switch v.Code {
+			case "input_video_seconds":
+				extra.Unit = "second"
+				if v.MetricKey != "h3_input_video_seconds" {
+					return empty, errors.New("provider surcharge metric is unsupported")
+				}
+			case "extra_images":
+				extra.Unit = "image"
+				extra.FreeUnits = 5
+				if v.MetricKey != "h3_input_extra_images" {
+					return empty, errors.New("provider surcharge metric is unsupported")
+				}
+			default:
+				return empty, errors.New("provider surcharge is unsupported")
+			}
+			official, e := decimal.NewFromString(v.UnitPrice.String())
+			if e != nil || !official.IsPositive() {
+				return empty, errors.New("provider surcharge price is invalid")
+			}
+			extra.OfficialUnitPrice = official.String()
+			extra.SaleUnitPrice = official.Mul(discount).Mul(fzyVideoMarkup).String()
+			p.Surcharges = append(p.Surcharges, extra)
+		}
+		if len(p.Surcharges) != 2 {
+			return empty, errors.New("provider input tariffs are unavailable")
+		}
+	}
+	if entry.InnerCode == "tencent-mps-superres" {
+		p.FrameRate = fzySceneFrameRate(scene)
+	}
 	if scene.PricePerSecond != "" {
-		if entry.InnerCode != "kling-v3" && entry.InnerCode != "kling-v3-omni" {
+		if entry.InnerCode != "kling-v3" && entry.InnerCode != "kling-v3-omni" && entry.InnerCode != "MiniMax-H3" {
 			return empty, errors.New("provider model has an unsupported per-second tariff")
 		}
 		official, err := decimal.NewFromString(scene.PricePerSecond.String())
@@ -223,7 +390,7 @@ func fzyScenarioSnapshot(entry *fzyMarketplaceEntry, scene fzyMarketplaceScenari
 		p.OfficialPerSecond, p.SalePerSecond = official.String(), official.Mul(discount).Mul(fzyVideoMarkup).String()
 		return p, nil
 	}
-	if entry.InnerCode == "kling-v3" || entry.InnerCode == "kling-v3-omni" {
+	if entry.InnerCode == "kling-v3" || entry.InnerCode == "kling-v3-omni" || entry.InnerCode == "MiniMax-H3" {
 		return empty, errors.New("provider per-second scenario is unavailable")
 	}
 	unitSize := scene.TokenUnitSize
@@ -252,6 +419,9 @@ func ParseFZYVideoPriceSnapshot(body []byte, model string, requestBody []byte) (
 		if model == "kling-v3" || model == "kling-v3-omni" {
 			resolution = "1080p"
 		}
+		if model == "MiniMax-H3" {
+			resolution = "768p"
+		}
 	}
 	audioValue := gjson.GetBytes(requestBody, "audio")
 	audio := audioValue.Bool()
@@ -263,6 +433,9 @@ func ParseFZYVideoPriceSnapshot(body []byte, model string, requestBody []byte) (
 		return empty, errors.New("kling Omni reference video does not support audio generation")
 	}
 	for _, scene := range entry.BillingRule.ScenarioRules {
+		if model == "tencent-mps-superres" && fzySceneFrameRate(scene) != fzyRequestFrameRate(requestBody) {
+			continue
+		}
 		if model == "doubao-seedance-1.5-pro" {
 			if !strings.Contains(scene.SceneName, "在线推理") {
 				continue
@@ -297,6 +470,16 @@ func ParseFZYVideoPriceSnapshot(body []byte, model string, requestBody []byte) (
 			return empty, err
 		}
 		price.Resolution = resolution
+		if model == "MiniMax-H3" {
+			price.ExpectedInputVideo = inputVideo
+			price.InputImageCount = fzyRequestImageCount(requestBody)
+		}
+		if resolution == "2k" {
+			price.Resolution = "2K"
+		}
+		if resolution == "768p" {
+			price.Resolution = "768P"
+		}
 		if resolution == "4k" {
 			price.Resolution = "4K"
 		}
@@ -333,6 +516,12 @@ func ParseFZYVideoCatalog(body []byte, model string) (map[string]any, error) {
 		modes[price.BillingMode] = true
 		inputVideo, audio := fzyScenarioInputs(model, scene)
 		row := map[string]any{"scene_code": price.SceneCode, "scene_name": price.SceneName, "resolutions": sceneResolutions, "billing_mode": price.BillingMode, "currency": price.Currency, "input_video": inputVideo, "audio": audio, "provider_discount_rate": price.DiscountRate, "markup_rate": price.MarkupRate}
+		if len(price.Surcharges) > 0 {
+			row["surcharges"] = price.Surcharges
+		}
+		if price.FrameRate > 0 {
+			row["frame_rate"] = price.FrameRate
+		}
 		official, _ := decimal.NewFromString(price.OfficialPerMillion)
 		if price.IsPerSecond() {
 			official, _ = decimal.NewFromString(price.OfficialPerSecond)
@@ -351,7 +540,7 @@ func ParseFZYVideoCatalog(body []byte, model string) (map[string]any, error) {
 		return nil, errors.New("provider video scenarios are unsupported")
 	}
 	ordered := []string{}
-	for _, resolution := range []string{"480p", "720p", "1080p", "4K"} {
+	for _, resolution := range []string{"480p", "720p", "768P", "1080p", "2K", "4K"} {
 		if resolutions[resolution] {
 			ordered = append(ordered, resolution)
 		}
@@ -488,7 +677,7 @@ func ParseFZYVideoCatalogBundle(payload []byte, selectedModel string) (map[strin
 	available := []string{}
 	models := []map[string]any{}
 	result := map[string]any{"source": fzyPricingSource, "fetched_at": time.Now().UTC().Format(time.RFC3339)}
-	for _, model := range []string{"doubao-seedance-1.5-pro", "doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini", "doubao-seedance-2.5", "kling-v3", "kling-v3-omni"} {
+	for _, model := range []string{"doubao-seedance-1.5-pro", "doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini", "doubao-seedance-2.5", "kling-v3", "kling-v3-omni", "MiniMax-H3", "tencent-mps-superres"} {
 		catalog, err := ParseFZYVideoCatalog(payload, model)
 		if err != nil {
 			continue
@@ -506,4 +695,50 @@ func ParseFZYVideoCatalogBundle(payload []byte, selectedModel string) (map[strin
 	}
 	result["available_models"], result["models"] = available, models
 	return result, nil
+}
+
+func fzySceneFrameRate(scene fzyMarketplaceScenario) int {
+	for _, fps := range []int{30, 60, 120} {
+		if strings.HasSuffix(scene.SceneCode, "-"+strconv.Itoa(fps)+"fps") {
+			return fps
+		}
+	}
+	return 0
+}
+func fzyRequestFrameRate(body []byte) int {
+	fps := gjson.GetBytes(body, "frameRate")
+	if !fps.Exists() {
+		fps = gjson.GetBytes(body, "frame_rate")
+	}
+	return int(fps.Int())
+}
+func fzyRequestImageCount(body []byte) int {
+	count := 0
+	for _, item := range gjson.GetBytes(body, "content").Array() {
+		if item.Get("type").String() == "image_url" {
+			count++
+		}
+	}
+	if count > 0 {
+		return count
+	}
+	for _, field := range []string{"start_image_url", "end_image_url"} {
+		if strings.TrimSpace(gjson.GetBytes(body, field).String()) != "" {
+			count++
+		}
+	}
+	for _, item := range gjson.GetBytes(body, "reference_images").Array() {
+		v := strings.ToLower(strings.TrimSpace(item.String()))
+		if !strings.HasPrefix(v, "video:") && !strings.HasPrefix(v, "audio:") {
+			count++
+		}
+	}
+	value := gjson.GetBytes(body, "input_image_count")
+	if !value.Exists() {
+		value = gjson.GetBytes(body, "inputImageCount")
+	}
+	if value := int(value.Int()); value > count {
+		count = value
+	}
+	return count
 }

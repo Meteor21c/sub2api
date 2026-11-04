@@ -413,6 +413,7 @@ test('FZYinghe exposes only authorized models and checks model-specific duration
     assert.deepEqual((await models.json()).data.map((item) => item.id).sort(), [
       'doubao-seedance-1.5-pro', 'doubao-seedance-2.0', 'doubao-seedance-2.0-fast',
       'doubao-seedance-2.0-mini', 'doubao-seedance-2.5', 'kling-v3', 'kling-v3-omni',
+      'MiniMax-H3', 'tencent-mps-superres',
     ].sort())
     for (const [model, duration, error] of [
       ['cheap-seedance-2.0', 5, /unsupported FZYinghe video model/],
@@ -674,4 +675,58 @@ test('concurrent image calls are bounded before a second paid request is submitt
     assert.equal(calls, 1)
     release(); await first
   } finally { release(); await stopBridge(bridge); await stopMock(mock) }
+})
+
+test('MPS adapter submits a source video without prompt and preserves actual token usage', async () => {
+  const requests = []
+  const mock = await startMock(async (req, res) => {
+    requests.push({ path: req.url, method: req.method, body: JSON.parse((await readBody(req)).toString() || '{}') })
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(req.method === 'POST'
+      ? { data: { taskId: 'mps-enhance-task', status: 'pending' } }
+      : { data: { taskId: 'mps-enhance-task', status: 'SUCCESS', resultUrl: 'https://8.8.8.8/result.mp4', usage: { output_tokens: 123456, total_tokens: 123456 } } }))
+  })
+  const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
+  try {
+    const response = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos`, {
+      method: 'POST', headers: { Authorization: 'Bearer test-provider', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'tencent-mps-superres', url: 'https://8.8.8.8/source.mp4', resolution: '2K', frameRate: 60, sourceDurationSeconds: 7.5 }),
+    })
+    assert.equal(response.status, 200)
+    assert.equal((await response.json()).id, 'mps-enhance-task')
+    assert.equal(requests[0].path, '/video/generation/passthrough/tasks')
+    assert.deepEqual(requests[0].body, { model: 'tencent-mps-superres', url: 'https://8.8.8.8/source.mp4', resolution: '2k', frameRate: 60, sourceDurationSeconds: 7.5 })
+    const status = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/mps-enhance-task`, { headers: { Authorization: 'Bearer test-provider', 'X-Meteor-Billing-Only': '1' } })
+    const body = await status.json()
+    assert.equal(body.status, 'done')
+    assert.equal(body.provider_token_usage.completion_tokens, 123456)
+    assert.equal(requests[1].path, '/video/generation/tasks/mps-enhance-task')
+  } finally { await stopBridge(bridge); await stopMock(mock) }
+})
+
+test('H3 adapter preserves extra-material usage and rejects mixed input modes before provider', async () => {
+  const requests = []
+  const mock = await startMock(async (req, res) => {
+    requests.push({ path: req.url, method: req.method, body: JSON.parse((await readBody(req)).toString() || '{}') })
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(req.method === 'POST' ? { task_id: 'h3-demo' } : { task: { id: 'h3-demo', status: 'succeeded', content: { url: 'https://8.8.8.8/result.mp4' }, duration: 5, usage: { output_seconds: 5, input_seconds: 2.5, input_image_count: 7 } } }))
+  })
+  const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
+  const headers = { Authorization: 'Bearer test-provider', 'Content-Type': 'application/json', 'Idempotency-Key': 'h3-once' }
+  try {
+    const create = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos`, { method: 'POST', headers, body: JSON.stringify({ model: 'MiniMax-H3', prompt: 'a calm landscape', duration: 5, resolution: '2K', reference_images: Array.from({ length: 7 }, (_, i) => `https://8.8.8.8/image-${i}.png`) }) })
+    assert.equal(create.status, 200)
+    assert.equal((await create.json()).id, 'h3-demo')
+    assert.equal(requests[0].path, '/video/generation/tasks')
+    assert.equal(requests[0].body.resolution, '2K')
+    assert.equal(requests[0].body.content.length, 8)
+    assert.equal(requests[0].body.content[1].role, 'reference_image')
+    const response = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/h3-demo`, { headers: { Authorization: 'Bearer test-provider', 'X-Meteor-Billing-Only': '1' } })
+    const body = await response.json()
+    assert.equal(body.status, 'done')
+    assert.deepEqual(body.provider_video_usage, { input_seconds: 2.5, output_seconds: 5, input_image_count: 7 })
+    const bad = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos`, { method: 'POST', headers, body: JSON.stringify({ model: 'MiniMax-H3', prompt: 'a calm landscape', resolution: '768P', duration: 5, start_image_url: 'https://8.8.8.8/start.png', reference_images: ['https://8.8.8.8/ref.png'] }) })
+    assert.equal(bad.status, 400)
+    assert.equal(requests.length, 2, 'invalid mixed mode must not create paid tasks')
+  } finally { await stopBridge(bridge); await stopMock(mock) }
 })

@@ -826,6 +826,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		VideoResolution:      usage.VideoResolution,
 		VideoDurationSeconds: usage.VideoDurationSeconds,
 		VideoTaskFailed:      usage.VideoTaskFailed,
+		FZYVideoUsage:        ParseFZYVideoProviderUsage(respBody),
 	}, nil
 }
 
@@ -969,6 +970,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		result.VideoDurationSeconds = billed.VideoDurationSeconds
 		if IsFZYVideoBridgeAccount(account) {
 			result.VideoDurationSeconds = fzyVideoStatusDuration(statusBody)
+			result.FZYVideoUsage = ParseFZYVideoProviderUsage(statusBody)
 		}
 	}
 	return result, nil

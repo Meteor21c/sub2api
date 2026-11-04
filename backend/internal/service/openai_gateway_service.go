@@ -287,8 +287,9 @@ type OpenAIForwardResult struct {
 	ImageSizeSource    string
 	ImageSizeBreakdown map[string]int
 	VideoCount         int
-	// FZYVideoBill is a create-time, key-specific token tariff reservation.
-	// It is only populated for the FZY Doubao bridge, never for xAI or Kling.
+	// FZYVideoBill freezes the FZY key-specific tariff when an async task is
+	// created; FZYVideoUsage contains actual material usage reported on completion.
+	FZYVideoUsage   *FZYVideoProviderUsage
 	FZYVideoBill    *FZYVideoBillingJob
 	VideoTaskFailed bool
 	VideoResolution string
