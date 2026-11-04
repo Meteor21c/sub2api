@@ -36,6 +36,8 @@ type UsageBillingCommand struct {
 	CacheReadTokens     int
 	ImageCount          int
 	MediaType           string
+	// Accounting metadata only, excluded from the existing idempotency fingerprint.
+	FZYVideoActualSeconds float64
 
 	BalanceCost         float64
 	SubscriptionCost    float64

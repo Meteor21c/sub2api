@@ -27,22 +27,26 @@ var fzyVideoMarkup = decimal.RequireFromString("1.15")
 // The site's explicitly chosen currency policy maps CNY 1 to USD balance 1.
 // Empty BillingMode remains token for reservations created before this change.
 type FZYVideoPriceSnapshot struct {
-	Model              string              `json:"model"`
-	SceneCode          string              `json:"scene_code"`
-	SceneName          string              `json:"scene_name"`
-	Currency           string              `json:"currency"`
-	BillingMode        string              `json:"billing_mode,omitempty"`
-	OfficialPerMillion string              `json:"official_per_million"`
-	DiscountRate       string              `json:"discount_rate"`
-	MarkupRate         string              `json:"markup_rate"`
-	SalePerMillion     string              `json:"sale_per_million"`
-	OfficialPerSecond  string              `json:"official_per_second,omitempty"`
-	SalePerSecond      string              `json:"sale_per_second,omitempty"`
-	Resolution         string              `json:"resolution,omitempty"`
-	FrameRate          int                 `json:"frame_rate,omitempty"`
-	Surcharges         []FZYVideoSurcharge `json:"surcharges,omitempty"`
-	ExpectedInputVideo bool                `json:"expected_input_video,omitempty"`
-	InputImageCount    int                 `json:"input_image_count,omitempty"`
+	Model                 string              `json:"model"`
+	SceneCode             string              `json:"scene_code"`
+	SceneName             string              `json:"scene_name"`
+	Currency              string              `json:"currency"`
+	BillingMode           string              `json:"billing_mode,omitempty"`
+	OfficialPerMillion    string              `json:"official_per_million"`
+	DiscountRate          string              `json:"discount_rate"`
+	MarkupRate            string              `json:"markup_rate"`
+	SalePerMillion        string              `json:"sale_per_million"`
+	OfficialPerSecond     string              `json:"official_per_second,omitempty"`
+	SalePerSecond         string              `json:"sale_per_second,omitempty"`
+	Resolution            string              `json:"resolution,omitempty"`
+	FrameRate             int                 `json:"frame_rate,omitempty"`
+	Surcharges            []FZYVideoSurcharge `json:"surcharges,omitempty"`
+	ExpectedInputVideo    bool                `json:"expected_input_video,omitempty"`
+	InputImageCount       int                 `json:"input_image_count,omitempty"`
+	AspectRatio           string              `json:"aspect_ratio,omitempty"`
+	ModelSelectedDuration bool                `json:"model_selected_duration,omitempty"`
+	InputVideoSeconds     float64             `json:"input_video_seconds,omitempty"`
+	Audio                 *bool               `json:"output_audio,omitempty"`
 }
 
 // FZYVideoSurcharge freezes only documented, independently reported usage metrics.

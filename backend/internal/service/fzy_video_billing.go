@@ -30,6 +30,7 @@ type FZYVideoBillingJob struct {
 	DurationSeconds          int
 	EstimatedSurchargeAmount float64
 	CreatedAt                time.Time
+	Estimate                 FZYVideoEstimate
 }
 
 func (j *FZYVideoBillingJob) PricingPreview() map[string]any {
@@ -50,6 +51,10 @@ func (j *FZYVideoBillingJob) PricingPreview() map[string]any {
 		"sale_rate_to_official": discount.Mul(markup).String(), "precharge_amount": j.HoldAmount,
 		"balance_conversion": "1 CNY = 1 USD balance unit", "duration": j.DurationSeconds,
 		"estimated_surcharge_amount": j.EstimatedSurchargeAmount,
+	}
+	row["estimate_source"], row["estimate_samples"] = j.Estimate.Source, j.Estimate.Samples
+	if j.Estimate.Amount != nil {
+		row["estimated_amount"], row["estimate_low"], row["estimate_high"] = j.Estimate.Amount, j.Estimate.Low, j.Estimate.High
 	}
 	if len(j.Price.Surcharges) > 0 {
 		row["surcharges"] = j.Price.Surcharges
@@ -110,8 +115,8 @@ func (s *OpenAIGatewayService) FZYVideoBillingRepository() (FZYVideoBillingRepos
 	return repo, nil
 }
 
-// PrepareFZYVideoBilling freezes the provider tariff and current per-second
-// quote. The latter is only a refundable reservation, never the final charge.
+// PrepareFZYVideoBilling freezes the tariff and applies the same bounded
+// reservation policy to previews and paid submissions.
 func (s *OpenAIGatewayService) PrepareFZYVideoBilling(ctx context.Context, account *Account, apiKey *APIKey, user *User, model string, body []byte) (*FZYVideoBillingJob, error) {
 	if !IsFZYPricedVideoAccount(account, model) || apiKey == nil || apiKey.Group == nil || user == nil || apiKey.Group.IsSubscriptionType() || (s.cfg != nil && s.cfg.RunMode == config.RunModeSimple) {
 		return nil, ErrFZYVideoBillingUnavailable
@@ -128,10 +133,16 @@ func (s *OpenAIGatewayService) PrepareFZYVideoBilling(ctx context.Context, accou
 	if err != nil {
 		return nil, err
 	}
-	resolution := strings.TrimSpace(gjson.GetBytes(body, "resolution").String())
-	if resolution == "" {
-		resolution = "720p"
+	price.AspectRatio = fzyVideoAspectRatio(model, body)
+	price.ModelSelectedDuration = gjson.GetBytes(body, "duration").Int() == -1
+	price.ExpectedInputVideo = fzyRequestHasInputVideo(body)
+	price.InputImageCount = fzyRequestImageCount(body)
+	audio := gjson.GetBytes(body, "audio")
+	audioValue := audio.Bool()
+	if !audio.Exists() {
+		audioValue = model != "kling-v3" && model != "kling-v3-omni"
 	}
+	price.Audio = &audioValue
 	var hold, estimatedSurcharge float64
 	if price.Model == "MiniMax-H3" {
 		inputValue := gjson.GetBytes(body, "input_video_seconds")
@@ -139,6 +150,7 @@ func (s *OpenAIGatewayService) PrepareFZYVideoBilling(ctx context.Context, accou
 			inputValue = gjson.GetBytes(body, "inputVideoSeconds")
 		}
 		inputSeconds := inputValue.Float()
+		price.InputVideoSeconds = inputSeconds
 		images := fzyRequestImageCount(body)
 		if math.IsNaN(inputSeconds) || math.IsInf(inputSeconds, 0) || inputSeconds < 0 || inputSeconds > 86400 || images > 10 {
 			return nil, errors.New("video input estimate is unsupported")
@@ -153,31 +165,26 @@ func (s *OpenAIGatewayService) PrepareFZYVideoBilling(ctx context.Context, accou
 		base, _ := decimal.NewFromString(price.SalePerSecond)
 		estimatedSurcharge = sale.Sub(base.Mul(decimal.NewFromInt(int64(duration)))).Round(UsageBillingMonetaryScale).InexactFloat64()
 	} else if price.Model == "tencent-mps-superres" {
-		// The provider reports actual tokens only on completion; this is a budget hold, never fabricated usage.
-		hold = 0.2
+		hold = defaultFZYVideoHold(model)
 	} else if price.IsPerSecond() {
 		hold, err = price.CostForUsage(0, duration)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		// Token output is unknown until completion. Retain the existing refundable
-		// estimate; final price always uses the provider snapshot without group rates.
-		unitPrice := s.billingService.getVideoUnitPrice(model, resolution, videoPriceConfigFromAPIKey(apiKey))
-		groupMultiplier := s.ResolveUserGroupRateMultiplier(ctx, user.ID, apiKey.Group.ID, apiKey.Group.RateMultiplier)
-		multiplier := resolveVideoRateMultiplier(apiKey, groupMultiplier)
-		if unitPrice <= 0 || multiplier < 0 {
-			return nil, errors.New("video reservation price is unavailable")
-		}
-		hold = decimal.NewFromFloat(unitPrice).Mul(decimal.NewFromInt(int64(duration))).Mul(decimal.NewFromFloat(multiplier)).Round(UsageBillingMonetaryScale).InexactFloat64()
+		hold = defaultFZYVideoHold(model)
 	}
 	if hold <= 0 {
 		return nil, errors.New("video reservation amount is zero")
 	}
-	return &FZYVideoBillingJob{
+	job := &FZYVideoBillingJob{
 		ID: uuid.NewString(), UserID: user.ID, APIKeyID: apiKey.ID, AccountID: account.ID,
 		Price: price, HoldAmount: hold, EstimatedSurchargeAmount: estimatedSurcharge, DurationSeconds: duration, Status: "reserved", CreatedAt: time.Now().UTC(),
-	}, nil
+	}
+	if err := s.applyFZYVideoEstimate(ctx, job); err != nil {
+		return nil, err
+	}
+	return job, nil
 }
 
 // A model-selected duration is already accepted by the bridge for Seedance.
@@ -330,6 +337,12 @@ func (s *OpenAIGatewayService) applyFZYVideoUsageBilling(ctx context.Context, re
 		cmd.AccountQuotaCost = providerCost * params.AccountRateMultiplier
 	}
 	cmd.RequestFingerprint = ""
+	// Store only verified provider duration; requested duration remains separate.
+	if usage != nil && fzyValidSeconds(usage.OutputSeconds) && *usage.OutputSeconds > 0 {
+		cmd.FZYVideoActualSeconds = *usage.OutputSeconds
+	} else if durationSeconds > 0 && durationSeconds <= 86400 {
+		cmd.FZYVideoActualSeconds = float64(durationSeconds)
+	}
 	cmd.Normalize()
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()

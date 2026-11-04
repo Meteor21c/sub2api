@@ -104,9 +104,9 @@ func TestFZYVideoSecondBillingPersistsTariffAndSettlesWithoutTokens(t *testing.T
 	account := mustCreateAccount(t, client, &service.Account{Name: "kling-" + uuid.NewString(), Platform: service.PlatformGrok, Type: service.AccountTypeAPIKey})
 	key := mustCreateApiKey(t, client, &service.APIKey{UserID: user.ID, GroupID: &group.ID, Key: "sk-kling-" + uuid.NewString()})
 	price := service.FZYVideoPriceSnapshot{Model: "kling-v3-omni", SceneCode: "noaudio-4k", SceneName: "无参考视频 无声 4K", Currency: "CNY", BillingMode: "second", OfficialPerMillion: "0", SalePerMillion: "0", OfficialPerSecond: "3", SalePerSecond: "2.2425", DiscountRate: "0.65", MarkupRate: "1.15", Resolution: "4K"}
-	job := &service.FZYVideoBillingJob{ID: uuid.NewString(), UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID, Price: price, DurationSeconds: 15, HoldAmount: 33.6375}
+	job := &service.FZYVideoBillingJob{ID: uuid.NewString(), UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID, Price: price, DurationSeconds: 15, HoldAmount: 5}
 	require.NoError(t, repo.ReserveFZYVideo(ctx, job), "the new migration must allow zero per-million prices for a seconds tariff")
-	assertFZYVideoBalance(t, ctx, user.ID, 66.3625, 33.6375)
+	assertFZYVideoBalance(t, ctx, user.ID, 95, 5)
 	taskID := "kling-task-" + job.ID
 	require.NoError(t, repo.BindFZYVideo(ctx, job.ID, taskID))
 	loaded, err := repo.GetFZYVideoByTask(ctx, taskID, user.ID, key.ID, account.ID)

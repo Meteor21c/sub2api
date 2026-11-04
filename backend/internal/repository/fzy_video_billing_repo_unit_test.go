@@ -95,7 +95,7 @@ func TestFZYVideoSettlementRefundsDifferenceAndIsIdempotent(t *testing.T) {
 	repo := &usageBillingRepository{db: db}
 	cmd := &service.UsageBillingCommand{
 		RequestID: "grok-video:fzy-task", UserID: 42, APIKeyID: 7, AccountID: 114,
-		BalanceCost: 0.1, OutputTokens: 10000, Model: "doubao-seedance-2.0-mini",
+		BalanceCost: 0.1, OutputTokens: 10000, Model: "doubao-seedance-2.0-mini", FZYVideoActualSeconds: 4.25,
 	}
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT user_id,api_key_id,account_id,hold_amount,status`).
@@ -104,7 +104,7 @@ func TestFZYVideoSettlementRefundsDifferenceAndIsIdempotent(t *testing.T) {
 	mock.ExpectQuery(`SELECT request_fingerprint`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(`UPDATE users SET balance=balance\+`).WithArgs(0.2, 0.1, int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(10.1))
-	mock.ExpectExec(`UPDATE fzy_video_billing_jobs SET status='settled'`).WithArgs("reservation-1", 0.1, 10000).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE fzy_video_billing_jobs SET status='settled'`).WithArgs("reservation-1", 0.1, 10000, 4.25).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	result, err := repo.SettleFZYVideo(ctx, "reservation-1", 10000, 0.1, cmd)
 	require.NoError(t, err)
@@ -159,7 +159,7 @@ func TestFZYVideoSecondSettlementAcceptsZeroTokensAndIsIdempotent(t *testing.T) 
 	mock.ExpectQuery(`INSERT INTO usage_billing_dedup`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectQuery(`SELECT request_fingerprint`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(`UPDATE users SET balance=balance\+`).WithArgs(2.2425, 2.2425, int64(42)).WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(7.7575))
-	mock.ExpectExec(`UPDATE fzy_video_billing_jobs SET status='settled'`).WithArgs("second-1", 2.2425, 0).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE fzy_video_billing_jobs SET status='settled'`).WithArgs("second-1", 2.2425, 0, nil).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	result, err := repo.SettleFZYVideo(ctx, "second-1", 0, 2.2425, cmd)
 	require.NoError(t, err)

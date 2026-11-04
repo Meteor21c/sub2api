@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 func (r *usageBillingRepository) ReserveFZYVideo(ctx context.Context, job *service.FZYVideoBillingJob) (err error) {
-	if r == nil || r.db == nil || job == nil || job.ID == "" || job.HoldAmount <= 0 {
+	if r == nil || r.db == nil || job == nil || job.ID == "" || math.IsNaN(job.HoldAmount) || job.HoldAmount <= 0 || job.HoldAmount > service.FZYVideoMaxHold {
 		return service.ErrFZYVideoBillingUnavailable
 	}
 	price := job.Price
@@ -304,8 +305,12 @@ func (r *usageBillingRepository) SettleFZYVideo(ctx context.Context, id string, 
 	if err := r.applyUsageBillingEffects(ctx, tx, &effects, result); err != nil {
 		return nil, err
 	}
+	var actualSeconds any
+	if cmd.FZYVideoActualSeconds > 0 && cmd.FZYVideoActualSeconds <= 86400 {
+		actualSeconds = cmd.FZYVideoActualSeconds
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE fzy_video_billing_jobs SET status='settled',actual_amount=$2,
-		output_tokens=$3,updated_at=NOW(),settled_at=NOW() WHERE id=$1`, id, amount, outputTokens); err != nil {
+		output_tokens=$3,actual_duration_seconds=$4,updated_at=NOW(),settled_at=NOW() WHERE id=$1`, id, amount, outputTokens, actualSeconds); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

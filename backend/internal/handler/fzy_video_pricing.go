@@ -33,6 +33,16 @@ func (h *OpenAIGatewayHandler) FZYVideoPricing(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Provider pricing is available only for FZY video models")
 		return
 	}
+	if c.Query("history") == "true" {
+		rows, err := h.gatewayService.FZYVideoCostHistory(c.Request.Context(), apiKey.User.ID, model)
+		if err != nil {
+			h.errorResponse(c, http.StatusServiceUnavailable, "video_history_unavailable", "Video cost history is temporarily unavailable")
+			return
+		}
+		c.Header("Cache-Control", "private, no-store")
+		c.JSON(http.StatusOK, gin.H{"history": rows})
+		return
+	}
 	resolutionDefault := "720p"
 	if model == "kling-v3" || model == "kling-v3-omni" {
 		resolutionDefault = "1080p"
@@ -68,6 +78,7 @@ func (h *OpenAIGatewayHandler) FZYVideoPricing(c *gin.Context) {
 	audio := c.DefaultQuery("audio", audioDefault) != "false"
 	inputVideo := c.Query("input_video") == "true"
 	request := map[string]any{"model": model, "resolution": resolution, "duration": duration, "audio": audio}
+	request["aspect_ratio"] = c.Query("aspect_ratio")
 	if inputVideo {
 		request["reference_images"] = []string{"https://example.invalid/reference.mp4"}
 	}
