@@ -688,13 +688,15 @@ async function storeOutput(buffer, contentType, owner) {
   })
 }
 
-async function storeRemoteVideo(sourceURL, owner) {
+async function storeRemoteVideo(sourceURL, owner, outputExpiresAt = 0) {
   const safe = await checkedPublicURL(sourceURL)
   if (!safe) throw new Error('provider returned an invalid video URL')
   return withStorageLock(async () => {
     ensureStorageCapacity(await storageUsage(), owner, 1)
     const id = randomId()
-    const exp = Math.floor(Date.now() / 1000) + OUTPUT_TTL
+    const now = Math.floor(Date.now() / 1000)
+    const exp = outputExpiresAt > 0 ? Math.min(now + OUTPUT_TTL, outputExpiresAt) : now + OUTPUT_TTL
+    if (exp <= now) throw new Error('视频下载已到期，请使用已保存的本地文件')
     const meta = { id, kind: 'remote-video', owner, contentType: 'video/mp4', sizeBytes: 1, expiresAt: exp, sourceURL: safe }
     await writeJSONAtomic(path.join(ASSET_DIR, `${id}.json`), meta)
     const linkExpiresAt = Math.min(exp, Math.floor(Date.now() / 1000) + DELIVERY_URL_TTL)
@@ -704,6 +706,8 @@ async function storeRemoteVideo(sourceURL, owner) {
 
 async function renewTaskDelivery(taskMeta, sourceURL, owner) {
   const now = Math.floor(Date.now() / 1000)
+  const outputExpiresAt = taskMeta.model === 'tencent-mps-superres' ? Number(taskMeta.outputExpiresAt) : 0
+  if (taskMeta.model === 'tencent-mps-superres' && (!Number.isSafeInteger(outputExpiresAt) || outputExpiresAt <= now)) throw new Error('视频下载已到期，请使用已保存的本地文件')
   let meta = null
   try {
     const url = new URL(String(taskMeta?.deliveryURL || ''))
@@ -714,6 +718,10 @@ async function renewTaskDelivery(taskMeta, sourceURL, owner) {
     }
   } catch { /* An old task can safely acquire new signed metadata. */ }
   if (meta) {
+    if (outputExpiresAt > 0 && meta.expiresAt > outputExpiresAt) {
+      meta.expiresAt = outputExpiresAt
+      await writeJSONAtomic(path.join(ASSET_DIR, `${meta.id}.json`), meta)
+    }
     const expiresAt = Math.min(meta.expiresAt, now + DELIVERY_URL_TTL)
     if (!taskMeta.deliveryURL || Number(taskMeta.deliveryExpiresAt) <= now + DELIVERY_RENEW_WINDOW) {
       taskMeta.deliveryURL = assetURL(meta.id, expiresAt, 'read')
@@ -721,10 +729,54 @@ async function renewTaskDelivery(taskMeta, sourceURL, owner) {
     }
     return { taskMeta, meta }
   }
-  const delivery = await storeRemoteVideo(sourceURL, owner)
+  const delivery = await storeRemoteVideo(sourceURL, owner, outputExpiresAt)
   taskMeta.deliveryURL = delivery.url
   taskMeta.deliveryExpiresAt = delivery.expiresAt
   return { taskMeta, meta: await readMeta(delivery.id) }
+}
+
+async function freezeMpsOutputExpiry(taskID, taskMeta, model, token, tokenUsage, duration) {
+  if (model !== 'tencent-mps-superres') return taskMeta
+  return withStorageLock(async () => {
+    let current = taskMeta || {}
+    try { current = JSON.parse(await fs.readFile(taskMetaPath(taskID), 'utf8')) } catch { /* First completion writes the durable deadline. */ }
+    if (current.owner && current.owner !== ownerHash(token)) throw new Error('视频任务不存在')
+    let changed = false
+    if (!Number.isSafeInteger(current.outputExpiresAt) || current.outputExpiresAt <= 0) {
+      const now = Math.floor(Date.now() / 1000)
+      current = { ...current, id: taskID, model, owner: ownerHash(token), completedAt: now * 1000, outputExpiresAt: now + OUTPUT_TTL }
+      changed = true
+    }
+    if (tokenUsage?.completion_tokens > 0 && !(current.completedTokenUsage?.completion_tokens > 0)) {
+      current.completedTokenUsage = tokenUsage
+      changed = true
+    }
+    if (duration > 0 && !current.completedDuration) { current.completedDuration = duration; changed = true }
+    if (changed) await writeJSONAtomic(taskMetaPath(taskID), current)
+    return current
+  })
+}
+
+function expiredMpsStatus(taskID, taskMeta, billingOnly) {
+  // Download expiry is not provider failure. Keep real observed usage for a
+  // late billing reconciler; an absent token count remains absent, never zero.
+  return { id: taskID, status: 'done', model: 'tencent-mps-superres', result_expired: true,
+    expires_at: new Date(taskMeta.outputExpiresAt * 1000).toISOString(),
+    video: { ...(billingOnly ? { url: `/v1/videos/${encodeURIComponent(taskID)}/content` } : {}), ...(taskMeta.completedDuration ? { duration: taskMeta.completedDuration } : {}) },
+    ...(taskMeta.completedTokenUsage ? { provider_token_usage: taskMeta.completedTokenUsage } : {}) }
+}
+
+async function persistTaskDelivery(taskID, taskMeta) {
+  if (taskMeta.model !== 'tencent-mps-superres') return writeJSONAtomic(taskMetaPath(taskID), taskMeta)
+  return withStorageLock(async () => {
+    let current = {}
+    try { current = JSON.parse(await fs.readFile(taskMetaPath(taskID), 'utf8')) } catch { /* The completion checkpoint already supplied a deadline. */ }
+    const merged = { ...current, ...taskMeta,
+      completedAt: current.completedAt || taskMeta.completedAt,
+      outputExpiresAt: current.outputExpiresAt || taskMeta.outputExpiresAt,
+      ...(current.completedTokenUsage?.completion_tokens > 0 ? { completedTokenUsage: current.completedTokenUsage } : {}) }
+    await writeJSONAtomic(taskMetaPath(taskID), merged)
+  })
 }
 
 async function upstreamJSON(pathname, token, options = {}) {
@@ -942,7 +994,7 @@ async function getVideo(token, taskID) {
           if (asset?.kind === 'remote-video' && asset.expiresAt > now) {
             meta.deliveryExpiresAt = Math.min(asset.expiresAt, now + DELIVERY_URL_TTL)
             meta.deliveryURL = assetURL(id, meta.deliveryExpiresAt, 'read')
-            await writeJSONAtomic(taskMetaPath(taskID), meta)
+            await persistTaskDelivery(taskID, meta)
             url = new URL(meta.deliveryURL)
           }
         }
@@ -1334,6 +1386,11 @@ async function handleFzyProvider(req, res, parsed) {
     // compatibility for tasks created before that field existed.
     if (taskMeta?.owner && taskMeta.owner !== ownerHash(token)) { text(res, 404, 'Not found'); return }
     const model = normalizeModel(libraryJob?.model || taskMeta?.model || 'doubao-seedance-2.0-fast')
+    if (model === 'tencent-mps-superres' && Number.isSafeInteger(taskMeta?.outputExpiresAt) && taskMeta.outputExpiresAt <= Math.floor(Date.now() / 1000)) {
+      if (statusMatch[2] === '/content') json(res, 410, { error: { message: '增强视频下载已到期，请使用已保存的本地文件' } })
+      else json(res, 200, expiredMpsStatus(taskID, taskMeta, req.headers['x-meteor-billing-only'] === '1'))
+      return
+    }
     const providerTaskID = libraryJob?.upstreamTaskID || taskID
     const upstream = await fetch(fzyTaskEndpoint(model, providerTaskID), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(120000) })
     const buffer = await readResponseLimited(upstream, MAX_CONTROL_JSON)
@@ -1350,6 +1407,14 @@ async function handleFzyProvider(req, res, parsed) {
     const providerUsage = videoProviderUsage(raw)
     const success = ['success', 'succeeded', 'succeed', 'completed', 'done'].includes(String(task.status).toLowerCase()) || Boolean(task.resultURL)
     const failure = ['failed', 'failure', 'expired', 'cancelled', 'canceled', 'error'].includes(String(task.status).toLowerCase())
+    if (success && !failure && model === 'tencent-mps-superres') taskMeta = await freezeMpsOutputExpiry(taskID, taskMeta, model, token, tokenUsage, task.duration)
+    const resultExpired = model === 'tencent-mps-superres' && Number(taskMeta?.outputExpiresAt) > 0 && Number(taskMeta.outputExpiresAt) <= Math.floor(Date.now() / 1000)
+    const outputExpiry = model === 'tencent-mps-superres' && taskMeta?.outputExpiresAt ? { expires_at: new Date(taskMeta.outputExpiresAt * 1000).toISOString(), ...(resultExpired ? { result_expired: true } : {}) } : {}
+    if (resultExpired) {
+      if (statusMatch[2] === '/content') json(res, 410, { error: { message: '增强视频下载已到期，请使用已保存的本地文件' } })
+      else json(res, 200, expiredMpsStatus(taskID, taskMeta, req.headers['x-meteor-billing-only'] === '1'))
+      return
+    }
     if (libraryJob && (success || failure)) {
       try { await fzyAssetQueue.observeTerminal(taskID, token, libraryOwner, failure ? 'failed' : 'done') } catch {
         // A failed local checkpoint must not change a known provider outcome
@@ -1358,6 +1423,7 @@ async function handleFzyProvider(req, res, parsed) {
       }
     }
     if (statusMatch[2] === '/content') {
+      if (resultExpired) { json(res, 410, { error: { message: '增强视频下载已到期，请使用已保存的本地文件' } }); return }
       if (!success || !task.resultURL) { json(res, 409, { error: { message: 'video is not complete' } }); return }
       const resultURL = await checkedPublicURL(task.resultURL)
       if (!resultURL) { json(res, 502, { error: { message: 'provider returned an invalid video URL' } }); return }
@@ -1367,7 +1433,7 @@ async function handleFzyProvider(req, res, parsed) {
       try {
         const deliveryOwner = libraryOwner ? ownerHash(`${token}\0${libraryOwner}`) : ownerHash(token)
         const delivery = await renewTaskDelivery({ id: taskID, owner: ownerHash(token), ...(taskMeta || {}), model }, resultURL, deliveryOwner)
-        await writeJSONAtomic(taskMetaPath(taskID), delivery.taskMeta)
+        await persistTaskDelivery(taskID, delivery.taskMeta)
         const cached = delivery.meta && await videoCache.acquire(delivery.meta)
         if (cached) { await serveCachedVideo(req, res, cached); return }
         const remote = await fetchPublic(resultURL, { headers: req.headers.range ? { Range: req.headers.range } : {}, signal: lifetime.signal })
@@ -1380,19 +1446,19 @@ async function handleFzyProvider(req, res, parsed) {
     // The backend's low-frequency billing reconciler only needs status and
     // usage. Never download a potentially large video for this read-only poll.
     const billingOnly = req.headers['x-meteor-billing-only'] === '1'
-    if (success && task.resultURL && !billingOnly) {
+    if (success && task.resultURL && !billingOnly && !resultExpired) {
       try {
         const deliveryOwner = libraryOwner ? ownerHash(`${token}\0${libraryOwner}`) : ownerHash(token)
         taskMeta = { id: taskID, owner: ownerHash(token), ...(taskMeta || {}), model }
         const delivery = await renewTaskDelivery(taskMeta, task.resultURL, deliveryOwner)
-        await writeJSONAtomic(taskMetaPath(taskID), delivery.taskMeta)
+        await persistTaskDelivery(taskID, delivery.taskMeta)
         if (delivery.meta) void videoCache.ensure(delivery.meta).catch(() => {})
       } catch { log('video_delivery_store_failed', { task_id: taskID }) }
     }
-    const url = billingOnly ? task.resultURL : (Number(taskMeta?.deliveryExpiresAt) > Math.floor(Date.now() / 1000)
+    const url = !billingOnly && resultExpired ? undefined : billingOnly ? task.resultURL : (Number(taskMeta?.deliveryExpiresAt) > Math.floor(Date.now() / 1000)
       ? taskMeta.deliveryURL : `${PUBLIC_BASE_URL}/v1/videos/${encodeURIComponent(taskID)}/content`)
     const progress = libraryJob ? { ...fzyAssetProgress(libraryJob), stage: failure ? 'failed' : success ? 'completed' : 'video_generating' } : {}
-    json(res, 200, failure ? { id: taskID, status: 'failed', model, ...progress, error: { message: safeFzyError(task.reason) } } : success ? { id: taskID, status: 'done', model, ...progress, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}), ...(providerUsage ? { provider_video_usage: providerUsage } : {}) } : { id: taskID, status: 'pending', model, ...progress })
+    json(res, 200, failure ? { id: taskID, status: 'failed', model, ...progress, error: { message: safeFzyError(task.reason) } } : success ? { id: taskID, status: 'done', model, ...progress, ...outputExpiry, video: { url, duration: task.duration || undefined }, ...(tokenUsage ? { provider_token_usage: tokenUsage } : {}), ...(providerUsage ? { provider_video_usage: providerUsage } : {}) } : { id: taskID, status: 'pending', model, ...progress })
     return
   }
   if (req.method === 'POST' && (relative === '/videos/generations' || relative === '/videos')) {

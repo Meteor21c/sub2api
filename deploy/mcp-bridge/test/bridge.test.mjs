@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import http from 'node:http'
-import { mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -728,5 +728,135 @@ test('H3 adapter preserves extra-material usage and rejects mixed input modes be
     const bad = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos`, { method: 'POST', headers, body: JSON.stringify({ model: 'MiniMax-H3', prompt: 'a calm landscape', resolution: '768P', duration: 5, start_image_url: 'https://8.8.8.8/start.png', reference_images: ['https://8.8.8.8/ref.png'] }) })
     assert.equal(bad.status, 400)
     assert.equal(requests.length, 2, 'invalid mixed mode must not create paid tasks')
+  } finally { await stopBridge(bridge); await stopMock(mock) }
+})
+
+test('MPS output has one durable 24-hour deadline and expiry never releases successful usage', async () => {
+  let statusLookups = 0
+  const mock = await startMock(async (req, res) => {
+    await readBody(req)
+    if (req.method !== 'POST') statusLookups++
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(req.method === 'POST'
+      ? { data: { taskId: 'mps-fixed-expiry', status: 'pending' } }
+      : { data: { taskId: 'mps-fixed-expiry', status: 'SUCCESS', resultUrl: 'https://8.8.8.8/result.mp4', usage: { output_tokens: 123456 } } }))
+  })
+  let bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
+  const headers = { Authorization: 'Bearer test-provider', 'Content-Type': 'application/json' }
+  try {
+    const create = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos`, { method: 'POST', headers, body: JSON.stringify({ model: 'tencent-mps-superres', url: 'https://8.8.8.8/source.mp4', resolution: '1080p', frameRate: 30, sourceDurationSeconds: 5 }) })
+    assert.equal(create.status, 200)
+    const taskID = (await create.json()).id
+    const statusPath = `/provider/fzyinghe/v1/videos/${taskID}`
+    const status = async (billingOnly = false) => (await fetch(`${bridge.base}${statusPath}`, { headers: { ...headers, ...(billingOnly ? { 'X-Meteor-Billing-Only': '1' } : {}) } })).json()
+    const first = await status(true)
+    assert.equal(first.status, 'done')
+    assert.equal(first.provider_token_usage.completion_tokens, 123456)
+    const taskFile = path.join(bridge.dir, 'tasks', `${crypto.createHash('sha256').update(taskID).digest('hex')}.json`)
+    let meta = JSON.parse(await readFile(taskFile, 'utf8'))
+    assert.equal(meta.outputExpiresAt - Math.floor(meta.completedAt / 1000), 86400)
+    assert.equal(meta.completedTokenUsage.completion_tokens, 123456)
+    assert.equal(Date.parse(first.expires_at), meta.outputExpiresAt * 1000)
+    assert.deepEqual(await readdir(path.join(bridge.dir, 'assets')), [], 'billing-only completion must not download or create delivery assets')
+
+    // A renewed delivery link and a replacement expired asset inherit the same deadline.
+    meta.outputExpiresAt = Math.floor(Date.now() / 1000) + 3600
+    await writeFile(taskFile, JSON.stringify(meta))
+    const second = await status()
+    assert.equal(second.status, 'done')
+    const assetID = new URL(second.video.url).pathname.split('/')[3]
+    const assetFile = path.join(bridge.dir, 'assets', `${assetID}.json`)
+    let asset = JSON.parse(await readFile(assetFile, 'utf8'))
+    assert.equal(asset.expiresAt, meta.outputExpiresAt)
+    asset.expiresAt = Math.floor(Date.now() / 1000) - 1
+    await writeFile(assetFile, JSON.stringify(asset))
+    const replacement = await status()
+    assert.notEqual(replacement.video.url, second.video.url)
+    const replacementID = new URL(replacement.video.url).pathname.split('/')[3]
+    const replacementMeta = JSON.parse(await readFile(path.join(bridge.dir, 'assets', `${replacementID}.json`), 'utf8'))
+    assert.equal(replacementMeta.expiresAt, meta.outputExpiresAt, 'replacement delivery must never add 24 hours')
+
+    meta = JSON.parse(await readFile(taskFile, 'utf8'))
+    meta.outputExpiresAt = Math.floor(Date.now() / 1000) - 1
+    await writeFile(taskFile, JSON.stringify(meta))
+    const assetsBefore = (await readdir(path.join(bridge.dir, 'assets'))).sort()
+    const lookupsBefore = statusLookups
+    const expired = await status()
+    assert.equal(expired.status, 'done', 'download expiry must not turn paid success into a refundable failure')
+    assert.equal(expired.result_expired, true)
+    assert.equal(expired.video.url, undefined)
+    assert.equal(expired.provider_token_usage.completion_tokens, 123456)
+    const content = await fetch(`${bridge.base}${statusPath}/content`, { headers })
+    assert.equal(content.status, 410)
+    const billing = await status(true)
+    assert.equal(billing.status, 'done')
+    assert.equal(billing.result_expired, true)
+    assert.equal(billing.provider_token_usage.completion_tokens, 123456)
+    assert.equal(billing.video.url, `/v1/videos/${taskID}/content`, 'private completion marker must not expose the expired provider URL')
+    assert.equal(statusLookups, lookupsBefore, 'expired downloads must not requery a deleted or expired upstream result')
+    assert.deepEqual((await readdir(path.join(bridge.dir, 'assets'))).sort(), assetsBefore)
+    assert.equal(JSON.parse(await readFile(taskFile, 'utf8')).outputExpiresAt, meta.outputExpiresAt)
+
+    const dataDir = bridge.dir
+    await stopBridge(bridge)
+    bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base, MCP_DATA_DIR: dataDir })
+    const afterRestart = await status()
+    assert.equal(afterRestart.result_expired, true)
+    assert.equal(afterRestart.video.url, undefined)
+    assert.equal((await fetch(`${bridge.base}${statusPath}/content`, { headers })).status, 410)
+    assert.equal(JSON.parse(await readFile(taskFile, 'utf8')).outputExpiresAt, meta.outputExpiresAt)
+  } finally { await stopBridge(bridge); await stopMock(mock) }
+})
+
+test('ordinary generated videos retain their existing delivery renewal policy', async () => {
+  const mock = await startMock(async (req, res) => {
+    await readBody(req)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(req.method === 'POST' ? { id: 'h3-renewal-policy' } : { id: 'h3-renewal-policy', status: 'done', resultUrl: 'https://8.8.8.8/result.mp4', usage: { output_seconds: 5 } }))
+  })
+  const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base })
+  const headers = { Authorization: 'Bearer test-provider', 'Content-Type': 'application/json' }
+  try {
+    const create = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos`, { method: 'POST', headers, body: JSON.stringify({ model: 'MiniMax-H3', prompt: 'a calm landscape', resolution: '768P', duration: 5 }) })
+    assert.equal(create.status, 200)
+    const taskID = (await create.json()).id
+    const poll = async () => (await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/${taskID}`, { headers })).json()
+    const first = await poll()
+    const assetID = new URL(first.video.url).pathname.split('/')[3]
+    const assetFile = path.join(bridge.dir, 'assets', `${assetID}.json`)
+    const asset = JSON.parse(await readFile(assetFile, 'utf8'))
+    asset.expiresAt = Math.floor(Date.now() / 1000) - 1
+    await writeFile(assetFile, JSON.stringify(asset))
+    const next = await poll()
+    assert.equal(next.status, 'done')
+    assert.equal(next.result_expired, undefined)
+    assert.notEqual(next.video.url, first.video.url)
+    const nextID = new URL(next.video.url).pathname.split('/')[3]
+    const renewed = JSON.parse(await readFile(path.join(bridge.dir, 'assets', `${nextID}.json`), 'utf8'))
+    assert.ok(renewed.expiresAt > Date.now() / 1000 + 86000)
+  } finally { await stopBridge(bridge); await stopMock(mock) }
+})
+
+test('expired successful MPS without observed output tokens never invents usage or failure', async () => {
+  let calls = 0
+  const mock = await startMock(async (req, res) => { calls++; res.writeHead(500); res.end() })
+  const taskID = 'mps-missing-token-expiry'
+  const token = 'test-provider'
+  const bridge = await startBridge({ FZYINGHE_BASE_URL: mock.base }, async dir => {
+    await mkdir(path.join(dir, 'tasks'))
+    const meta = { id: taskID, model: 'tencent-mps-superres', owner: crypto.createHash('sha256').update(token).digest('hex'), completedAt: Date.now() - 86401000, outputExpiresAt: Math.floor(Date.now() / 1000) - 1 }
+    await writeFile(path.join(dir, 'tasks', `${crypto.createHash('sha256').update(taskID).digest('hex')}.json`), JSON.stringify(meta))
+  })
+  try {
+    for (const billingOnly of [false, true]) {
+      const response = await fetch(`${bridge.base}/provider/fzyinghe/v1/videos/${taskID}`, { headers: { Authorization: `Bearer ${token}`, ...(billingOnly ? { 'X-Meteor-Billing-Only': '1' } : {}) } })
+      assert.equal(response.status, 200)
+      const body = await response.json()
+      assert.equal(body.status, 'done')
+      assert.equal(body.result_expired, true)
+      assert.equal(body.provider_token_usage, undefined)
+      assert.equal(body.video.url, billingOnly ? `/v1/videos/${taskID}/content` : undefined)
+    }
+    assert.equal(calls, 0)
   } finally { await stopBridge(bridge); await stopMock(mock) }
 })
