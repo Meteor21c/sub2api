@@ -72,7 +72,10 @@ func TestFZYMPSUsesFrameSpecificTokenTariffAndRealTokens(t *testing.T) {
 	require.Error(t, err)
 	catalog, err := ParseFZYVideoCatalog(body, "tencent-mps-superres")
 	require.NoError(t, err)
-	rows := catalog["scenarios"].([]map[string]any)
+	rows, ok := catalog["scenarios"].([]map[string]any)
+	if !ok {
+		t.Fatal("missing pricing scenarios")
+	}
 	require.Len(t, rows, 2)
 	require.Equal(t, 30, rows[0]["frame_rate"])
 }
