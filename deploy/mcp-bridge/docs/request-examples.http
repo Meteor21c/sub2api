@@ -1,0 +1,137 @@
+# 流星创作台 MCP 请求示例
+# 将占位符替换为自己的值；不要分享含真实 Key 或签名地址的文件。
+# 第 1–6 项只查询。第 7 项申请临时上传，第 8 项写入自己的参考素材。
+# 第 9–10 项会提交付费生成；不要批量执行全部请求，也不要自动重试创建请求。
+
+@base = https://api.meteor21c.fun
+@apiKey = YOUR_METEOR_API_KEY
+@taskId = TASK_ID_FROM_CREATE
+@materialId = MATERIAL_ID_FROM_UPLOAD
+@uploadUrl = https://api.meteor21c.fun/mcp/assets/UPLOAD_ID?exp=REPLACE&op=upload&sig=REPLACE
+@resultUrl = https://api.meteor21c.fun/mcp/assets/RESULT_ID?exp=REPLACE&op=read&sig=REPLACE
+
+### 1. 初始化
+POST {{base}}/mcp
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-06-18",
+    "capabilities": {},
+    "clientInfo": {"name": "my-meteor-client", "version": "1.0.0"}
+  }
+}
+
+### 2. 获取工具和参数
+POST {{base}}/mcp
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+
+### 3. 获取当前 Key 的模型
+GET {{base}}/v1/models
+Authorization: Bearer {{apiKey}}
+
+### 4. 获取视频目录和计费场景
+GET {{base}}/v1/videos/pricing?catalog=true&model=doubao-seedance-2.0
+Authorization: Bearer {{apiKey}}
+
+### 5. 获取匹配参数的价格与预扣（参数需与实际生成一致）
+GET {{base}}/v1/videos/pricing?model=doubao-seedance-2.0&resolution=720p&duration=5&aspect_ratio=16%3A9&audio=true&input_video=false
+Authorization: Bearer {{apiKey}}
+
+### 6. 获取本人已结算费用历史
+GET {{base}}/v1/videos/pricing?model=doubao-seedance-2.0&history=true
+Authorization: Bearer {{apiKey}}
+
+### 7. 申请参考图片上传地址；把 size_bytes 改为文件的准确字节数
+POST {{base}}/mcp
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "tools/call",
+  "params": {
+    "name": "create_material_upload",
+    "arguments": {
+      "file_name": "reference.png",
+      "content_type": "image/png",
+      "size_bytes": 123456
+    }
+  }
+}
+
+### 8. 上传原始图片；先更新 uploadUrl，并确保本机确实存在 reference.png
+PUT {{uploadUrl}}
+Content-Type: image/png
+
+< ./reference.png
+
+### 9. 付费：生成一张图片；先确认 model 出现在自己的模型列表中且支持 Images 接口
+POST {{base}}/mcp/image
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "tools/call",
+  "params": {
+    "name": "create_image",
+    "arguments": {
+      "model": "gpt-image-2",
+      "prompt": "一张简洁的春日咖啡店插画，暖色调，无文字",
+      "n": 1,
+      "size": "1024x1024"
+    }
+  }
+}
+
+### 10. 付费：创建一个视频；创建后保存 task_id，不重复提交
+POST {{base}}/mcp/video
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "tools/call",
+  "params": {
+    "name": "create_video",
+    "arguments": {
+      "model": "doubao-seedance-2.0-mini",
+      "prompt": "海边清晨，镜头缓慢向前移动，海浪轻拍岸边，画面稳定自然",
+      "duration": 5,
+      "resolution": "720p",
+      "aspect_ratio": "16:9",
+      "audio": false
+    }
+  }
+}
+
+### 11. 查询视频；将 taskId 改为创建时返回的真实 ID
+POST {{base}}/mcp/video
+Authorization: Bearer {{apiKey}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "tools/call",
+  "params": {
+    "name": "get_video",
+    "arguments": {"task_id": "{{taskId}}"}
+  }
+}
+
+### 12. 下载签名结果；先更新 resultUrl，无需重复生成
+GET {{resultUrl}}
+Range: bytes=0-1023

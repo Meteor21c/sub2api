@@ -1,5 +1,13 @@
 # meteor-mcp-bridge
 
+## 用户接入文档
+
+- 在线阅读：[流星创作台 MCP 接入文档](https://api.meteor21c.fun/docs/mcp/)。
+- [流星创作台 MCP 接入指南](docs/user-guide.md)：连接配置、获取模型、完整工具参数、上传、计费与错误处理。
+- [工具参数 JSON](docs/mcp-tools.json) · [可复制请求](docs/request-examples.http)
+
+静态页面由 `docs/render-site.py` 生成至 `docs/site/`，依赖 `Markdown==3.7`；Nginx 配置片段见 `docs/nginx-location.conf`。仅发布 `site/` 中的四个公开文件。
+
 独立的兼容层，用于保留第三方生图 MCP 和盈合（FZYinghe）视频 MCP
 的 HTTP/JSON-RPC 合约，同时让 Sub2API 继续负责用户鉴权、分组调度和计费。
 

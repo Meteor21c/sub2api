@@ -1,0 +1,979 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>流星创作台 · MCP 接入文档</title>
+<link rel="canonical" href="https://api.meteor21c.fun/docs/mcp/">
+<style>
+:root{--bg:#fff;--panel:#f8f9fc;--ink:#202638;--muted:#697386;--border:#e8ebf1;--accent:#6357d7;--accent-soft:#f0edff;--code:#f5f6fa;--head:#f8f9fc;color-scheme:light}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:94px}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}button{font:inherit;cursor:pointer}header{height:66px;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;background:var(--bg)}.header-inner{max-width:1336px;height:100%;margin:auto;padding:0 36px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:flex;align-items:center;gap:11px;font-size:16px;font-weight:700;color:var(--ink);white-space:nowrap}.mark{width:28px;height:28px;border-radius:9px;background:linear-gradient(145deg,#7b70ee,#4a42a4);position:relative}.mark:before{content:"";position:absolute;inset:7px;background:#fff;clip-path:polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%)}.divider{height:17px;width:1px;background:var(--border);margin:0 5px}.brand small{font-size:13px;font-weight:400;color:var(--muted)}.toplinks{display:flex;align-items:center;gap:24px;font-size:13px}.toplinks a{color:var(--muted)}.toplinks a:last-child{color:var(--accent)}
+.layout{max-width:1336px;margin:auto;display:grid;grid-template-columns:232px minmax(0,1fr);column-gap:54px;padding:38px 36px 80px}.sidebar{position:sticky;top:100px;height:calc(100vh - 130px);overflow-y:auto;padding-right:15px}.nav-label{font-size:11px;letter-spacing:1.2px;color:var(--muted);font-weight:600;margin:0 0 13px 12px}.nav a{display:block;font-size:13px;color:var(--muted);padding:7px 12px;border-radius:7px;margin:2px 0;transition:background .12s}.nav a:hover{background:var(--panel);color:var(--ink);text-decoration:none}.nav a.active{background:var(--accent-soft);color:var(--accent);font-weight:600}.side-resources{border-top:1px solid var(--border);margin-top:25px;padding:20px 12px;font-size:12px;display:grid;gap:8px}.side-resources span{color:var(--muted);margin-bottom:3px}.content{min-width:0;max-width:920px}.breadcrumb{font-size:12px;color:var(--muted);margin-bottom:10px}.breadcrumb span{padding:0 8px;color:#b5bccc}.tagline{display:flex;flex-wrap:wrap;gap:8px;margin:17px 0 25px}.tagline span{font-size:11px;font-weight:500;border:1px solid var(--border);padding:2px 9px;border-radius:5px;color:var(--muted)}article>h1{font-size:34px;line-height:1.4;letter-spacing:-.6px;font-weight:750;margin:0 0 17px}article>p:first-of-type{font-size:16px;color:var(--muted);line-height:1.9;margin:0 0 13px}article h2{font-size:23px;line-height:1.6;font-weight:650;padding-top:15px;margin:41px 0 18px;border-top:1px solid var(--border);padding-bottom:0}article h3{font-size:17px;line-height:1.65;margin:26px 0 12px;font-weight:650}p{margin:12px 0}ul,ol{padding-left:24px;margin:12px 0}li{padding-left:3px;margin:5px 0}strong{font-weight:650}hr{border:0;border-top:1px solid var(--border);margin:34px 0}code{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.86em;word-break:break-word;background:var(--code);border-radius:4px;padding:2px 5px}pre{position:relative;background:var(--code);border:1px solid var(--border);border-radius:9px;padding:19px 20px;overflow:auto;font-size:13px;line-height:1.7;margin:15px 0 22px}pre code{display:block;padding:0;background:none;white-space:pre;word-break:normal;font-size:inherit;line-height:inherit}pre .copy-code{position:absolute;right:10px;top:9px;background:var(--bg);color:var(--muted);border:1px solid var(--border);border-radius:5px;font-size:10px;padding:3px 8px;opacity:0;transition:opacity .12s}pre:hover .copy-code,pre:focus-within .copy-code{opacity:1}.table-wrap{overflow-x:auto;max-width:100%;border:1px solid var(--border);border-radius:8px;margin:16px 0 22px}table{width:100%;border-collapse:collapse;font-size:12.5px;line-height:1.8;text-align:left}th{background:var(--head);font-weight:600}th,td{padding:10px 13px;vertical-align:top;border-bottom:1px solid var(--border)}tr:last-child td{border-bottom:0}td:first-child{min-width:110px}td code{font-size:11.3px}blockquote{margin:18px 0;padding:4px 16px;border-left:3px solid var(--accent);background:var(--panel)}.footer{color:var(--muted);font-size:12px;margin-top:45px;padding-top:18px;border-top:1px solid var(--border)}.mobile-menu{display:none}.back-top{display:inline-block;margin-top:15px;font-size:12px}
+@media(prefers-color-scheme:dark){:root{--bg:#14151c;--panel:#1b1d27;--ink:#e5e7f0;--muted:#a2a8bb;--border:#2c2f3d;--accent:#afa4ff;--accent-soft:#2b2643;--code:#1c1e29;--head:#1f212d;color-scheme:dark}}
+@media(max-width:1050px){.layout{column-gap:28px;grid-template-columns:195px minmax(0,1fr);padding-left:24px;padding-right:24px}.header-inner{padding:0 24px}article>h1{font-size:29px}.toplinks{gap:15px}}
+@media(max-width:760px){header{height:60px}.header-inner{padding:0 18px}.brand{font-size:14px}.brand small,.divider{display:none}.toplinks{gap:14px;font-size:11px}.toplinks a:nth-child(2){display:none}.layout{display:block;padding:22px 18px 55px}.sidebar{display:none}.mobile-menu{display:block;margin:0 0 25px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--muted)}.mobile-menu summary{cursor:pointer}.mobile-menu .nav{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:2px}.mobile-menu .nav a{font-size:12px;padding:5px 7px}article>h1{font-size:27px}article>p:first-of-type{font-size:14px}body{font-size:14px}article h2{font-size:21px}article h3{font-size:16px}pre{padding:17px 13px;font-size:11px}pre .copy-code{opacity:1}th,td{padding:8px 10px}table{font-size:12px}html{scroll-padding-top:78px}}
+@media print{header,.sidebar,.mobile-menu,.copy-code,.back-top{display:none!important}.layout{display:block;padding:0}.content{max-width:none}body{font-size:11pt;color:#111;background:#fff}pre{white-space:pre-wrap}pre code{white-space:pre-wrap}.table-wrap{overflow:visible}h2,h3{break-after:avoid}table,pre{break-inside:avoid}}
+</style>
+</head>
+<body id="top">
+<header><div class="header-inner"><a class="brand" href="#top"><span class="mark" aria-hidden="true"></span>流星 API<span class="divider"></span><small>开发文档</small></a><div class="toplinks"><a href="https://api.meteor21c.fun/studio">流星创作台 ↗</a><a href="https://api.meteor21c.fun/studio/pricing">计价标准</a><a href="guide.md" download>下载 Markdown ↓</a></div></div></header>
+<div class="layout"><aside class="sidebar" aria-label="文档目录"><div class="nav-label">MCP 接入指南</div><nav class="nav"><a href="#1-快速接入">快速接入</a><a href="#2-客户端配置">客户端配置</a><a href="#3-获取工具和模型">获取工具和模型</a><a href="#4-请求与返回格式">请求与返回格式</a><a href="#5-生成和编辑图片">生成和编辑图片</a><a href="#6-上传本地参考图片">上传本地参考图片</a><a href="#7-创建视频">创建视频</a><a href="#8-查询与下载视频">查询与下载视频</a><a href="#9-查询价格与费用参考">查询价格与费用参考</a><a href="#10-大小限制与有效期">大小限制与有效期</a><a href="#11-错误处理">错误处理</a><a href="#12-常见问题">常见问题</a></nav><div class="side-resources"><span>开发资源</span><a href="mcp-tools.json" download>工具参数 JSON ↓</a><a href="request-examples.http" download>完整请求示例 ↓</a><a class="back-top" href="#top">返回顶部 ↑</a></div></aside><main class="content"><div class="breadcrumb">开发文档<span>/</span>MCP<span>/</span>图片与视频生成</div><details class="mobile-menu"><summary>文档目录</summary><nav class="nav"><a href="#1-快速接入">快速接入</a><a href="#2-客户端配置">客户端配置</a><a href="#3-获取工具和模型">获取工具和模型</a><a href="#4-请求与返回格式">请求与返回格式</a><a href="#5-生成和编辑图片">生成和编辑图片</a><a href="#6-上传本地参考图片">上传本地参考图片</a><a href="#7-创建视频">创建视频</a><a href="#8-查询与下载视频">查询与下载视频</a><a href="#9-查询价格与费用参考">查询价格与费用参考</a><a href="#10-大小限制与有效期">大小限制与有效期</a><a href="#11-错误处理">错误处理</a><a href="#12-常见问题">常见问题</a></nav></details><article><h1 id="流星创作台-mcp-接入指南">流星创作台 MCP 接入指南</h1>
+<p>通过 MCP 在智能体或自己的程序中生成图片、创建视频、上传参考图片和查询视频结果。使用流星 API 主站创建的 API Key，生成费用计入该 Key 所属账户。</p>
+<p>主站：<a href="https://api.meteor21c.fun/">流星 API</a> · 工作台：<a href="https://api.meteor21c.fun/studio">流星创作台</a> · <a href="https://api.meteor21c.fun/studio/pricing">计价标准</a></p>
+<h2 id="1-快速接入">1. 快速接入</h2>
+<h3 id="准备-api-key">准备 API Key</h3>
+<p>登录主站，在「API 密钥」中创建或选择一把允许使用目标模型的 Key。确认所属分组开放了图片或视频能力，并且账户余额、Key 额度和有效期可用。</p>
+<p>所有 MCP 请求使用：</p>
+<pre><code class="language-http">Authorization: Bearer YOUR_METEOR_API_KEY
+Content-Type: application/json
+Accept: application/json, text/event-stream
+</code></pre>
+<p><code>YOUR_METEOR_API_KEY</code> 替换为完整的本站 API Key。不要填写网站登录密码、浏览器登录 Token 或其他平台的 Key。</p>
+<h3 id="服务地址">服务地址</h3>
+<table>
+<thead>
+<tr>
+<th>用途</th>
+<th>URL</th>
+<th>工具</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>图片和视频，推荐</td>
+<td><code>https://api.meteor21c.fun/mcp</code></td>
+<td>全部四个工具</td>
+</tr>
+<tr>
+<td>仅图片</td>
+<td><code>https://api.meteor21c.fun/mcp/image</code></td>
+<td><code>create_image</code>、<code>create_material_upload</code></td>
+</tr>
+<tr>
+<td>仅视频</td>
+<td><code>https://api.meteor21c.fun/mcp/video</code></td>
+<td><code>create_video</code>、<code>get_video</code>、<code>create_material_upload</code></td>
+</tr>
+</tbody>
+</table>
+<p>连接类型选择 <strong>HTTP / Streamable HTTP</strong>。请求通过 HTTP POST 发送 JSON-RPC；用浏览器直接打开 MCP 地址出现 405，属于请求方法不匹配。</p>
+<h3 id="第一次使用">第一次使用</h3>
+<ol>
+<li>配置服务地址和 API Key。</li>
+<li>用 <code>tools/list</code> 获取工具定义。</li>
+<li>用同一把 Key 请求 <code>GET /v1/models</code>，获取可选模型 ID。</li>
+<li>明确模型和参数后调用 <code>create_image</code> 或 <code>create_video</code>。</li>
+<li>视频创建后保存 <code>task_id</code>，持续查询同一任务，完成后下载。</li>
+</ol>
+<p><strong>生成会扣费。查看工具、模型、价格和任务状态不会另建生成任务。</strong></p>
+<h2 id="2-客户端配置">2. 客户端配置</h2>
+<h3 id="通用-http-mcp-客户端">通用 HTTP MCP 客户端</h3>
+<p>在客户端的 MCP 设置中填写：</p>
+<table>
+<thead>
+<tr>
+<th>配置项</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>名称</td>
+<td><code>meteor-media</code></td>
+</tr>
+<tr>
+<td>类型</td>
+<td>HTTP / Streamable HTTP</td>
+</tr>
+<tr>
+<td>地址</td>
+<td><code>https://api.meteor21c.fun/mcp</code></td>
+</tr>
+<tr>
+<td>请求头名称</td>
+<td><code>Authorization</code></td>
+</tr>
+<tr>
+<td>请求头值</td>
+<td><code>Bearer YOUR_METEOR_API_KEY</code></td>
+</tr>
+<tr>
+<td>工具超时</td>
+<td>建议至少 360 秒，图片生成可能需要等待</td>
+</tr>
+</tbody>
+</table>
+<p>支持 <code>mcpServers</code> 配置的客户端可参考以下结构；字段名称以该客户端的设置为准：</p>
+<pre><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;meteor-media&quot;: {
+      &quot;url&quot;: &quot;https://api.meteor21c.fun/mcp&quot;,
+      &quot;headers&quot;: {
+        &quot;Authorization&quot;: &quot;Bearer YOUR_METEOR_API_KEY&quot;
+      }
+    }
+  }
+}
+</code></pre>
+<h3 id="codex">Codex</h3>
+<p>在 <code>~/.codex/config.toml</code> 中新增一个服务：</p>
+<pre><code class="language-toml">[mcp_servers.meteor_media]
+url = &quot;https://api.meteor21c.fun/mcp&quot;
+bearer_token_env_var = &quot;METEOR_API_KEY&quot;
+startup_timeout_sec = 30
+tool_timeout_sec = 360
+</code></pre>
+<p>启动 Codex 的环境中需要存在 <code>METEOR_API_KEY</code>。例如在同一终端设置变量后启动 Codex：</p>
+<pre><code class="language-sh">export METEOR_API_KEY='YOUR_METEOR_API_KEY'
+codex
+</code></pre>
+<p>Windows PowerShell：</p>
+<pre><code class="language-powershell">$env:METEOR_API_KEY = 'YOUR_METEOR_API_KEY'
+codex
+</code></pre>
+<p>图形客户端需要能读取该环境变量。也可以省略 <code>bearer_token_env_var</code>，改为在同一配置节设置静态请求头：</p>
+<pre><code class="language-toml">http_headers = { Authorization = &quot;Bearer YOUR_METEOR_API_KEY&quot; }
+</code></pre>
+<p>两种鉴权配置选择一种即可。配置中含有真实 Key 时，请保存在本机，分享配置前删除 Key。</p>
+<p>检查已配置服务可运行 <code>codex mcp list</code>；修改后重新打开对话，再让智能体使用流星媒体工具。</p>
+<p>配置字段参考：<a href="https://learn.chatgpt.com/docs/extend/mcp?surface=cli">OpenAI 官方 MCP 文档</a>。</p>
+<h2 id="3-获取工具和模型">3. 获取工具和模型</h2>
+<h3 id="获取工具及完整参数">获取工具及完整参数</h3>
+<pre><code class="language-sh">curl -sS 'https://api.meteor21c.fun/mcp' \
+  -H &quot;Authorization: Bearer $METEOR_API_KEY&quot; \
+  -H 'Content-Type: application/json' \
+  --data-binary '{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/list&quot;,&quot;params&quot;:{}}'
+</code></pre>
+<p>返回 <code>result.tools</code>。每项包含 <code>name</code>、<code>description</code> 和 <code>inputSchema</code>；其中 <code>required</code> 表示必填项，<code>enum</code> 表示枚举值。</p>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>用途</th>
+<th>执行方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>create_image</code></td>
+<td>文生图、使用已上传图片编辑或参考生图</td>
+<td>同步等待图片结果</td>
+</tr>
+<tr>
+<td><code>create_material_upload</code></td>
+<td>申请本地参考图片的临时上传地址</td>
+<td>返回地址后，客户端执行 PUT 上传</td>
+</tr>
+<tr>
+<td><code>create_video</code></td>
+<td>创建视频生成任务</td>
+<td>异步，返回任务 ID</td>
+</tr>
+<tr>
+<td><code>get_video</code></td>
+<td>查询视频进度、结果和失败原因</td>
+<td>查询已有任务</td>
+</tr>
+</tbody>
+</table>
+<h3 id="获取可用模型">获取可用模型</h3>
+<pre><code class="language-sh">curl -sS 'https://api.meteor21c.fun/v1/models' \
+  -H &quot;Authorization: Bearer $METEOR_API_KEY&quot;
+</code></pre>
+<p>示例结构：</p>
+<pre><code class="language-json">{
+  &quot;object&quot;: &quot;list&quot;,
+  &quot;data&quot;: [
+    {&quot;id&quot;: &quot;doubao-seedance-2.0&quot;, &quot;object&quot;: &quot;model&quot;},
+    {&quot;id&quot;: &quot;doubao-seedance-2.0-mini&quot;, &quot;object&quot;: &quot;model&quot;}
+  ]
+}
+</code></pre>
+<p>调用时填写返回的 <strong>完整 <code>id</code></strong>，不要自行改写为模型显示名称。不同 Key 所属分组不同，模型列表也可能不同。</p>
+<p>当前四个 MCP 工具中没有 <code>list_models</code>；模型通过上述 HTTP 接口获取。智能体没有额外 HTTP 请求工具时，可以由用户查询后提供模型 ID。</p>
+<p><strong>模型列表代表 Key 的模型范围；还需要确认所选 MCP 工具支持该模型和参数。</strong> 图片工具使用 Images 兼容接口；仅支持其他原生协议的模型不能仅凭出现在列表中就用于 <code>create_image</code>。</p>
+<p>视频的分辨率和计费场景可用第 9 节的目录接口查询。目录用于确认分辨率、声音和输入视频对应的计费场景，不包含全部素材格式与时长约束。</p>
+<h2 id="4-请求与返回格式">4. 请求与返回格式</h2>
+<h3 id="初始化">初始化</h3>
+<p>常规 MCP 客户端会自动初始化。自行编写客户端时发送：</p>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 1,
+  &quot;method&quot;: &quot;initialize&quot;,
+  &quot;params&quot;: {
+    &quot;protocolVersion&quot;: &quot;2025-06-18&quot;,
+    &quot;capabilities&quot;: {},
+    &quot;clientInfo&quot;: {&quot;name&quot;: &quot;my-meteor-client&quot;, &quot;version&quot;: &quot;1.0.0&quot;}
+  }
+}
+</code></pre>
+<p>服务当前返回协议版本 <code>2025-06-18</code>。随后可发送不含 <code>id</code> 的 <code>notifications/initialized</code> 通知；通知返回 HTTP 202，无 JSON 响应体。</p>
+<h3 id="调用工具">调用工具</h3>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 2,
+  &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: {
+    &quot;name&quot;: &quot;工具名称&quot;,
+    &quot;arguments&quot;: {}
+  }
+}
+</code></pre>
+<p>一次请求发送一个 JSON-RPC 对象。只传工具声明的参数；这里不采用 OpenAI <code>messages</code> 或 <code>input</code> 的请求结构。</p>
+<h3 id="判断成功">判断成功</h3>
+<p>按以下顺序检查：</p>
+<ol>
+<li>HTTP 状态是否正常。</li>
+<li>是否存在顶层 <code>error</code>。</li>
+<li><code>result.isError</code> 是否为 <code>true</code>。</li>
+<li>工具数据中的 <code>status</code> 是否已到成功或失败终态。</li>
+</ol>
+<p><strong>HTTP 200 本身不能代表图片或视频生成成功。</strong></p>
+<p>优先读取 <code>result.structuredContent</code>。如果客户端只保留文本，可读取 <code>result.content</code> 中 <code>type: "text"</code> 的内容；视频工具的文本内容也是 JSON。</p>
+<h2 id="5-生成和编辑图片">5. 生成和编辑图片</h2>
+<p>工具：<code>create_image</code>，入口 <code>/mcp</code> 或 <code>/mcp/image</code>。</p>
+<h3 id="参数">参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td>是</td>
+<td>当前 Key 可用、支持 Images 接口的完整图片模型 ID</td>
+</tr>
+<tr>
+<td><code>prompt</code></td>
+<td>string</td>
+<td>是</td>
+<td>图片描述或编辑要求，不能为空</td>
+</tr>
+<tr>
+<td><code>n</code></td>
+<td>integer</td>
+<td>否</td>
+<td>生成张数，1–4，默认 1</td>
+</tr>
+<tr>
+<td><code>size</code></td>
+<td>string</td>
+<td>否</td>
+<td>模型支持的尺寸，例如 <code>1024x1024</code>、<code>1536x1024</code>；不传时使用渠道默认值</td>
+</tr>
+<tr>
+<td><code>quality</code></td>
+<td>string</td>
+<td>否</td>
+<td>模型支持的质量档位；例如部分模型使用 <code>auto</code>、<code>low</code>、<code>medium</code>、<code>high</code>，并非所有模型通用</td>
+</tr>
+<tr>
+<td><code>reference_material_ids</code></td>
+<td>string[]</td>
+<td>否</td>
+<td>已完成上传的参考图片 ID，最多 4 个</td>
+</tr>
+<tr>
+<td><code>force_new</code></td>
+<td>boolean</td>
+<td>否</td>
+<td>兼容保留字段，通常省略；当前不提供去重或防重复计费能力</td>
+</tr>
+</tbody>
+</table>
+<p><code>quality</code> 和分辨率是不同概念。<code>low/medium/high</code> 不代表 <code>1K/2K/4K</code>；需要更高分辨率时，按目标模型的尺寸规则填写 <code>size</code>。</p>
+<p>当前 MCP 未开放 <code>output_format</code>、SVG/GIF、动画帧数或帧时长参数。</p>
+<h3 id="文生图示例">文生图示例</h3>
+<p>以下请求会提交生成并产生费用；先将模型替换为自己 Key 可用的模型。</p>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 10,
+  &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: {
+    &quot;name&quot;: &quot;create_image&quot;,
+    &quot;arguments&quot;: {
+      &quot;model&quot;: &quot;gpt-image-2&quot;,
+      &quot;prompt&quot;: &quot;一张简洁的春日咖啡店插画，暖色调，无文字&quot;,
+      &quot;n&quot;: 1,
+      &quot;size&quot;: &quot;1024x1024&quot;
+    }
+  }
+}
+</code></pre>
+<h3 id="图片编辑或参考生图">图片编辑或参考生图</h3>
+<p>先按第 6 节上传图片，再在相同工具中加入：</p>
+<pre><code class="language-json">{
+  &quot;model&quot;: &quot;gpt-image-2&quot;,
+  &quot;prompt&quot;: &quot;保留参考图中的杯子，将背景改为浅蓝色桌面&quot;,
+  &quot;n&quot;: 1,
+  &quot;reference_material_ids&quot;: [&quot;上传成功后返回的material_id&quot;]
+}
+</code></pre>
+<p>提供参考图片后，请求会使用图片编辑接口；所选模型需要同时支持图片编辑。</p>
+<h3 id="读取图片结果">读取图片结果</h3>
+<p>成功结果包含：</p>
+<table>
+<thead>
+<tr>
+<th>位置</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>result.content[]</code> 中 <code>type: "image"</code></td>
+<td>原生图片块，含 <code>mimeType</code> 和 Base64 <code>data</code></td>
+</tr>
+<tr>
+<td><code>result.content[]</code> 中 <code>type: "resource_link"</code></td>
+<td>可用时返回的临时下载地址</td>
+</tr>
+<tr>
+<td><code>result.structuredContent.status</code></td>
+<td>成功时为 <code>SUCCESS</code></td>
+</tr>
+<tr>
+<td><code>result.structuredContent.count</code></td>
+<td>实际交付的图片张数</td>
+</tr>
+<tr>
+<td><code>result.structuredContent.images[]</code></td>
+<td>每张图片的索引、类型，以及可选的 <code>url</code>、<code>expires_at</code></td>
+</tr>
+</tbody>
+</table>
+<p>下载地址可能缺失，但原生图片块仍可保存。客户端不显示图片时，可解码原生图片块，或使用返回的下载地址；不要为了解决显示问题再次提交生成。</p>
+<h2 id="6-上传本地参考图片">6. 上传本地参考图片</h2>
+<p>工具：<code>create_material_upload</code>，三个 MCP 入口均可使用。</p>
+<h3 id="第一步申请上传地址">第一步：申请上传地址</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>file_name</code></td>
+<td>string</td>
+<td>是</td>
+<td>文件名，建议带正确扩展名，例如 <code>reference.png</code></td>
+</tr>
+<tr>
+<td><code>content_type</code></td>
+<td>string</td>
+<td>是</td>
+<td><code>image/jpeg</code>、<code>image/png</code> 或 <code>image/webp</code></td>
+</tr>
+<tr>
+<td><code>size_bytes</code></td>
+<td>integer</td>
+<td>是</td>
+<td>原文件的准确字节数，1–10,485,760，即最大 10 MiB</td>
+</tr>
+</tbody>
+</table>
+<p>示例中的 <code>123456</code> 需要替换为原图的实际字节数：</p>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 20,
+  &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: {
+    &quot;name&quot;: &quot;create_material_upload&quot;,
+    &quot;arguments&quot;: {
+      &quot;file_name&quot;: &quot;reference.png&quot;,
+      &quot;content_type&quot;: &quot;image/png&quot;,
+      &quot;size_bytes&quot;: 123456
+    }
+  }
+}
+</code></pre>
+<p>读取返回的 <code>result.structuredContent</code>：</p>
+<pre><code class="language-json">{
+  &quot;material_id&quot;: &quot;MATERIAL_ID&quot;,
+  &quot;upload_url&quot;: &quot;https://api.meteor21c.fun/mcp/assets/UPLOAD_ID?exp=...&amp;op=upload&amp;sig=...&quot;,
+  &quot;method&quot;: &quot;PUT&quot;,
+  &quot;headers&quot;: {&quot;Content-Type&quot;: &quot;image/png&quot;},
+  &quot;expires_at&quot;: 1800000000
+}
+</code></pre>
+<h3 id="第二步上传原始文件字节">第二步：上传原始文件字节</h3>
+<p>把 <code>UPLOAD_URL</code> 替换为完整的 <code>upload_url</code>，执行：</p>
+<pre><code class="language-sh">curl --fail-with-body -sS -X PUT &quot;$UPLOAD_URL&quot; \
+  -H 'Content-Type: image/png' \
+  --data-binary '@reference.png'
+</code></pre>
+<p>此处上传的是原始文件字节，<strong>不使用 multipart、JSON 或 Base64</strong>。按返回的 <code>headers</code> 设置请求头；签名上传地址不需要额外填写 Bearer Key。</p>
+<p>上传成功返回 HTTP 200，响应体为空。成功后才可把 <code>material_id</code> 传给生成工具。</p>
+<h3 id="第三步引用素材">第三步：引用素材</h3>
+<ul>
+<li>图片：<code>reference_material_ids</code>。</li>
+<li>视频参考图：<code>reference_material_ids</code>。</li>
+<li>视频首帧或尾帧：<code>start_material_id</code>、<code>end_material_id</code>。</li>
+</ul>
+<p>上传和引用必须使用同一把 API Key。上传地址约 15 分钟内有效，一次成功后不能重复 PUT；过期或上传内容错误时重新申请地址。</p>
+<p>素材上传工具当前仅接收上述三种图片。<code>material_id</code> 不能替换为本地路径、<code>file://</code> 地址或网页素材的 <code>server:...</code> 标识。</p>
+<h2 id="7-创建视频">7. 创建视频</h2>
+<p>工具：<code>create_video</code>，入口 <code>/mcp</code> 或 <code>/mcp/video</code>。每次创建一个异步视频任务。</p>
+<h3 id="参数_1">参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td>否</td>
+<td>建议明确填写；默认 <code>doubao-seedance-2.0-fast</code>，仍须该 Key 有权限</td>
+</tr>
+<tr>
+<td><code>prompt</code></td>
+<td>string</td>
+<td>是</td>
+<td>视频描述，不能为空，最多 1300 个字符；表情等可能占多个字符计数</td>
+</tr>
+<tr>
+<td><code>duration</code></td>
+<td>integer</td>
+<td>否</td>
+<td>秒数，默认 5；合法区间见下表</td>
+</tr>
+<tr>
+<td><code>resolution</code></td>
+<td>string</td>
+<td>否</td>
+<td>工具枚举为 <code>480p</code>、<code>720p</code>、<code>1080p</code>、<code>4K</code>；只选目标模型目录当前支持的档位</td>
+</tr>
+<tr>
+<td><code>aspect_ratio</code></td>
+<td>string</td>
+<td>否</td>
+<td><code>16:9</code>、<code>9:16</code>、<code>1:1</code>、<code>4:3</code>、<code>3:4</code>、<code>21:9</code>；模型实际支持范围可能更小</td>
+</tr>
+<tr>
+<td><code>audio</code></td>
+<td>boolean</td>
+<td>否</td>
+<td>是否生成声音；豆包默认开启，可灵默认关闭；模型不支持的组合会失败</td>
+</tr>
+<tr>
+<td><code>reference_images</code></td>
+<td>string[]</td>
+<td>否</td>
+<td>公网参考素材地址；可用 <code>image:</code>、<code>video:</code>、<code>audio:</code> 前缀标注类型，需模型支持</td>
+</tr>
+<tr>
+<td><code>reference_material_ids</code></td>
+<td>string[]</td>
+<td>否</td>
+<td>已通过 MCP 上传的参考图片 ID；与 <code>reference_images</code> 合计最多 9 项</td>
+</tr>
+<tr>
+<td><code>start_image_url</code></td>
+<td>string</td>
+<td>否</td>
+<td>公网首帧图片 URL；可灵 Omni 首尾帧见下文专用格式</td>
+</tr>
+<tr>
+<td><code>end_image_url</code></td>
+<td>string</td>
+<td>否</td>
+<td>公网尾帧图片 URL；可灵 Omni 首尾帧见下文专用格式</td>
+</tr>
+<tr>
+<td><code>start_material_id</code></td>
+<td>string</td>
+<td>否</td>
+<td>已上传的首帧图片 ID；填写时优先于 <code>start_image_url</code></td>
+</tr>
+<tr>
+<td><code>end_material_id</code></td>
+<td>string</td>
+<td>否</td>
+<td>已上传的尾帧图片 ID；填写时优先于 <code>end_image_url</code></td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>string</td>
+<td>否</td>
+<td>兼容字段：<code>text_with_reference</code>、<code>start_end_frame</code>、<code>std</code>、<code>pro</code>、<code>4k</code>；当前模型通常省略，首尾帧和清晰度分别使用对应字段控制</td>
+</tr>
+</tbody>
+</table>
+<p>未传清晰度时，豆包默认 <code>720p</code>、可灵默认 <code>1080p</code>；未传画幅时，豆包默认 <code>9:16</code>、可灵默认 <code>16:9</code>。建议明确填写这两个参数。</p>
+<h3 id="工具识别的模型和时长">工具识别的模型和时长</h3>
+<table>
+<thead>
+<tr>
+<th>模型 ID</th>
+<th><code>duration</code> 区间</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>doubao-seedance-2.0</code></td>
+<td>4–15 秒</td>
+</tr>
+<tr>
+<td><code>doubao-seedance-2.0-fast</code></td>
+<td>4–15 秒</td>
+</tr>
+<tr>
+<td><code>doubao-seedance-2.0-mini</code></td>
+<td>4–15 秒</td>
+</tr>
+<tr>
+<td><code>doubao-seedance-2.5</code></td>
+<td>4–30 秒</td>
+</tr>
+<tr>
+<td><code>doubao-seedance-1.5-pro</code></td>
+<td>4–12 秒，须当前模型列表和目录实际开放</td>
+</tr>
+<tr>
+<td><code>kling-v3</code></td>
+<td>3–15 秒</td>
+</tr>
+<tr>
+<td><code>kling-v3-omni</code></td>
+<td>3–15 秒</td>
+</tr>
+</tbody>
+</table>
+<p>以上是 MCP 工具接受的模型和时长，<strong>不代表每把 Key 都能使用，也不代表每个模型支持全部清晰度与参考素材类型</strong>。</p>
+<p><code>MiniMax-H3</code> 和 <code>tencent-mps-superres</code> 当前尚不能通过 <code>create_video</code> 创建。使用这两项能力请进入流星创作台的视频页面。</p>
+<h3 id="文生视频示例">文生视频示例</h3>
+<p>此调用会创建付费任务：</p>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 30,
+  &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: {
+    &quot;name&quot;: &quot;create_video&quot;,
+    &quot;arguments&quot;: {
+      &quot;model&quot;: &quot;doubao-seedance-2.0-mini&quot;,
+      &quot;prompt&quot;: &quot;海边清晨，镜头缓慢向前移动，海浪轻拍岸边，画面稳定自然&quot;,
+      &quot;duration&quot;: 5,
+      &quot;resolution&quot;: &quot;720p&quot;,
+      &quot;aspect_ratio&quot;: &quot;16:9&quot;,
+      &quot;audio&quot;: false
+    }
+  }
+}
+</code></pre>
+<h3 id="首尾帧与多素材参考">首尾帧与多素材参考</h3>
+<p>建议每次选择一种输入方式：文生视频、首尾帧，或多素材参考。不要假定所有模型都允许混合首尾帧与参考素材。</p>
+<p>豆包首尾帧可使用以下参数；尾帧与首帧配套使用：</p>
+<pre><code class="language-json">{
+  &quot;start_material_id&quot;: &quot;FIRST_FRAME_MATERIAL_ID&quot;,
+  &quot;end_material_id&quot;: &quot;LAST_FRAME_MATERIAL_ID&quot;
+}
+</code></pre>
+<p>已有公开图片 URL 时，也可使用 <code>start_image_url</code>、<code>end_image_url</code>。</p>
+<p>多素材参考使用 <code>reference_images</code>；不透明链接建议明确标注类型：</p>
+<pre><code class="language-json">{
+  &quot;reference_images&quot;: [
+    &quot;image:https://your-public-host.example/character.png&quot;,
+    &quot;video:https://your-public-host.example/motion.mp4&quot;,
+    &quot;audio:https://your-public-host.example/voice.wav&quot;
+  ]
+}
+</code></pre>
+<p>示例域名需要替换为可公开访问的真实地址。远程参考不接受 localhost、内网地址、需要网页登录的页面或本地文件路径。上传音视频目前需要自行准备公开 URL，并确认目标模型支持相应的输入类型。</p>
+<p>部分重要限制：</p>
+<ul>
+<li>豆包参考素材可能先进入素材处理与审核阶段，继续查询原任务即可。</li>
+<li><code>kling-v3</code> 主要使用首尾帧；多素材能力请使用支持参考素材的具体模型。</li>
+<li>可灵 Omni 首尾帧通过 <code>reference_images</code> 中的 <code>start:https://...</code>、<code>end:https://...</code> 传入；不要改用该模型当前未映射的独立首尾帧字段。</li>
+<li>可灵 Omni 引用视频时必须设置 <code>audio: false</code>。</li>
+<li>9 项是工具总额度；目标模型的参考素材限制可能更小，不能为了达到额度向不支持的模型追加素材。</li>
+</ul>
+<h3 id="创建结果">创建结果</h3>
+<p>成功创建后读取：</p>
+<pre><code class="language-json">{
+  &quot;task_id&quot;: &quot;TASK_ID_FROM_CREATE&quot;,
+  &quot;id&quot;: &quot;TASK_ID_FROM_CREATE&quot;,
+  &quot;status&quot;: &quot;PENDING&quot;,
+  &quot;model&quot;: &quot;doubao-seedance-2.0-mini&quot;
+}
+</code></pre>
+<p>该对象位于 <code>result.structuredContent</code>。响应还可能包含 <code>stage</code>、<code>asset_progress</code>、<code>billing</code> 和 <code>raw</code>。<code>billing</code> 是创建时的费用信息，不应作为最终实际扣费。</p>
+<p>立即保存 <code>task_id</code>，后续通过 <code>get_video</code> 查询。不要通过再次调用 <code>create_video</code> 查询进度。</p>
+<h2 id="8-查询与下载视频">8. 查询与下载视频</h2>
+<p>工具：<code>get_video</code>。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>task_id</code></td>
+<td>string</td>
+<td>是</td>
+<td>创建任务返回的原始任务 ID，使用同一把 API Key 查询</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 31,
+  &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: {
+    &quot;name&quot;: &quot;get_video&quot;,
+    &quot;arguments&quot;: {&quot;task_id&quot;: &quot;TASK_ID_FROM_CREATE&quot;}
+  }
+}
+</code></pre>
+<h3 id="状态">状态</h3>
+<table>
+<thead>
+<tr>
+<th><code>status</code></th>
+<th>含义</th>
+<th>下一步</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PENDING</code></td>
+<td>已创建，等待后续处理</td>
+<td>保存 ID，查询同一任务</td>
+</tr>
+<tr>
+<td><code>IN_PROGRESS</code></td>
+<td>正在处理或生成</td>
+<td>建议间隔 5–10 秒查询</td>
+</tr>
+<tr>
+<td><code>SUCCESS</code></td>
+<td>视频已生成</td>
+<td>读取 <code>data.result_url</code> 并下载</td>
+</tr>
+<tr>
+<td><code>FAILURE</code></td>
+<td>生成失败</td>
+<td>读取 <code>data.fail_reason</code>，停止轮询并核对费用记录</td>
+</tr>
+</tbody>
+</table>
+<p>成功示例，省略了其他可选字段：</p>
+<pre><code class="language-json">{
+  &quot;task_id&quot;: &quot;TASK_ID_FROM_CREATE&quot;,
+  &quot;status&quot;: &quot;SUCCESS&quot;,
+  &quot;data&quot;: {
+    &quot;task_id&quot;: &quot;TASK_ID_FROM_CREATE&quot;,
+    &quot;status&quot;: &quot;SUCCESS&quot;,
+    &quot;result_url&quot;: &quot;https://api.meteor21c.fun/mcp/assets/RESULT_ID?exp=...&amp;op=read&amp;sig=...&quot;,
+    &quot;video_url&quot;: &quot;https://api.meteor21c.fun/mcp/assets/RESULT_ID?exp=...&amp;op=read&amp;sig=...&quot;
+  }
+}
+</code></pre>
+<h3 id="下载">下载</h3>
+<p>使用返回的完整 <code>data.result_url</code>，不要删除查询参数：</p>
+<pre><code class="language-sh">curl --fail-with-body -sS -L &quot;$RESULT_URL&quot; -o result.mp4
+</code></pre>
+<p>本站 <code>/mcp/assets/</code> 签名结果地址可在有效期内直接访问，支持 Range。若返回的是受保护的 <code>/v1/...</code> 内容地址，则下载时还需要携带原 API Key 的 Bearer 请求头。</p>
+<p>临时视频签名链接约 30 分钟有效。过期时可用原 Key 再次调用 <code>get_video</code>，在文件仍可用时获取新链接；续签不会重新创建视频，也不能恢复已过期的源文件。生成完成后尽快保存到本地。</p>
+<h2 id="9-查询价格与费用参考">9. 查询价格与费用参考</h2>
+<p>价格会随模型、分组、参数和当前可用场景变化。下列接口使用同一把 API Key，查询本身不会提交生成。</p>
+<h3 id="查询视频目录和场景">查询视频目录和场景</h3>
+<pre><code class="language-sh">curl -sS --get 'https://api.meteor21c.fun/v1/videos/pricing' \
+  -H &quot;Authorization: Bearer $METEOR_API_KEY&quot; \
+  --data-urlencode 'catalog=true' \
+  --data-urlencode 'model=doubao-seedance-2.0'
+</code></pre>
+<p>重点读取：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>available_models</code></td>
+<td>当前目录中存在的模型；再与 Key 的模型范围、MCP 工具支持范围取交集</td>
+</tr>
+<tr>
+<td><code>models[]</code></td>
+<td>各模型的目录项</td>
+</tr>
+<tr>
+<td><code>resolutions</code></td>
+<td>当前所查模型的分辨率集合</td>
+</tr>
+<tr>
+<td><code>billing_modes</code></td>
+<td>计费单位，例如 <code>token</code>、<code>second</code></td>
+</tr>
+<tr>
+<td><code>scenarios[]</code></td>
+<td>按输入视频、声音等条件区分的计费场景</td>
+</tr>
+<tr>
+<td><code>scenarios[].audio</code></td>
+<td>布尔值时匹配相同声音选项；为 <code>null</code> 时该价格场景不按此项区分</td>
+</tr>
+<tr>
+<td><code>scenarios[].input_video</code></td>
+<td>布尔值时匹配是否包含参考视频；<code>null</code> 表示该场景未按此项区分</td>
+</tr>
+</tbody>
+</table>
+<p>当前模型的分辨率集合可能覆盖多个场景。应先匹配 <code>audio</code>、<code>input_video</code>，再选匹配场景中的分辨率；不要只看顶层集合。</p>
+<h3 id="查询指定参数的预扣与参考费">查询指定参数的预扣与参考费</h3>
+<pre><code class="language-sh">curl -sS --get 'https://api.meteor21c.fun/v1/videos/pricing' \
+  -H &quot;Authorization: Bearer $METEOR_API_KEY&quot; \
+  --data-urlencode 'model=doubao-seedance-2.0' \
+  --data-urlencode 'resolution=720p' \
+  --data-urlencode 'duration=5' \
+  --data-urlencode 'aspect_ratio=16:9' \
+  --data-urlencode 'audio=true' \
+  --data-urlencode 'input_video=false'
+</code></pre>
+<p><code>audio</code>、<code>input_video</code> 使用 <code>true/false</code>。查询参数应与实际提交一致；<code>input_video</code> 表示有无参考视频，不代表请求输出视频。</p>
+<table>
+<thead>
+<tr>
+<th>返回字段</th>
+<th>用户含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>billing_mode</code></td>
+<td><code>token</code> 为 Token 计费，<code>second</code> 为按秒计费</td>
+</tr>
+<tr>
+<td><code>currency</code></td>
+<td>价格单位对应的币种</td>
+</tr>
+<tr>
+<td><code>sale_per_million</code></td>
+<td>本站每百万 Token 单价，仅适用于 Token 场景</td>
+</tr>
+<tr>
+<td><code>sale_per_second</code></td>
+<td>本站每秒单价，仅适用于按秒场景</td>
+</tr>
+<tr>
+<td><code>official_per_million</code> / <code>official_per_second</code></td>
+<td>对应官方标准单价</td>
+</tr>
+<tr>
+<td><code>sale_rate_to_official</code></td>
+<td>本站单价 / 官方单价；例如 <code>0.345</code> 表示官方价格的 34.5%，即 <strong>3.45 折</strong></td>
+</tr>
+<tr>
+<td><code>precharge_amount</code></td>
+<td>提交时先预扣的余额数值，目前最高 5</td>
+</tr>
+<tr>
+<td><code>estimate_source</code></td>
+<td><code>personal</code> 为本人历史参考，<code>default</code> 为模型默认预扣，<code>exact</code> 为可按参数估算</td>
+</tr>
+<tr>
+<td><code>estimated_amount</code></td>
+<td>可获得时返回的参考总费用；缺失时表示本次没有参考价</td>
+</tr>
+<tr>
+<td><code>estimate_low</code> / <code>estimate_high</code></td>
+<td>历史参考区间，可选</td>
+</tr>
+<tr>
+<td><code>estimate_samples</code></td>
+<td>参考样本数</td>
+</tr>
+</tbody>
+</table>
+<p><strong>预扣最高 5，不等于最终费用最多 5。</strong> Token 场景完成后按实际用量结算，费用低于预扣时退差额，高于预扣时补扣。没有参考价时仍可按模型默认预扣提交；参考价仅用于提示。</p>
+<p>Token 场景的基础费用为：</p>
+<pre><code class="language-text">实际输出 Token / 1,000,000 × 本站每百万 Token 单价
+</code></pre>
+<p>按秒场景的基础费用为实际计费时长 × 本站每秒单价；存在明确附加计费项时还需加上相应费用。最终以账户使用记录和任务结算结果为准。</p>
+<p>本站当前余额采用数值 1:1 结算口径：计价金额的数值对应同额账户余额，不进行实时人民币/美元汇率换算。</p>
+<h3 id="查询本人历史费用参数">查询本人历史费用参数</h3>
+<pre><code class="language-sh">curl -sS --get 'https://api.meteor21c.fun/v1/videos/pricing' \
+  -H &quot;Authorization: Bearer $METEOR_API_KEY&quot; \
+  --data-urlencode 'model=doubao-seedance-2.0' \
+  --data-urlencode 'history=true'
+</code></pre>
+<p>返回 <code>history</code> 数组，最多包含本人近 90 天最近 20 条已结算记录的时长、清晰度、Token 和费用等参数；不返回提示词或素材内容。没有记录时返回空数组。</p>
+<p>图片费用请查看创作台「计价标准」，结合当前 Key 的分组、模型、尺寸和质量档位确认。以上 <code>/v1/videos/pricing</code> 接口用于视频。</p>
+<h2 id="10-大小限制与有效期">10. 大小限制与有效期</h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>当前限制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>一次图片生成</td>
+<td>最多 4 张</td>
+</tr>
+<tr>
+<td>图片工具参考图</td>
+<td>最多 4 张</td>
+</tr>
+<tr>
+<td>MCP 本地上传</td>
+<td>JPEG / PNG / WebP，单张最多 10 MiB</td>
+</tr>
+<tr>
+<td>视频工具参考列表</td>
+<td>URL 与 <code>reference_material_ids</code> 合计最多 9 项；还需遵守模型限制</td>
+</tr>
+<tr>
+<td>视频工具任务数</td>
+<td>一次一个</td>
+</tr>
+<tr>
+<td>参考图片上传地址</td>
+<td>约 15 分钟，上传成功后不可复用</td>
+</tr>
+<tr>
+<td>MCP 临时参考图片</td>
+<td>约 24 小时；请在有效期内提交引用</td>
+</tr>
+<tr>
+<td>图片结果下载地址</td>
+<td>以 <code>images[].expires_at</code> 为准，通常约 24 小时</td>
+</tr>
+<tr>
+<td>视频签名下载链接</td>
+<td>约 30 分钟；文件仍有效时可通过 <code>get_video</code> 重新获取</td>
+</tr>
+</tbody>
+</table>
+<p><code>expires_at</code> 是 Unix 秒级时间戳。所有临时素材均有定期清理机制；请把生成结果及时保存到本地。网页画布的默认七天保留规则不适用于这些 MCP 临时上传和签名地址。</p>
+<p>图片生成等待上限约 5 分钟。等待超时后，任务可能仍已生成或产生费用；先核对使用记录，不要由程序自动重新生成。</p>
+<h2 id="11-错误处理">11. 错误处理</h2>
+<h3 id="三类错误">三类错误</h3>
+<p>HTTP 层错误：</p>
+<pre><code class="language-json">{&quot;error&quot;:{&quot;type&quot;:&quot;authentication_error&quot;,&quot;message&quot;:&quot;Bearer token is required&quot;}}
+</code></pre>
+<p>JSON-RPC 协议错误：</p>
+<pre><code class="language-json">{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;error&quot;:{&quot;code&quot;:-32602,&quot;message&quot;:&quot;tool is not available on this MCP endpoint&quot;}}
+</code></pre>
+<p>工具执行错误，可能仍是 HTTP 200：</p>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 1,
+  &quot;result&quot;: {
+    &quot;isError&quot;: true,
+    &quot;content&quot;: [{&quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;model and prompt are required&quot;}]
+  }
+}
+</code></pre>
+<h3 id="常见情况">常见情况</h3>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>处理方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>401 或 Key 不可用</td>
+<td>检查完整 Key、有效期、所属分组、额度和账户状态</td>
+</tr>
+<tr>
+<td>能列工具，生成时无模型权限</td>
+<td>用相同 Key 请求 <code>/v1/models</code>；工具发现成功不等于目标模型已授权</td>
+</tr>
+<tr>
+<td><code>tool is not available...</code></td>
+<td>核对连接的是图片入口、视频入口还是统一入口</td>
+</tr>
+<tr>
+<td><code>unsupported video model</code></td>
+<td>核对第 7 节的 MCP 视频支持范围及模型 ID 大小写</td>
+</tr>
+<tr>
+<td><code>size_bytes</code>、格式或文件大小错误</td>
+<td>读取实际字节数，核对扩展名、MIME 与原始文件类型</td>
+</tr>
+<tr>
+<td><code>material_id</code> 无效、过期或属于其他用户</td>
+<td>使用原 Key，确认 PUT 成功；过期后重新上传</td>
+</tr>
+<tr>
+<td>引用 URL 不可用</td>
+<td>使用能公开直接访问的文件 URL，核对权限和有效期</td>
+</tr>
+<tr>
+<td>服务繁忙，明确提示未提交和未扣费</td>
+<td>稍后手动重试，避免同时提交大量任务</td>
+</tr>
+<tr>
+<td>请求超时、网络断开、返回内容不完整</td>
+<td>先检查原任务或使用记录，确认状态后再决定是否重试</td>
+</tr>
+<tr>
+<td>图片已成功但不显示</td>
+<td>使用原生图片块或下载链接，保存现有结果</td>
+</tr>
+<tr>
+<td>视频临时链接过期</td>
+<td>用原 Key 查询原 <code>task_id</code>，尝试获取新链接</td>
+</tr>
+<tr>
+<td>视频 <code>FAILURE</code></td>
+<td>保存 <code>task_id</code> 和 <code>data.fail_reason</code>，核对任务与费用记录</td>
+</tr>
+</tbody>
+</table>
+<p>反馈问题时提供时间、工具名、模型 ID、任务 ID 和错误信息即可。不要发送 API Key 或完整签名链接。</p>
+<h2 id="12-常见问题">12. 常见问题</h2>
+<h3 id="mcp-会自动在我的画布里创建节点吗">MCP 会自动在我的画布里创建节点吗？</h3>
+<p>本文三个远程 MCP 地址用于直接生成和获取媒体。它们不读写当前网页画布。</p>
+<p>如需让智能体创建节点、连线和整理画布，使用画布页面内的「连接本地 Agent」流程。该流程使用本机 Canvas Agent，工具名称包括 <code>get_generation_config</code>、<code>generate_image</code>、<code>generate_video</code> 等；连接 Token 与本站 API Key 用途不同。</p>
+<h3 id="为什么客户端说无法读取我的本地图片">为什么客户端说无法读取我的本地图片？</h3>
+<p><code>create_material_upload</code> 负责申请上传地址，客户端仍需有读取本地文件和执行 HTTP PUT 的能力。只把电脑路径写入提示词，远程 MCP 无法读取该文件。</p>
+<h3 id="能把网页里的素材-id-直接传进-mcp-吗">能把网页里的素材 ID 直接传进 MCP 吗？</h3>
+<p><code>material_id</code> 应使用本 MCP 上传流程返回的 ID。网页素材 ID、画布节点 ID、<code>server:...</code> 和本地文件名不能直接替代它。</p>
+<h3 id="每个工具都需要不同-key-吗">每个工具都需要不同 Key 吗？</h3>
+<p>可以使用同一把同时有图片和视频权限的 Key。如果权限分属不同分组，则为对应能力分别配置 Key，并在各自流程内保持一致。</p>
+<h3 id="创建视频超时后可以立即再创建一次吗">创建视频超时后，可以立即再创建一次吗？</h3>
+<p>先确认原任务或使用记录。再次调用创建工具会提交新的生成请求，可能再次产生费用；当前 MCP 没有供用户设置的幂等参数。</p>
+<h3 id="raw-字段可以作为稳定接口使用吗"><code>raw</code> 字段可以作为稳定接口使用吗？</h3>
+<p>请优先使用本文列出的 <code>task_id</code>、<code>status</code>、<code>data.result_url</code> 等字段。<code>raw</code> 是补充信息，结构可能变化。</p>
+<hr />
+<p>完整工具参数见同目录的 <a href="mcp-tools.json">mcp-tools.json</a>，可复制请求见 <a href="request-examples.http">request-examples.http</a>。工具升级后，请再次用 <code>tools/list</code> 获取当前定义。</p></article><div class="footer">流星 API · 图片与视频 MCP 接入文档<a class="back-top" style="float:right;margin:0" href="#top">返回顶部 ↑</a></div></main></div>
+<script>
+document.querySelectorAll('article table').forEach(table=>{const box=document.createElement('div');box.className='table-wrap';table.before(box);box.append(table)});
+document.querySelectorAll('article pre').forEach(pre=>{const code=pre.querySelector('code');if(!code)return;const button=document.createElement('button');button.className='copy-code';button.type='button';button.textContent='复制';button.setAttribute('aria-label','复制代码');button.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(code.textContent);button.textContent='已复制';setTimeout(()=>button.textContent='复制',1500)}catch{button.textContent='请选中复制'}});pre.append(button)});
+const headings=[...document.querySelectorAll('article h2[id]')];
+const observer=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting);if(!visible.length)return;const id=visible[0].target.id;document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',decodeURIComponent(a.hash.slice(1))===id))},{rootMargin:'-10% 0px -65% 0px'});
+headings.forEach(heading=>observer.observe(heading));
+document.querySelectorAll('.mobile-menu a').forEach(a=>a.addEventListener('click',()=>document.querySelector('.mobile-menu').open=false));
+const first=document.querySelector('article>h1');if(first){const tags=document.createElement('div');tags.className='tagline';tags.innerHTML='<span>4 个媒体工具</span><span>Streamable HTTP</span><span>API Key 鉴权</span>';first.after(tags)}
+</script>
+</body></html>

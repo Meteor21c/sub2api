@@ -1,0 +1,187 @@
+{
+  "tools": [
+    {
+      "name": "create_image",
+      "description": "生成或编辑图片，一次最多4张；使用已上传的参考图片时进行编辑。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model",
+          "prompt"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Exact image model configured for the user."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Description of the image to generate."
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "Number of images; defaults to 1."
+          },
+          "size": {
+            "type": "string",
+            "description": "Output size such as 1024x1024 or 1536x1024."
+          },
+          "quality": {
+            "type": "string",
+            "description": "Provider-supported quality."
+          },
+          "reference_material_ids": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "description": "Temporary material ID."
+            }
+          },
+          "force_new": {
+            "type": "boolean",
+            "description": "Compatibility flag; use only for an explicit new variation."
+          }
+        }
+      }
+    },
+    {
+      "name": "create_material_upload",
+      "description": "申请本地JPEG、PNG或WebP参考图片的临时上传地址，再由客户端以PUT上传原始字节。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file_name",
+          "content_type",
+          "size_bytes"
+        ],
+        "properties": {
+          "file_name": {
+            "type": "string",
+            "description": "Original file name including extension."
+          },
+          "content_type": {
+            "type": "string",
+            "description": "image/jpeg, image/png, or image/webp."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Exact file size in bytes."
+          }
+        }
+      }
+    },
+    {
+      "name": "create_video",
+      "description": "创建异步视频生成任务；保存任务ID后用get_video查询。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Exact authorized video model; defaults to doubao-seedance-2.0-fast."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Video prompt, up to 1300 characters."
+          },
+          "duration": {
+            "type": "integer",
+            "minimum": 3,
+            "maximum": 30,
+            "description": "Duration in seconds; allowed range depends on model, defaults to 5."
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "480p",
+              "720p",
+              "1080p",
+              "4K"
+            ]
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1",
+              "4:3",
+              "3:4",
+              "21:9"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "text_with_reference",
+              "start_end_frame",
+              "std",
+              "pro",
+              "4k"
+            ]
+          },
+          "audio": {
+            "type": "boolean"
+          },
+          "reference_images": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Public reference image/video URL."
+            }
+          },
+          "reference_material_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Temporary material ID."
+            }
+          },
+          "start_image_url": {
+            "type": "string",
+            "description": "Public start-frame image URL."
+          },
+          "end_image_url": {
+            "type": "string",
+            "description": "Public end-frame image URL."
+          },
+          "start_material_id": {
+            "type": "string",
+            "description": "Temporary start-frame material ID."
+          },
+          "end_material_id": {
+            "type": "string",
+            "description": "Temporary end-frame material ID."
+          }
+        }
+      }
+    },
+    {
+      "name": "get_video",
+      "description": "查询已有视频任务，成功后读取data.result_url下载结果。",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "Public task ID returned by create_video."
+          }
+        }
+      }
+    }
+  ]
+}
