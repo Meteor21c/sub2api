@@ -237,6 +237,59 @@ func (s *ModelTestService) GetJob(ctx context.Context, owner int64, source, id s
 	return s.repo.GetJob(ctx, owner, source, parsed.String())
 }
 
+func (s *ModelTestService) ListAdminJobs(ctx context.Context) ([]ModelTestAdminJob, error) {
+	jobs, err := s.repo.ListAdminJobs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ModelTestAdminJob, 0, len(jobs))
+	for _, j := range jobs {
+		result = append(result, ModelTestAdminView(j))
+	}
+	return result, nil
+}
+
+func (s *ModelTestService) GetAdminJob(ctx context.Context, id string) (*ModelTestAdminJob, error) {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return nil, ErrModelTestNotFound
+	}
+	job, err := s.repo.GetAdminJob(ctx, parsed.String())
+	if err != nil {
+		return nil, err
+	}
+	view := ModelTestAdminView(*job)
+	return &view, nil
+}
+
+func (s *ModelTestService) DeleteAdminJob(ctx context.Context, id string) error {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return ErrModelTestNotFound
+	}
+	return s.repo.DeleteAdminJob(ctx, parsed.String())
+}
+
+func (s *ModelTestService) RunAdminTest(ctx context.Context, actor, planID int64, retryID string, in ModelTestManualInput) (*ModelTestAdminJob, error) {
+	requestID, err := uuid.Parse(in.ClientRequestID)
+	if err != nil || requestID == uuid.Nil || actor <= 0 || (planID <= 0 && retryID == "") || (planID > 0 && retryID != "") {
+		return nil, ErrModelTestInvalid
+	}
+	if retryID != "" {
+		parsed, parseErr := uuid.Parse(retryID)
+		if parseErr != nil {
+			return nil, ErrModelTestNotFound
+		}
+		retryID = parsed.String()
+	}
+	job, err := s.repo.CreateManualJob(ctx, actor, planID, retryID, requestID.String())
+	if err != nil {
+		return nil, err
+	}
+	view := ModelTestAdminView(*job)
+	return &view, nil
+}
+
 func (s *ModelTestService) scheduleLoop(ctx context.Context) {
 	defer s.wg.Done()
 	ticker := time.NewTicker(30 * time.Second)
@@ -389,6 +442,7 @@ func (s *ModelTestService) runScheduled(ctx context.Context, j *ModelTestJob) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request, _ = http.NewRequestWithContext(ctx, http.MethodPost, "/internal/model-test", nil)
 	result, err := s.accountTest.TestGroupDebug(c, j.GroupID, j.Model, modelTestPrompt(j.TestKind))
+	applyModelTestRouting(j, result)
 	if err != nil || result == nil || !result.Success {
 		j.ErrorCode = "request_failed"
 		return
@@ -408,6 +462,26 @@ func (s *ModelTestService) runScheduled(ctx context.Context, j *ModelTestJob) {
 	}
 	j.Status = "succeeded"
 	j.ErrorCode = ""
+}
+
+func applyModelTestRouting(j *ModelTestJob, result *AccountTestDebugResult) {
+	if result == nil {
+		return
+	}
+	if result.AccountID > 0 {
+		id := result.AccountID
+		j.UpstreamAccountID = &id
+	}
+	name := []rune(result.AccountName)
+	j.UpstreamAccountName = string(name[:min(256, len(name))])
+	j.UpstreamAttempts = make([]ModelTestUpstreamAttempt, 0, len(result.Attempts))
+	for _, attempt := range result.Attempts {
+		// Deliberately omit endpoints, provider errors and raw responses.
+		name := []rune(attempt.AccountName)
+		j.UpstreamAttempts = append(j.UpstreamAttempts, ModelTestUpstreamAttempt{
+			AccountID: attempt.AccountID, AccountName: string(name[:min(256, len(name))]),
+			Success: attempt.Success, StatusCode: attempt.StatusCode})
+	}
 }
 
 // This handler is the same engine used by external clients. No auth context or

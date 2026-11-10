@@ -38,6 +38,35 @@ account names, upstream endpoints, raw errors, credentials or client addresses.
 Personal result queries require the original owner on both list and detail;
 scheduled results are visible to authenticated users.
 
+## Administrator result management
+
+The schedule settings page includes the last 24 hours of public test records.
+Its administrator-only APIs expose a snapshot of the final upstream account
+and the account attempts (account ID/name, success and HTTP status only). Both
+successful and failed group probes save this metadata. Older records without
+snapshots remain visible with an explicit missing-channel label. Customer APIs
+omit all routing snapshots and manual/retry metadata.
+
+Administrators can delete one queued or completed public result. Deleting a
+queued result prevents it from being claimed; running calls must finish first.
+Deleted results disappear from customer history, summaries and detail requests.
+Their tombstones retain submission idempotency until normal expiration, and
+workers cannot write the deleted content back.
+
+Retry creates a new public result using the original parameters and the normal
+group scheduler. It preserves the previous result and may select another
+upstream account. A plan can also run immediately while paused. Neither action
+changes its next scheduled occurrence. Both require an idempotency UUID, share
+the bounded persistent queue, and consume upstream capacity. These actions never
+replay or debit another user's personal tests.
+
+Administrator APIs (all under `/api/v1/admin/model-tests`):
+
+- `GET /jobs` and `GET /jobs/:id`
+- `DELETE /jobs/:id`
+- `POST /jobs/:id/retry` with `client_request_id`
+- `POST /plans/:id/run` with `client_request_id`
+
 ## Durable queue
 
 The queue lives in PostgreSQL, with two concurrent inferences across app

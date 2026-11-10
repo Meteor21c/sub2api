@@ -113,8 +113,19 @@
           <div v-if="!overview.plans.length" class="card p-10 text-center text-sm text-gray-500">{{ t('modelTests.noPlans') }}</div>
           <div v-for="plan in overview.plans" :key="plan.id" class="card flex flex-wrap items-center justify-between gap-4 p-5">
             <div><h2 class="font-medium">{{ plan.label }} <span class="ml-2 text-xs text-gray-400">{{ kindLabel(plan.test_kind) }}</span></h2><p class="mt-2 break-all text-xs text-gray-500">{{ plan.model }}</p><p class="mt-2 text-xs text-gray-400">{{ t('modelTests.next') }} · {{ plan.enabled ? date(plan.next_run_at) : t('modelTests.paused') }}</p></div>
-            <div class="flex flex-wrap gap-2"><button class="btn btn-secondary btn-sm" :disabled="planBusy" @click="togglePlan(plan)">{{ plan.enabled ? t('modelTests.disable') : t('modelTests.enable') }}</button><button class="btn btn-secondary btn-sm" :disabled="planBusy" @click="editPlan(plan)">{{ t('modelTests.edit') }}</button><button class="btn btn-secondary btn-sm text-red-600" :disabled="planBusy" @click="deleteTarget = plan">{{ t('modelTests.remove') }}</button></div>
+            <div class="flex flex-wrap gap-2"><button class="btn btn-primary btn-sm" :disabled="planBusy || actionBusy || planHasActiveJob(plan.id)" :data-testid="`run-plan-${plan.id}`" @click="runTarget = { type: 'plan', plan }">{{ t('modelTests.runNow') }}</button><button class="btn btn-secondary btn-sm" :disabled="planBusy" @click="togglePlan(plan)">{{ plan.enabled ? t('modelTests.disable') : t('modelTests.enable') }}</button><button class="btn btn-secondary btn-sm" :disabled="planBusy" @click="editPlan(plan)">{{ t('modelTests.edit') }}</button><button class="btn btn-secondary btn-sm text-red-600" :disabled="planBusy" @click="deleteTarget = plan">{{ t('modelTests.remove') }}</button></div>
           </div>
+          <section class="space-y-4" data-testid="admin-test-records">
+            <div><h2 class="text-lg font-semibold">{{ t('modelTests.records') }}</h2><p class="mt-1 text-xs text-gray-500">{{ t('modelTests.recordsHint') }}</p></div>
+            <div v-if="!adminJobs.length" class="card p-10 text-center text-sm text-gray-500">{{ t('modelTests.noRecords') }}</div>
+            <div v-else class="card divide-y divide-gray-100 overflow-hidden dark:divide-dark-700">
+              <div v-for="job in adminJobs" :key="job.id" class="grid gap-4 p-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto] lg:items-center" :data-testid="`admin-job-${job.id}`">
+                <div class="min-w-0"><p class="font-medium">{{ job.label }} <span class="ml-2 text-xs font-normal text-gray-400">{{ kindLabel(job.test_kind) }}</span></p><p class="mt-1 break-all font-mono text-xs text-gray-500">{{ job.model }}</p><p class="mt-2 text-xs text-gray-400">{{ date(job.created_at) }} · {{ duration(job.total_ms) }}</p></div>
+                <div class="min-w-0 space-y-2"><span class="inline-flex rounded-full px-2.5 py-1 text-xs font-medium" :class="statusClass(job)">{{ statusLabel(job) }}</span><p class="break-words text-sm"><span class="mr-2 text-xs text-gray-400">{{ t('modelTests.upstream') }}</span>{{ upstreamLabel(job) }}</p></div>
+                <div class="flex flex-wrap gap-2"><button class="btn btn-secondary btn-sm" :data-testid="`view-admin-job-${job.id}`" @click="showResult(job, false, true)">{{ t('modelTests.view') }}</button><button class="btn btn-secondary btn-sm" :disabled="actionBusy || isActiveJob(job)" :data-testid="`retry-job-${job.id}`" @click="runTarget = { type: 'job', job }">{{ t('modelTests.retry') }}</button><button class="btn btn-secondary btn-sm text-red-600" :disabled="actionBusy || job.status === 'running'" :title="job.status === 'running' ? t('modelTests.activeDeleteHint') : undefined" :data-testid="`delete-job-${job.id}`" @click="deleteJobTarget = job">{{ t('modelTests.deleteResult') }}</button></div>
+              </div>
+            </div>
+          </section>
         </template>
       </div>
     </div>
@@ -124,6 +135,10 @@
       <div v-else-if="selected" class="space-y-5">
         <div class="flex flex-wrap items-center justify-between gap-3"><div><p class="font-semibold">{{ selected.label }} · {{ kindLabel(selected.test_kind) }}</p><p class="mt-1 break-all font-mono text-xs text-gray-500">{{ selected.model }}</p></div><span class="rounded-full px-3 py-1.5 text-xs" :class="statusClass(selected)">{{ statusLabel(selected) }}</span></div>
         <dl class="grid grid-cols-2 gap-4 rounded-xl bg-gray-50 p-4 text-sm dark:bg-dark-800"><div><dt class="text-xs text-gray-400">{{ t('modelTests.created') }}</dt><dd class="mt-1">{{ date(selected.created_at) }}</dd></div><div><dt class="text-xs text-gray-400">{{ t('modelTests.expires') }}</dt><dd class="mt-1">{{ date(selected.expires_at) }}</dd></div><div><dt class="text-xs text-gray-400">{{ t('modelTests.time') }}</dt><dd class="mt-1">{{ duration(selected.total_ms) }}</dd></div><div v-if="selected.input_tokens || selected.output_tokens"><dt class="text-xs text-gray-400">{{ t('modelTests.tokens') }}</dt><dd class="mt-1">{{ selected.input_tokens.toLocaleString() }} → {{ selected.output_tokens.toLocaleString() }}</dd></div></dl>
+        <section v-if="selectedAdmin && auth.isAdmin" class="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-dark-700" data-testid="admin-upstream-detail">
+          <p class="text-sm"><span class="mr-2 text-gray-500">{{ t('modelTests.upstream') }}</span><strong>{{ upstreamLabel(selectedAdmin) }}</strong></p>
+          <template v-if="selectedAdmin.upstream_attempts.length"><h3 class="text-xs font-medium text-gray-500">{{ t('modelTests.attempts') }}</h3><ol class="space-y-2"><li v-for="(attempt, index) in selectedAdmin.upstream_attempts" :key="`${attempt.account_id}-${index}`" class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-dark-800"><span class="min-w-0 break-words">{{ index + 1 }}. {{ attempt.account_name || `#${attempt.account_id}` }}</span><span class="text-xs" :class="attempt.success ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'">{{ t(attempt.success ? 'modelTests.attemptSucceeded' : 'modelTests.attemptFailed') }}{{ attempt.status_code ? ` · HTTP ${attempt.status_code}` : '' }}</span></li></ol></template>
+        </section>
         <p v-if="selected.status === 'queued' || selected.status === 'running'" class="rounded-xl bg-primary-50 p-4 text-sm text-primary-700 dark:bg-primary-500/10 dark:text-primary-200" role="status">{{ t('modelTests.background') }}</p>
         <p v-if="selected.error_code" class="rounded-xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">{{ errorLabel(selected.error_code) }}</p>
         <template v-if="selected.test_kind === 'pelican' && selected.content">
@@ -148,6 +163,8 @@
       </form>
     </BaseDialog>
     <BaseDialog :show="Boolean(deleteTarget)" :title="t('modelTests.remove')" width="narrow" @close="deleteTarget = null"><p class="text-sm">{{ t('modelTests.removeConfirm') }}</p><template #footer><button class="btn btn-secondary" @click="deleteTarget = null">{{ t('modelTests.cancel') }}</button><button class="btn btn-danger" :disabled="planBusy" @click="removePlan">{{ t('modelTests.remove') }}</button></template></BaseDialog>
+    <BaseDialog :show="Boolean(deleteJobTarget) && auth.isAdmin" :title="t('modelTests.deleteResult')" width="narrow" @close="!actionBusy && (deleteJobTarget = null)"><p class="text-sm leading-7">{{ t('modelTests.deleteResultConfirm') }}</p><template #footer><button class="btn btn-secondary" :disabled="actionBusy" @click="deleteJobTarget = null">{{ t('modelTests.cancel') }}</button><button class="btn btn-danger" :disabled="actionBusy" data-testid="confirm-delete-result" @click="removeJob">{{ t('modelTests.deleteResult') }}</button></template></BaseDialog>
+    <BaseDialog :show="Boolean(runTarget) && auth.isAdmin" :title="t(runTarget?.type === 'job' ? 'modelTests.retry' : 'modelTests.runNow')" width="narrow" @close="!actionBusy && (runTarget = null)"><p class="text-sm leading-7">{{ t(runTarget?.type === 'job' ? 'modelTests.retryConfirm' : 'modelTests.runConfirm') }}</p><p class="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-6 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">{{ t('modelTests.runCostHint') }}</p><template #footer><button class="btn btn-secondary" :disabled="actionBusy" @click="runTarget = null">{{ t('modelTests.cancel') }}</button><button class="btn btn-primary" :disabled="actionBusy" data-testid="confirm-run-test" @click="runTest">{{ t(runTarget?.type === 'job' ? 'modelTests.retry' : 'modelTests.runNow') }}</button></template></BaseDialog>
   </AppLayout>
 </template>
 
@@ -163,7 +180,7 @@ import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { prepareSvgPreview, QUICK_TEST_PROMPTS } from '@/utils/availabilityQuickTests'
 import { getCatalog } from '@/api/admin/availability'
-import { modelTestsAPI, type ModelTestJob, type ModelTestKind, type ModelTestPlan, type ModelTestPlanInput, type ModelTestOverview, type ModelTestKey, type ModelTestGroup } from '@/api/modelTests'
+import { modelTestsAPI, type AdminModelTestJob, type ModelTestJob, type ModelTestKind, type ModelTestPlan, type ModelTestPlanInput, type ModelTestOverview, type ModelTestKey, type ModelTestGroup } from '@/api/modelTests'
 
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -175,6 +192,7 @@ const tab = ref<Tab>(route.path.startsWith('/admin/') ? 'manage' : route.query.t
 const tabs = computed(() => [{ id: 'automatic' as Tab, label: t('modelTests.automatic') }, { id: 'mine' as Tab, label: t('modelTests.mine') }, ...(auth.isAdmin ? [{ id: 'manage' as Tab, label: t('modelTests.manage') }] : [])])
 const overview = ref<ModelTestOverview>({ plans: [], jobs: [], interval_hours: 2, retention_hours: 24 })
 const mine = ref<ModelTestJob[]>([])
+const adminJobs = ref<AdminModelTestJob[]>([])
 const keys = ref<ModelTestKey[]>([])
 const groups = ref<ModelTestGroup[]>([])
 const loading = ref(false)
@@ -187,6 +205,8 @@ const submitting = ref(false)
 const resultOpen = ref(false)
 const detailLoading = ref(false)
 const selected = ref<ModelTestJob | null>(null)
+const selectedAdmin = ref<AdminModelTestJob | null>(null)
+const resultAdmin = ref(false)
 const previewFailed = ref(false)
 const now = ref(new Date().toISOString())
 const planOpen = ref(false)
@@ -195,8 +215,13 @@ const planForm = reactive<ModelTestPlanInput>({ label: '', group_id: 0, model: '
 const planModels = ref<string[]>([])
 const planBusy = ref(false)
 const deleteTarget = ref<ModelTestPlan | null>(null)
+const deleteJobTarget = ref<AdminModelTestJob | null>(null)
+const runTarget = ref<{ type: 'job'; job: AdminModelTestJob } | { type: 'plan'; plan: ModelTestPlan } | null>(null)
+const actionBusy = ref(false)
+const adminSubmissions = new Map<string, string>()
 let poll: ReturnType<typeof setTimeout> | undefined
 let disposed = false
+let refreshPending = false
 let modelVersion = 0
 let detailVersion = 0
 let planModelVersion = 0
@@ -205,6 +230,9 @@ let submission: { signature: string; id: string } | null = null
 const pendingCount = computed(() => mine.value.filter(j => j.status === 'queued' || j.status === 'running').length)
 const svgPreview = computed(() => selected.value?.test_kind === 'pelican' && selected.value.content ? prepareSvgPreview(selected.value.content) : null)
 const planJobs = (id: number) => overview.value.jobs.filter(job => job.plan_id === id)
+const isActiveJob = (job: ModelTestJob) => job.status === 'queued' || job.status === 'running'
+const planHasActiveJob = (id: number) => adminJobs.value.some(job => job.plan_id === id && isActiveJob(job))
+function upstreamLabel(job: AdminModelTestJob) { return job.upstream_account_name || (job.upstream_account_id ? `#${job.upstream_account_id}` : t(isActiveJob(job) ? 'modelTests.upstreamWaiting' : 'modelTests.upstreamMissing')) }
 const stats = computed(() => {
   const jobs = overview.value.jobs
   const completed = jobs.filter(j => j.status === 'succeeded')
@@ -238,27 +266,39 @@ function notifyError(error: unknown) { app.showError(extractApiErrorMessage(erro
 function setTab(value: Tab) {
   tab.value = value
   void router.replace(value === 'manage' ? '/admin/model-tests' : { path: '/model-tests', query: value === 'mine' ? { tab: 'mine' } : {} })
+  void load(true)
 }
 watch(() => route.fullPath, () => { tab.value = route.path.startsWith('/admin/') ? 'manage' : route.query.tab === 'mine' ? 'mine' : 'automatic' })
 
 async function load(showError = false) {
-  if (loading.value || disposed) return
+  if (disposed) return
+  if (loading.value) { refreshPending ||= showError; return }
   loading.value = true
   try {
-    const results = await Promise.allSettled([modelTestsAPI.overview(), modelTestsAPI.mine()])
+    const includeAdmin = auth.isAdmin && (tab.value === 'manage' || resultAdmin.value)
+    const results = await Promise.allSettled([modelTestsAPI.overview(), modelTestsAPI.mine(), includeAdmin ? modelTestsAPI.adminJobs() : Promise.resolve(null)])
     if (disposed) return
     if (results[0].status === 'fulfilled') overview.value = results[0].value
     else if (showError) notifyError(results[0].reason)
     if (results[1].status === 'fulfilled') mine.value = results[1].value
     else if (showError) notifyError(results[1].reason)
+    const adminResult = results[2]
+    if (adminResult.status === 'fulfilled' && adminResult.value) adminJobs.value = adminResult.value
+    else if (adminResult?.status === 'rejected' && showError) notifyError(adminResult.reason)
     now.value = new Date().toISOString()
-    // Enforce expiry in the open page too; an expired preview must not linger.
+    // Successful list refreshes also remove deleted results from an open preview.
     if (selected.value && Date.parse(selected.value.expires_at) <= Date.now()) closeResult()
-    else if (selected.value && resultOpen.value && ['queued', 'running'].includes(selected.value.status)) {
-      const current = [...mine.value, ...overview.value.jobs].find(job => job.id === selected.value?.id)
-      if (current && current.status !== selected.value.status) await showResult(current, true)
+    else if (selected.value && resultOpen.value) {
+      const refreshed = resultAdmin.value ? adminResult.status === 'fulfilled' && adminResult.value !== null : selected.value.source === 'user' ? results[1].status === 'fulfilled' : results[0].status === 'fulfilled'
+      const current = (resultAdmin.value ? adminJobs.value : selected.value.source === 'user' ? mine.value : overview.value.jobs).find(job => job.id === selected.value?.id)
+      if (refreshed && !current) closeResult()
+      else if (current && current.status !== selected.value.status) await showResult(current, true, resultAdmin.value)
     }
-  } finally { loading.value = false }
+  } finally {
+    loading.value = false
+    // A mutation or tab change may finish while an older poll is in flight.
+    if (refreshPending && !disposed) { refreshPending = false; void load(true) }
+  }
 }
 async function loadKeys() {
   try { keys.value = await modelTestsAPI.keys() } catch (error) { notifyError(error) }
@@ -287,16 +327,16 @@ async function submit() {
   } catch (error) { notifyError(error) }
   finally { submitting.value = false }
 }
-async function showResult(job: ModelTestJob, silent = false) {
+async function showResult(job: ModelTestJob, silent = false, admin = false) {
   const version = ++detailVersion
-  if (!silent) { selected.value = null; previewFailed.value = false; detailLoading.value = true; resultOpen.value = true }
+  if (!silent) { selected.value = null; selectedAdmin.value = null; resultAdmin.value = admin && auth.isAdmin; previewFailed.value = false; detailLoading.value = true; resultOpen.value = true }
   try {
-    const detail = await modelTestsAPI.detail(job.id, job.source)
-    if (version === detailVersion && !disposed) { selected.value = detail; previewFailed.value = false }
-  } catch (error) { if (version === detailVersion && !disposed) { selected.value = null; if (!silent) notifyError(error) } }
+    const detail = admin && auth.isAdmin ? await modelTestsAPI.adminDetail(job.id) : await modelTestsAPI.detail(job.id, job.source)
+    if (version === detailVersion && !disposed) { selected.value = detail; selectedAdmin.value = admin && auth.isAdmin ? detail as AdminModelTestJob : null; previewFailed.value = false }
+  } catch (error) { if (version === detailVersion && !disposed) { selected.value = null; selectedAdmin.value = null; if (!silent) notifyError(error) } }
   finally { if (version === detailVersion) detailLoading.value = false }
 }
-function closeResult() { detailVersion++; resultOpen.value = false; selected.value = null }
+function closeResult() { detailVersion++; resultOpen.value = false; selected.value = null; selectedAdmin.value = null; resultAdmin.value = false }
 async function editPlan(plan: ModelTestPlan | null) {
   editingId.value = plan?.id ?? null
   Object.assign(planForm, plan ? { label: plan.label, group_id: plan.group_id, model: plan.model, test_kind: plan.test_kind, enabled: plan.enabled } : { label: '', group_id: 0, model: '', test_kind: 'pelican', enabled: false })
@@ -332,9 +372,39 @@ async function removePlan() {
   catch (error) { notifyError(error) }
   finally { planBusy.value = false }
 }
+async function removeJob() {
+  if (!auth.isAdmin || !deleteJobTarget.value || actionBusy.value) return
+  actionBusy.value = true
+  const id = deleteJobTarget.value.id
+  try {
+    await modelTestsAPI.deleteJob(id)
+    deleteJobTarget.value = null
+    if (selected.value?.id === id) closeResult()
+    app.showSuccess(t('modelTests.resultDeleted'))
+    await load(true)
+  } catch (error) { notifyError(error) }
+  finally { actionBusy.value = false }
+}
+async function runTest() {
+  if (!auth.isAdmin || !runTarget.value || actionBusy.value) return
+  actionBusy.value = true
+  const target = runTarget.value
+  const signature = target.type === 'job' ? `job:${target.job.id}` : `plan:${target.plan.id}`
+  let requestId = adminSubmissions.get(signature)
+  if (!requestId) { requestId = crypto.randomUUID(); adminSubmissions.set(signature, requestId) }
+  try {
+    if (target.type === 'job') await modelTestsAPI.retryJob(target.job.id, requestId)
+    else await modelTestsAPI.runPlan(target.plan.id, requestId)
+    adminSubmissions.delete(signature)
+    runTarget.value = null
+    app.showSuccess(t('modelTests.runSubmitted'))
+    await load(true)
+  } catch (error) { notifyError(error) }
+  finally { actionBusy.value = false }
+}
 function visibilityChanged() { if (!document.hidden) void load() }
 function schedulePoll() {
-  poll = setTimeout(async () => { if (!document.hidden) await load(); if (!disposed) schedulePoll() }, pendingCount.value ? 4000 : 20000)
+  poll = setTimeout(async () => { if (!document.hidden) await load(); if (!disposed) schedulePoll() }, pendingCount.value || (auth.isAdmin && tab.value === 'manage' && adminJobs.value.some(isActiveJob)) ? 4000 : 20000)
 }
 onMounted(() => { void load(true); void loadKeys(); schedulePoll(); document.addEventListener('visibilitychange', visibilityChanged) })
 onUnmounted(() => { disposed = true; detailVersion++; modelVersion++; planModelVersion++; clearTimeout(poll); document.removeEventListener('visibilitychange', visibilityChanged) })

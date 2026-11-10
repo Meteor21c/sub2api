@@ -121,6 +121,53 @@ func (h *ModelTestHandler) AdminGroups(c *gin.Context) {
 	data, err := h.service.GroupOptions(c.Request.Context())
 	modelTestReply(c, data, err)
 }
+
+func (h *ModelTestHandler) AdminJobs(c *gin.Context) {
+	data, err := h.service.ListAdminJobs(c.Request.Context())
+	modelTestReply(c, data, err)
+}
+
+func (h *ModelTestHandler) AdminJobDetail(c *gin.Context) {
+	data, err := h.service.GetAdminJob(c.Request.Context(), c.Param("id"))
+	modelTestReply(c, data, err)
+}
+
+func (h *ModelTestHandler) DeleteAdminJob(c *gin.Context) {
+	err := h.service.DeleteAdminJob(c.Request.Context(), c.Param("id"))
+	modelTestReply(c, gin.H{"deleted": err == nil}, err)
+}
+
+func (h *ModelTestHandler) RetryAdminJob(c *gin.Context) {
+	h.runAdminTest(c, 0, c.Param("id"))
+}
+
+func (h *ModelTestHandler) RunAdminPlan(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		modelTestReply(c, nil, service.ErrModelTestInvalid)
+		return
+	}
+	h.runAdminTest(c, id, "")
+}
+
+func (h *ModelTestHandler) runAdminTest(c *gin.Context, planID int64, retryID string) {
+	actor, ok := modelTestOwner(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	var input service.ModelTestManualInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		modelTestReply(c, nil, service.ErrModelTestInvalid)
+		return
+	}
+	data, err := h.service.RunAdminTest(c.Request.Context(), actor, planID, retryID, input)
+	if err != nil {
+		modelTestReply(c, nil, err)
+		return
+	}
+	response.Accepted(c, data)
+}
 func (h *ModelTestHandler) SavePlan(c *gin.Context) {
 	owner, ok := modelTestOwner(c)
 	if !ok {

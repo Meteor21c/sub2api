@@ -205,3 +205,71 @@ func TestModelTestsBoundedCaptureAndSafeModels(t *testing.T) {
 	require.Equal(t, 2*time.Hour, ModelTestInterval)
 	require.Equal(t, 24*time.Hour, ModelTestRetention)
 }
+
+func TestModelTestsRoutingSnapshotIsAdministratorOnly(t *testing.T) {
+	j := &ModelTestJob{ID: uuid.NewString(), Source: "scheduled", Status: "failed"}
+	applyModelTestRouting(j, &AccountTestDebugResult{
+		AccountID: 19, AccountName: "private-final-channel", Success: false,
+		Endpoint: "https://private-provider.example", Error: "private provider diagnostic",
+		Attempts: []AccountTestDebugAttempt{
+			{AccountID: 18, AccountName: "private-first-channel", Success: false, StatusCode: 503, Endpoint: "https://private-provider.example", Error: "secret diagnostic"},
+			{AccountID: 19, AccountName: "private-final-channel", Success: false, StatusCode: 429},
+		},
+	})
+	require.Equal(t, int64(19), *j.UpstreamAccountID)
+	require.Len(t, j.UpstreamAttempts, 2)
+	public, err := json.Marshal(j)
+	require.NoError(t, err)
+	require.NotContains(t, string(public), "upstream_")
+	require.NotContains(t, string(public), "private-")
+	admin, err := json.Marshal(ModelTestAdminView(*j))
+	require.NoError(t, err)
+	require.Contains(t, string(admin), `"upstream_account_id":19`)
+	require.Contains(t, string(admin), "private-first-channel")
+	require.NotContains(t, string(admin), "private-provider")
+	require.NotContains(t, string(admin), "diagnostic")
+	var empty map[string]any
+	raw, err := json.Marshal(ModelTestAdminView(ModelTestJob{}))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &empty))
+	require.Equal(t, []any{}, empty["upstream_attempts"])
+}
+
+type modelTestAdminRepoStub struct {
+	ModelTestRepository
+	actor     int64
+	plan      int64
+	retry     string
+	requestID string
+	job       ModelTestJob
+}
+
+func (r *modelTestAdminRepoStub) CreateManualJob(_ context.Context, actor, plan int64, retry, requestID string) (*ModelTestJob, error) {
+	r.actor, r.plan, r.retry, r.requestID = actor, plan, retry, requestID
+	return &r.job, nil
+}
+
+func TestModelTestsManualRunValidationAndAdminShape(t *testing.T) {
+	repo := &modelTestAdminRepoStub{job: ModelTestJob{ID: uuid.NewString(), Source: "scheduled", Manual: true}}
+	svc := NewModelTestService(repo, nil, nil, nil)
+	requestID := uuid.NewString()
+	for _, in := range []ModelTestManualInput{{ClientRequestID: "bad-id"}, {ClientRequestID: uuid.Nil.String()}} {
+		_, err := svc.RunAdminTest(context.Background(), 1, 2, "", in)
+		require.ErrorIs(t, err, ErrModelTestInvalid)
+	}
+	_, err := svc.RunAdminTest(context.Background(), 1, 2, uuid.NewString(), ModelTestManualInput{ClientRequestID: requestID})
+	require.ErrorIs(t, err, ErrModelTestInvalid)
+	_, err = svc.RunAdminTest(context.Background(), 1, 0, "bad-id", ModelTestManualInput{ClientRequestID: requestID})
+	require.ErrorIs(t, err, ErrModelTestNotFound)
+	require.Zero(t, repo.actor, "invalid submissions must not enter the queue")
+	view, err := svc.RunAdminTest(context.Background(), 1, 2, "", ModelTestManualInput{ClientRequestID: requestID})
+	require.NoError(t, err)
+	require.True(t, view.Manual)
+	require.Equal(t, int64(1), repo.actor)
+	require.Equal(t, int64(2), repo.plan)
+	require.Equal(t, requestID, repo.requestID)
+	retryID := uuid.NewString()
+	_, err = svc.RunAdminTest(context.Background(), 1, 0, retryID, ModelTestManualInput{ClientRequestID: uuid.NewString()})
+	require.NoError(t, err)
+	require.Equal(t, retryID, repo.retry)
+}

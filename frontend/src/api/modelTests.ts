@@ -40,6 +40,19 @@ export interface ModelTestOverview {
   interval_hours: number
   retention_hours: number
 }
+export interface ModelTestUpstreamAttempt {
+  account_id: number
+  account_name: string
+  success: boolean
+  status_code: number
+}
+export interface AdminModelTestJob extends ModelTestJob {
+  manual: boolean
+  retry_of: string | null
+  upstream_account_id: number | null
+  upstream_account_name: string
+  upstream_attempts: ModelTestUpstreamAttempt[]
+}
 export interface ModelTestKey { id: number; name: string; group_name: string }
 export interface ModelTestGroup { id: number; name: string }
 
@@ -60,5 +73,14 @@ export const modelTestsAPI = {
   async savePlan(id: number | null, input: ModelTestPlanInput): Promise<ModelTestPlan> {
     return (id ? await apiClient.put<ModelTestPlan>(`${admin}/plans/${id}`, input) : await apiClient.post<ModelTestPlan>(`${admin}/plans`, input)).data
   },
-  async deletePlan(id: number): Promise<void> { await apiClient.delete(`${admin}/plans/${id}`) }
+  async deletePlan(id: number): Promise<void> { await apiClient.delete(`${admin}/plans/${id}`) },
+  async adminJobs(): Promise<AdminModelTestJob[]> { return (await apiClient.get<AdminModelTestJob[]>(`${admin}/jobs`)).data },
+  async adminDetail(id: string): Promise<AdminModelTestJob> { return (await apiClient.get<AdminModelTestJob>(`${admin}/jobs/${id}`)).data },
+  async deleteJob(id: string): Promise<void> { await apiClient.delete(`${admin}/jobs/${id}`) },
+  async retryJob(id: string, requestId: string): Promise<AdminModelTestJob> {
+    return (await apiClient.post<AdminModelTestJob>(`${admin}/jobs/${id}/retry`, { client_request_id: requestId })).data
+  },
+  async runPlan(id: number, requestId: string): Promise<AdminModelTestJob> {
+    return (await apiClient.post<AdminModelTestJob>(`${admin}/plans/${id}/run`, { client_request_id: requestId })).data
+  }
 }

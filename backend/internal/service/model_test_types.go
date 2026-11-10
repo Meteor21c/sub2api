@@ -22,6 +22,7 @@ var (
 	ErrModelTestKey         = infraerrors.Forbidden("MODEL_TEST_KEY_UNAVAILABLE", "请选择本人有效且已绑定分组的 API Key")
 	ErrModelTestLimit       = infraerrors.New(429, "MODEL_TEST_LIMIT", "测试任务较多，请稍后再试（每人最多同时 2 项、每小时 20 项）")
 	ErrModelTestConflict    = infraerrors.New(409, "MODEL_TEST_CONFLICT", "本次提交已用于另一项测试，请重新提交")
+	ErrModelTestBusy        = infraerrors.New(409, "MODEL_TEST_BUSY", "测试仍在排队或运行，请完成后再操作")
 	ErrModelTestUnavailable = infraerrors.New(503, "MODEL_TEST_UNAVAILABLE", "测试服务暂不可用，请稍后再试")
 )
 
@@ -68,6 +69,43 @@ type ModelTestJob struct {
 	StartedAt       *time.Time `json:"started_at"`
 	CompletedAt     *time.Time `json:"completed_at"`
 	ExpiresAt       time.Time  `json:"expires_at"`
+	// Routing details are persisted for administrator inspection only.
+	UpstreamAccountID   *int64                     `json:"-"`
+	UpstreamAccountName string                     `json:"-"`
+	UpstreamAttempts    []ModelTestUpstreamAttempt `json:"-"`
+	Manual              bool                       `json:"-"`
+	RetryOf             *string                    `json:"-"`
+}
+
+type ModelTestUpstreamAttempt struct {
+	AccountID   int64  `json:"account_id"`
+	AccountName string `json:"account_name"`
+	Success     bool   `json:"success"`
+	StatusCode  int    `json:"status_code"`
+}
+
+// ModelTestAdminJob is deliberately separate from the customer DTO. Never
+// return this shape through the authenticated customer routes.
+type ModelTestAdminJob struct {
+	ModelTestJob
+	UpstreamAccountID   *int64                     `json:"upstream_account_id"`
+	UpstreamAccountName string                     `json:"upstream_account_name"`
+	UpstreamAttempts    []ModelTestUpstreamAttempt `json:"upstream_attempts"`
+	Manual              bool                       `json:"manual"`
+	RetryOf             *string                    `json:"retry_of"`
+}
+
+func ModelTestAdminView(j ModelTestJob) ModelTestAdminJob {
+	attempts := j.UpstreamAttempts
+	if attempts == nil {
+		attempts = []ModelTestUpstreamAttempt{}
+	}
+	return ModelTestAdminJob{ModelTestJob: j, UpstreamAccountID: j.UpstreamAccountID,
+		UpstreamAccountName: j.UpstreamAccountName, UpstreamAttempts: attempts, Manual: j.Manual, RetryOf: j.RetryOf}
+}
+
+type ModelTestManualInput struct {
+	ClientRequestID string `json:"client_request_id"`
 }
 
 type ModelTestSubmitInput struct {
@@ -96,6 +134,10 @@ type ModelTestRepository interface {
 	CreateUserJob(context.Context, *ModelTestJob) (*ModelTestJob, error)
 	ListJobs(context.Context, int64, string) ([]ModelTestJob, error)
 	GetJob(context.Context, int64, string, string) (*ModelTestJob, error)
+	ListAdminJobs(context.Context) ([]ModelTestJob, error)
+	GetAdminJob(context.Context, string) (*ModelTestJob, error)
+	DeleteAdminJob(context.Context, string) error
+	CreateManualJob(context.Context, int64, int64, string, string) (*ModelTestJob, error)
 	Claim(context.Context, string) (*ModelTestJob, error)
 	Finish(context.Context, string, *ModelTestJob) error
 	Cleanup(context.Context) error
