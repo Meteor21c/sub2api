@@ -300,7 +300,7 @@ func TestAvailabilityAttemptTrackerPreservesWhitespaceInContentDeltas(t *testing
 			}
 			for _, event := range repo.events {
 				if event.Type == AvailabilityEventContentDelta {
-					replay.WriteString(event.Delta)
+					_, _ = replay.WriteString(event.Delta)
 				}
 			}
 			want := strings.Join(tc.chunks, "")
