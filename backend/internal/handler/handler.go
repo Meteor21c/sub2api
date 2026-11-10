@@ -52,6 +52,7 @@ type Handlers struct {
 	CanvasPilot      *CanvasPilotHandler
 	Auth             *AuthHandler
 	User             *UserHandler
+	MCPOAuth         *MCPOAuthHandler
 	APIKey           *APIKeyHandler
 	Usage            *UsageHandler
 	Redeem           *RedeemHandler
