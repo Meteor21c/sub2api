@@ -616,18 +616,27 @@ function amountFitsMethod(amt: number, methodType: string): boolean {
   return true
 }
 
-// Visible methods decide the amount range shown to users.
+// Recharge settings constrain the entered amount, independently of discounts.
+const rechargeMinAmount = computed(() => checkout.value.min_amount ?? 0)
+const rechargeMaxAmount = computed(() => checkout.value.max_amount ?? 0)
+const amountFitsRechargeLimits = computed(() =>
+  (rechargeMinAmount.value <= 0 || validAmount.value >= rechargeMinAmount.value)
+    && (rechargeMaxAmount.value <= 0 || validAmount.value <= rechargeMaxAmount.value)
+)
+
+// Keep quick amounts inside both site-wide and visible payment-method bounds.
 const globalMinAmount = computed(() => {
   const limits = Object.values(visibleMethods.value)
-  if (limits.length === 0) return 0
-  if (limits.some(limit => limit.single_min <= 0)) return 0
-  return Math.min(...limits.map(limit => limit.single_min))
+  const methodMin = limits.length === 0 || limits.some(limit => limit.single_min <= 0)
+    ? 0 : Math.min(...limits.map(limit => limit.single_min))
+  return Math.max(rechargeMinAmount.value, methodMin)
 })
 const globalMaxAmount = computed(() => {
   const limits = Object.values(visibleMethods.value)
-  if (limits.length === 0) return 0
-  if (limits.some(limit => limit.single_max <= 0)) return 0
-  return Math.max(...limits.map(limit => limit.single_max))
+  const methodMax = limits.length === 0 || limits.some(limit => limit.single_max <= 0)
+    ? 0 : Math.max(...limits.map(limit => limit.single_max))
+  if (rechargeMaxAmount.value <= 0) return methodMax
+  return methodMax > 0 ? Math.min(rechargeMaxAmount.value, methodMax) : rechargeMaxAmount.value
 })
 
 // Selected method's limits (for validation and error messages)
@@ -738,6 +747,12 @@ const showActualPay = computed(() => rechargeFeeRate.value !== 0 || discountAmou
 
 const amountError = computed(() => {
   if (validAmount.value <= 0) return ''
+  if (rechargeMinAmount.value > 0 && validAmount.value < rechargeMinAmount.value) {
+    return t('payment.amountTooLow', { min: formatSelectedPaymentAmount(rechargeMinAmount.value) })
+  }
+  if (rechargeMaxAmount.value > 0 && validAmount.value > rechargeMaxAmount.value) {
+    return t('payment.amountTooHigh', { max: formatSelectedPaymentAmount(rechargeMaxAmount.value) })
+  }
   // No method can handle this amount
   if (!enabledMethods.value.some((m) => amountFitsMethod(payBaseAmount.value, m))) {
     return t('payment.amountNoMethod')
@@ -753,6 +768,7 @@ const amountError = computed(() => {
 
 const canSubmit = computed(() =>
   validAmount.value > 0
+    && amountFitsRechargeLimits.value
     && amountFitsMethod(payBaseAmount.value, selectedMethod.value)
     && selectedLimit.value?.available !== false
 )

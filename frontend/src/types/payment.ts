@@ -81,6 +81,9 @@ export interface CheckoutInfoResponse {
   methods: Record<string, MethodLimit>
   global_min: number
   global_max: number
+  /** Site-wide bounds on the entered recharge amount; 0 or absent = unlimited. */
+  min_amount?: number
+  max_amount?: number
   plans: SubscriptionPlan[]
   balance_disabled: boolean
   balance_recharge_multiplier: number
