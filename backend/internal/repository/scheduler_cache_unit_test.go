@@ -584,6 +584,50 @@ func TestBuildSchedulerMetadataAccount_KeepsOpenAIImageSizeTiers(t *testing.T) {
 	require.Nil(t, got.Extra["unused_large_field"])
 }
 
+func TestSchedulerCacheSnapshotPreservesImageOutputFormatEligibility(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 23, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	account := service.Account{
+		ID: 106, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Status: service.StatusActive, Schedulable: true,
+		Credentials: map[string]any{"model_mapping": map[string]any{"gpt-image-2.6-adobe": "gpt-image-2.6-sunburst"}},
+		Extra: map[string]any{
+			service.AccountExtraOpenAIImageOutputFormats: map[string]any{
+				"gpt-image-2.6": []any{"gif"}, "gpt-image-2.6-sunburst": []any{"gif"},
+			},
+			"unused_large_field": "drop-me",
+		},
+	}
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{account}))
+
+	assertFormats := func(generic, sunburst bool) {
+		t.Helper()
+		accounts, hit, err := cache.GetSnapshot(ctx, bucket)
+		require.NoError(t, err)
+		require.True(t, hit)
+		require.Len(t, accounts, 1)
+		cached := accounts[0]
+		require.Equal(t, generic, cached.SupportsOpenAIImageOutputFormat("gpt-image-2.6", "gif"))
+		require.Equal(t, sunburst, cached.SupportsOpenAIImageOutputFormat("gpt-image-2.6-sunburst", "gif"))
+		require.Equal(t, sunburst, cached.SupportsOpenAIImageOutputFormat("gpt-image-2.6-adobe", "gif"))
+		require.False(t, cached.SupportsOpenAIImageOutputFormat("gpt-image-2.6-flare", "gif"))
+		require.False(t, cached.SupportsOpenAIImageOutputFormat("gpt-image-2.5", "gif"))
+		require.NotContains(t, cached.Extra, "unused_large_field")
+	}
+	assertFormats(true, true)
+
+	// A capability edit must refresh the metadata used by cached candidates too.
+	account.Extra[service.AccountExtraOpenAIImageOutputFormats] = map[string]any{"gpt-image-2.6": []any{"gif"}}
+	require.NoError(t, cache.SetAccount(ctx, &account))
+	assertFormats(true, false)
+	delete(account.Extra, service.AccountExtraOpenAIImageOutputFormats)
+	require.NoError(t, cache.SetAccount(ctx, &account))
+	assertFormats(false, false)
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsModelRateLimits(t *testing.T) {
 	account := service.Account{
 		ID:       90,
