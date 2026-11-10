@@ -14,6 +14,16 @@ func TestImageGIFRequiresVerifiedUpstreamModel(t *testing.T) {
 	require.True(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2.6", "gif"))
 	require.False(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2", "gif"))
 	require.False(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2.6-sunburst", "gif"))
+	// Verification for one upstream model never enables its siblings implicitly.
+	require.False(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2.6-flare", "gif"))
+	a.Extra[AccountExtraOpenAIImageOutputFormats] = map[string]any{"gpt-image-2.6-sunburst": []any{"gif"}, "gpt-image-2.6-flare": []string{"gif"}, "gpt-image-2.5": []any{"gif"}}
+	require.True(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2.6-sunburst", "gif"))
+	require.True(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2.6-flare", "gif"))
+	require.False(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2.6", "gif"))
+	require.False(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2.5", "gif"))
+	a.Credentials = map[string]any{"model_mapping": map[string]any{"gpt-image-2.6-adobe": "gpt-image-2.6-sunburst"}}
+	require.True(t, a.SupportsOpenAIImageOutputFormat("gpt-image-2.6-adobe", "gif"))
+	a.Extra[AccountExtraOpenAIImageOutputFormats] = map[string]any{"gpt-image-2.6": []any{"gif"}}
 	a.Credentials = map[string]any{"model_mapping": map[string]any{"alias": "gpt-image-2.6"}}
 	require.True(t, a.SupportsOpenAIImageOutputFormat("alias", "gif"))
 	a.Type = AccountTypeOAuth
@@ -23,24 +33,29 @@ func TestImageGIFRequiresVerifiedUpstreamModel(t *testing.T) {
 
 func TestImageGIFRoutingCannotEscapeToUnsupportedAccounts(t *testing.T) {
 	for _, mode := range openAIImageSizeSchedulerModes {
-		t.Run(mode.name, func(t *testing.T) {
-			accounts := []Account{newOpenAIImageSizeTestAccount(86101, 0), newOpenAIImageSizeTestAccount(86102, 9)}
-			accounts[1].Extra[AccountExtraOpenAIImageOutputFormats] = map[string]any{"gpt-image-2.6": []any{"gif"}}
-			cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:gif-session": 86101}}
-			svc := newOpenAIImageSizeSchedulerTestService(mode, accounts, cache, schedulerTestConcurrencyCache{})
-			groupID := int64(93601)
-			ctx := WithOpenAIImageOutputRouting(WithOpenAIImagesEndpoint(context.Background()), "gpt-image-2.6", "gif")
-			selected, _, err := svc.SelectAccountWithSchedulerForImages(ctx, &groupID, "gif-session", "gpt-image-2.6", nil, OpenAIImagesCapabilityNative)
-			require.NoError(t, err)
-			require.Equal(t, int64(86102), selected.Account.ID)
-			if selected.ReleaseFunc != nil {
-				selected.ReleaseFunc()
-			}
-			// Failover must not reuse the otherwise higher-priority static account.
-			selected, _, err = svc.SelectAccountWithSchedulerForImages(ctx, &groupID, "", "gpt-image-2.6", map[int64]struct{}{86102: {}}, OpenAIImagesCapabilityNative)
-			require.Error(t, err)
-			require.Nil(t, selected)
-		})
+		for _, variant := range []struct{ requested, upstream string }{{"gpt-image-2.6", "gpt-image-2.6"}, {"gpt-image-2.6-flare", "gpt-image-2.6-flare"}, {"gpt-image-2.6-adobe", "gpt-image-2.6-sunburst"}} {
+			t.Run(mode.name+"/"+variant.requested, func(t *testing.T) {
+				accounts := []Account{newOpenAIImageSizeTestAccount(86101, 0), newOpenAIImageSizeTestAccount(86102, 9)}
+				for i := range accounts {
+					accounts[i].Credentials = map[string]any{"model_mapping": map[string]any{variant.requested: variant.upstream}}
+				}
+				accounts[1].Extra[AccountExtraOpenAIImageOutputFormats] = map[string]any{variant.upstream: []any{"gif"}}
+				cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:gif-session": 86101}}
+				svc := newOpenAIImageSizeSchedulerTestService(mode, accounts, cache, schedulerTestConcurrencyCache{})
+				groupID := int64(93601)
+				ctx := WithOpenAIImageOutputRouting(WithOpenAIImagesEndpoint(context.Background()), variant.requested, "gif")
+				selected, _, err := svc.SelectAccountWithSchedulerForImages(ctx, &groupID, "gif-session", variant.requested, nil, OpenAIImagesCapabilityNative)
+				require.NoError(t, err)
+				require.Equal(t, int64(86102), selected.Account.ID)
+				if selected.ReleaseFunc != nil {
+					selected.ReleaseFunc()
+				}
+				// Failover must not reuse the otherwise higher-priority static account.
+				selected, _, err = svc.SelectAccountWithSchedulerForImages(ctx, &groupID, "", variant.requested, map[int64]struct{}{86102: {}}, OpenAIImagesCapabilityNative)
+				require.Error(t, err)
+				require.Nil(t, selected)
+			})
+		}
 	}
 }
 

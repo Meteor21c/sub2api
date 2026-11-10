@@ -233,7 +233,7 @@ curl -sS 'https://api.meteor21c.fun/v1/models' \
 | `n` | integer | 否 | 生成张数，1–4，默认 1 |
 | `size` | string | 否 | 模型支持的尺寸，例如 `1024x1024`、`1536x1024`；不传时使用渠道默认值 |
 | `quality` | string | 否 | 模型支持的质量档位；例如部分模型使用 `auto`、`low`、`medium`、`high`，并非所有模型通用 |
-| `output_format` | string | 否 | 填 `gif` 生成动图，仅限已开放的 `gpt-image-2.6` 渠道；省略则生成普通图片 |
+| `output_format` | string | 否 | 填 `gif` 生成动图，仅限当前分组已开放的 Image 2.6 系列模型；省略则生成普通图片 |
 | `reference_material_ids` | string[] | 否 | 已完成上传的参考图片 ID，最多 4 个 |
 | `force_new` | boolean | 否 | 兼容保留字段，通常省略；当前不提供去重或防重复计费能力 |
 
@@ -242,6 +242,8 @@ curl -sS 'https://api.meteor21c.fun/v1/models' \
 GIF 动图每次仅生成 1 张，尺寸为 `auto`，暂不支持参考图、指定帧数或帧时长。SVG 暂未开放。
 
 使用相同 API Key 请求 `GET https://api.meteor21c.fun/v1/images/capabilities?model=gpt-image-2.6`，返回的 `output_formats` 含 `gif` 时可用。此查询不生成图片、不扣费；工具也会在提交前检查。
+
+查询时填写实际选用的模型名，例如 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst` 或 `gpt-image-2.6-adobe`。能力按当前 Key 所属分组判断，GIF 请求自动交给该分组内支持此模型和格式的上游，无需指定上游渠道。普通图片的模型选择和计费规则不变。
 
 动图示例参数：
 

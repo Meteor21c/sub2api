@@ -20,7 +20,9 @@ func (a *Account) SupportsOpenAIImageOutputFormat(model, format string) bool {
 		return false
 	}
 	upstream := a.GetMappedModel(model)
-	if upstream != "gpt-image-2.6" {
+	switch upstream {
+	case "gpt-image-2.6", "gpt-image-2.6-flare", "gpt-image-2.6-sunburst":
+	default:
 		return false
 	}
 	formats, _ := a.Extra[AccountExtraOpenAIImageOutputFormats].(map[string]any)

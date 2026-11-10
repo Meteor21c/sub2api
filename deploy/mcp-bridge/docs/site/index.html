@@ -280,7 +280,7 @@ codex
 <td><code>output_format</code></td>
 <td>string</td>
 <td>否</td>
-<td>填 <code>gif</code> 生成动图，仅限已开放的 <code>gpt-image-2.6</code> 渠道；省略则生成普通图片</td>
+<td>填 <code>gif</code> 生成动图，仅限当前分组已开放的 Image 2.6 系列模型；省略则生成普通图片</td>
 </tr>
 <tr>
 <td><code>reference_material_ids</code></td>
@@ -299,6 +299,7 @@ codex
 <p><code>quality</code> 和分辨率是不同概念。<code>low/medium/high</code> 不代表 <code>1K/2K/4K</code>；需要更高分辨率时，按目标模型的尺寸规则填写 <code>size</code>。</p>
 <p>GIF 动图每次仅生成 1 张，尺寸为 <code>auto</code>，暂不支持参考图、指定帧数或帧时长。SVG 暂未开放。</p>
 <p>使用相同 API Key 请求 <code>GET https://api.meteor21c.fun/v1/images/capabilities?model=gpt-image-2.6</code>，返回的 <code>output_formats</code> 含 <code>gif</code> 时可用。此查询不生成图片、不扣费；工具也会在提交前检查。</p>
+<p>查询时填写实际选用的模型名，例如 <code>gpt-image-2.6-flare</code>、<code>gpt-image-2.6-sunburst</code> 或 <code>gpt-image-2.6-adobe</code>。能力按当前 Key 所属分组判断，GIF 请求自动交给该分组内支持此模型和格式的上游，无需指定上游渠道。普通图片的模型选择和计费规则不变。</p>
 <p>动图示例参数：</p>
 <pre><code class="language-json">{&quot;model&quot;:&quot;gpt-image-2.6&quot;,&quot;prompt&quot;:&quot;一个蓝色圆球轻轻跳动，循环动画&quot;,&quot;n&quot;:1,&quot;size&quot;:&quot;auto&quot;,&quot;output_format&quot;:&quot;gif&quot;}
 </code></pre>
