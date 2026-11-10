@@ -1214,7 +1214,8 @@ func (t *availabilityAttemptTracker) setGinContext(c *gin.Context) {
 }
 
 func (t *availabilityAttemptTracker) observeContent(event TestEvent) {
-	if strings.TrimSpace(event.Text) == "" {
+	// Whitespace-only deltas can separate SVG coordinates, words or code.
+	if event.Text == "" {
 		return
 	}
 	now := time.Now().UTC()

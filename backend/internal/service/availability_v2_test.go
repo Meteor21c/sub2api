@@ -274,6 +274,46 @@ func TestAvailabilityAttemptTrackerPersistsOrderedEvents(t *testing.T) {
 	}
 }
 
+func TestAvailabilityAttemptTrackerPreservesWhitespaceInContentDeltas(t *testing.T) {
+	cases := []struct {
+		name   string
+		chunks []string
+	}{
+		{
+			name: "SVG coordinates and transforms",
+			chunks: []string{
+				`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0`, " ", "0", " ", "960", " ", `600">`, "\n",
+				`<g transform="translate(480`, " ", `320)"><path d="M0`, " ", "0L40", " ", `20"/></g>`, "\n", "</svg>",
+			},
+		},
+		{name: "prose and code indentation", chunks: []string{"hello", " ", "world", "\n", "\n", "\t", "return 21", "\n", ""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &availabilityV2TestRepo{turn: &AvailabilityTurn{ID: 9, ConversationID: 12, CreatedAt: time.Now()}}
+			svc := &AvailabilityV2Service{repo: repo}
+			run := &availabilityRun{conversationID: 12, turnID: 9, subscribers: make(map[uint64]chan AvailabilityEvent), doneCh: make(chan struct{})}
+			tracker := &availabilityAttemptTracker{service: svc, run: run, ownerUserID: 7, conversationID: 12, turn: repo.turn}
+			var replay strings.Builder
+			for _, chunk := range tc.chunks {
+				tracker.observe(TestEvent{Type: "content", Text: chunk})
+			}
+			for _, event := range repo.events {
+				if event.Type == AvailabilityEventContentDelta {
+					replay.WriteString(event.Delta)
+				}
+			}
+			want := strings.Join(tc.chunks, "")
+			if tracker.persistErr != nil || tracker.emitErr != nil {
+				t.Fatalf("content persistence failed: %v / %v", tracker.persistErr, tracker.emitErr)
+			}
+			if tracker.content.String() != want || repo.turn.Content != want || replay.String() != want {
+				t.Fatalf("stream whitespace changed: accumulated %q, saved %q, replay %q; want %q", tracker.content.String(), repo.turn.Content, replay.String(), want)
+			}
+		})
+	}
+}
+
 func TestAvailabilityAttemptTrackerResumesAttemptIndexAfterRestart(t *testing.T) {
 	repo := &availabilityV2TestRepo{}
 	svc := &AvailabilityV2Service{repo: repo}
