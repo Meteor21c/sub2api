@@ -60,3 +60,21 @@ func TestImageGIFRequestBoundaries(t *testing.T) {
 		require.Error(t, ValidateOpenAIImageGIFRequest(&req))
 	}
 }
+
+func TestImageGIFForwardRechecksPublicRoutingPolicy(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2.6","prompt":"draw","output_format":"gif","size":"auto"}`)
+	c, _ := newOpenAIImagesTestContext(t, body)
+	upstream := &httpUpstreamRecorder{resp: openAIImagesJSONResponse()}
+	svc := newOpenAIImagesTestService(upstream)
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	account := newOpenAIImagesAPIKeyAccount()
+	ctx := WithOpenAIImageOutputRouting(context.Background(), "gpt-image-2.6", "gif")
+	_, err = svc.ForwardImages(ctx, c, account, body, parsed, "")
+	require.ErrorContains(t, err, "does not support")
+	require.Empty(t, upstream.lastBody, "unsupported account must never reach provider")
+	account.Extra = map[string]any{AccountExtraOpenAIImageOutputFormats: map[string]any{"gpt-image-2.6": []any{"gif"}}}
+	_, err = svc.ForwardImages(ctx, c, account, body, parsed, "")
+	require.NoError(t, err)
+	require.JSONEq(t, string(body), string(upstream.lastBody))
+}
