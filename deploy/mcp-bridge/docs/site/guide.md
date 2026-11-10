@@ -233,12 +233,23 @@ curl -sS 'https://api.meteor21c.fun/v1/models' \
 | `n` | integer | 否 | 生成张数，1–4，默认 1 |
 | `size` | string | 否 | 模型支持的尺寸，例如 `1024x1024`、`1536x1024`；不传时使用渠道默认值 |
 | `quality` | string | 否 | 模型支持的质量档位；例如部分模型使用 `auto`、`low`、`medium`、`high`，并非所有模型通用 |
+| `output_format` | string | 否 | 填 `gif` 生成动图，仅限已开放的 `gpt-image-2.6` 渠道；省略则生成普通图片 |
 | `reference_material_ids` | string[] | 否 | 已完成上传的参考图片 ID，最多 4 个 |
 | `force_new` | boolean | 否 | 兼容保留字段，通常省略；当前不提供去重或防重复计费能力 |
 
 `quality` 和分辨率是不同概念。`low/medium/high` 不代表 `1K/2K/4K`；需要更高分辨率时，按目标模型的尺寸规则填写 `size`。
 
-当前 MCP 未开放 `output_format`、SVG/GIF、动画帧数或帧时长参数。
+GIF 动图每次仅生成 1 张，尺寸为 `auto`，暂不支持参考图、指定帧数或帧时长。SVG 暂未开放。
+
+使用相同 API Key 请求 `GET https://api.meteor21c.fun/v1/images/capabilities?model=gpt-image-2.6`，返回的 `output_formats` 含 `gif` 时可用。此查询不生成图片、不扣费；工具也会在提交前检查。
+
+动图示例参数：
+
+```json
+{"model":"gpt-image-2.6","prompt":"一个蓝色圆球轻轻跳动，循环动画","n":1,"size":"auto","output_format":"gif"}
+```
+
+预览和下载保留 GIF 原文件。若实际返回普通图片，会显示提示并保留已生成的原文件，请勿因格式不符自动重试。
 
 ### 文生图示例
 

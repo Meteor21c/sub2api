@@ -690,6 +690,16 @@ func (s *OpenAIGatewayService) ForwardImages(
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
 	}
+	if err := ValidateOpenAIImageGIFRequest(parsed); err != nil {
+		return nil, err
+	}
+	formatModel := parsed.Model
+	if channelMappedModel != "" {
+		formatModel = channelMappedModel
+	}
+	if !account.SupportsOpenAIImageOutputFormat(formatModel, parsed.OutputFormat) {
+		return nil, fmt.Errorf("selected account does not support the requested image output format")
+	}
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)

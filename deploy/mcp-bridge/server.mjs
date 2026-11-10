@@ -241,6 +241,7 @@ function validImageType(fileName, contentType) {
 }
 
 function detectImageType(buffer) {
+  if (buffer.length >= 6 && ['GIF87a', 'GIF89a'].includes(buffer.toString('ascii', 0, 6))) return 'image/gif'
   if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png'
   if (buffer.length >= 3 && buffer.subarray(0, 3).equals(Buffer.from([255, 216, 255]))) return 'image/jpeg'
   if (buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image/webp'
@@ -572,6 +573,7 @@ function toolsFor(profile) {
           n: { type: 'integer', minimum: 1, maximum: 4, description: 'Number of images; defaults to 1.' },
           size: commonString('Output size such as 1024x1024 or 1536x1024.'),
           quality: commonString('Provider-supported quality.'),
+          output_format: { type: 'string', enum: ['gif'], description: 'Optional GIF animation, only on enabled gpt-image-2.6 channels. One image, size auto, no references. Omit for a standard image.' },
           reference_material_ids: { type: 'array', maxItems: 4, items: commonString('Temporary material ID.') },
           force_new: { type: 'boolean', description: 'Compatibility flag; use only for an explicit new variation.' },
         },
@@ -803,6 +805,13 @@ async function createImage(token, args) {
   if (n < 1 || n > 4) return mcpToolError('n must be between 1 and 4')
   const refs = Array.isArray(args?.reference_material_ids) ? args.reference_material_ids : []
   if (refs.length > 4) return mcpToolError('reference_material_ids supports at most 4 images')
+  const format = args?.output_format
+  if (format !== undefined && format !== 'gif') return mcpToolError('output_format supports only gif; omit for a standard image')
+  if (format === 'gif') {
+    if (n !== 1 || refs.length || (args.size && args.size !== 'auto')) return mcpToolError('GIF supports one image, size auto, without reference images')
+    const capability = await upstreamJSON(`/v1/images/capabilities?model=${encodeURIComponent(model)}`, token)
+    if (!capability.response.ok || !capability.data?.output_formats?.includes('gif')) return mcpToolError('GIF is not available for this API key and model')
+  }
 
   let result
   try {
@@ -832,6 +841,7 @@ async function createImage(token, args) {
       result = await upstreamJSON('/v1/images/generations', token, {
         method: 'POST', body: {
           model, prompt, n, response_format: 'b64_json',
+          ...(format === 'gif' ? { output_format: 'gif', size: 'auto' } : {}),
           ...(args.size ? { size: String(args.size) } : {}),
           ...(args.quality ? { quality: String(args.quality) } : {}),
         }, timeoutMs: IMAGE_UPSTREAM_TIMEOUT_MS, maxResponseBytes: MAX_IMAGE_JSON,
@@ -849,6 +859,7 @@ async function createImage(token, args) {
   const content = []
   const images = []
   const markdown = []
+  const warnings = []
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index] || {}
     let bytes = Buffer.alloc(0)
@@ -874,6 +885,7 @@ async function createImage(token, args) {
     if (!detected || !bytes.length || bytes.length > MAX_OUTPUT || !mime.startsWith('image/')) continue
     if (mime !== detected && mime !== 'image/png') continue
     mime = detected
+    if (format === 'gif' && mime !== 'image/gif') warnings.push(`Image ${index + 1} was returned as ${mime}; the original file is preserved. Do not regenerate automatically.`)
     content.push({ type: 'image', data: bytes.toString('base64'), mimeType: mime })
     const image = { index: index + 1, mime_type: mime, revised_prompt: row.revised_prompt || undefined }
     try {
@@ -890,7 +902,8 @@ async function createImage(token, args) {
   if (!images.length) return mcpToolError('The image request completed but its output could not be delivered; do not resubmit automatically')
   const structured = {
     status: 'SUCCESS', delivery_status: 'READY', model, count: images.length, images,
-    final_response_required: true, final_response_markdown: markdown.join('\n\n'),
+    ...(warnings.length ? { warnings } : {}),
+    final_response_required: true, final_response_markdown: [...warnings, ...markdown].join('\n\n'),
   }
   content.push({ type: 'text', text: 'Image generation succeeded. Native image blocks are the authoritative inline preview. A download link may be unavailable when temporary storage is full; do not call create_image again for delivery problems.' })
   return mcpToolResult(content, structured)
@@ -1159,7 +1172,7 @@ async function handleAsset(req, res, parsed) {
   try {
     const stat = await fs.stat(file)
     res.writeHead(200, {
-      'Content-Type': meta.contentType, 'Content-Length': stat.size, 'Content-Disposition': 'inline',
+      'Content-Type': meta.contentType, 'Content-Length': stat.size, 'Content-Disposition': `inline; filename="generated-${id}.${({ 'image/gif': 'gif', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' })[meta.contentType] || 'bin'}"`,
       'Cache-Control': 'private, max-age=300', 'Cross-Origin-Resource-Policy': 'cross-origin',
       'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff',
     })

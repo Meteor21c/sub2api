@@ -44,6 +44,13 @@
           "force_new": {
             "type": "boolean",
             "description": "Compatibility flag; use only for an explicit new variation."
+          },
+          "output_format": {
+            "type": "string",
+            "enum": [
+              "gif"
+            ],
+            "description": "Optional GIF animation, only on enabled gpt-image-2.6 channels. One image, size auto, no references. Omit for a standard image."
           }
         }
       }

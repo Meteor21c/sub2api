@@ -74,6 +74,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		return
 	}
 	requestModel := parsed.Model
+	if err := service.ValidateOpenAIImageGIFRequest(parsed); err != nil {
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
 	ensureCompositeTargetPlatform(c, apiKey, requestModel)
 	clientRequestModel := clientRequestedModel(c, requestModel)
 	routingModel := requestModel
@@ -115,6 +119,21 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(parsed.Stream, false)))
 
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
+	if strings.EqualFold(parsed.OutputFormat, "gif") {
+		formatModel := routingModel
+		if channelMapping.MappedModel != "" {
+			formatModel = channelMapping.MappedModel
+		}
+		formats, err := h.gatewayService.ImageOutputFormats(c.Request.Context(), apiKey.GroupID, formatModel)
+		if err != nil {
+			h.errorResponse(c, http.StatusServiceUnavailable, "capabilities_unavailable", "Image capabilities are temporarily unavailable")
+			return
+		}
+		if len(formats) == 0 {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "GIF is not available for this API key and model")
+			return
+		}
+	}
 
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)
@@ -157,6 +176,11 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 	requestCtx := service.WithOpenAIImageSizeRouting(service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context())), parsed.Size)
+	formatModel := routingModel
+	if channelMapping.MappedModel != "" {
+		formatModel = channelMapping.MappedModel
+	}
+	requestCtx = service.WithOpenAIImageOutputRouting(requestCtx, formatModel, parsed.OutputFormat)
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0

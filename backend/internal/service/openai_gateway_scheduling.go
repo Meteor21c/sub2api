@@ -456,6 +456,9 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 	if vetoed, reason := openAIImageSizeVetoReason(ctx, account); vetoed {
 		return reason
 	}
+	if openAIImageOutputFormatVeto(ctx, account) {
+		return "image_output_format_unsupported"
+	}
 	return ""
 }
 

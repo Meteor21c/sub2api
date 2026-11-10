@@ -59,6 +59,50 @@ async function rpc(base, route, method, params, token = 'sk-test') {
   return { response, body: await response.json() }
 }
 
+test('GIF format is key scoped and retains original animated bytes and filename', async () => {
+  const gif = Buffer.from('R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCgABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7', 'base64')
+  let generated = 0
+  const mock = await startMock(async (req, res) => {
+    const body = await readBody(req)
+    res.setHeader('Content-Type', 'application/json')
+    if (req.url.startsWith('/v1/images/capabilities?')) {
+      res.end(JSON.stringify({ output_formats: req.headers.authorization === 'Bearer sk-enabled' ? ['gif'] : [] }))
+      return
+    }
+    assert.equal(req.url, '/v1/images/generations')
+    const args = JSON.parse(body)
+    assert.equal(args.output_format, 'gif')
+    assert.equal(args.size, 'auto')
+    assert.equal(args.n, 1)
+    generated++
+    res.end(JSON.stringify({ data: [{ b64_json: gif.toString('base64') }] }))
+  })
+  const bridge = await startBridge({ SUB2API_URL: mock.base })
+  try {
+    const params = { name: 'create_image', arguments: { model: 'gpt-image-2.6', prompt: 'animated blue ball', output_format: 'gif' } }
+    const denied = await rpc(bridge.base, '/mcp/image', 'tools/call', params, 'sk-disabled')
+    assert.equal(denied.body.result.isError, true)
+    assert.equal(generated, 0)
+    const result = await rpc(bridge.base, '/mcp/image', 'tools/call', params, 'sk-enabled')
+    const image = result.body.result.content.find(row => row.type === 'image')
+    assert.equal(image.mimeType, 'image/gif')
+    assert.deepEqual(Buffer.from(image.data, 'base64'), gif)
+    const output = await fetch(result.body.result.structuredContent.images[0].url)
+    assert.equal(output.headers.get('content-type'), 'image/gif')
+    assert.match(output.headers.get('content-disposition'), /\.gif"/)
+    assert.deepEqual(Buffer.from(await output.arrayBuffer()), gif)
+    assert.equal(generated, 1)
+    for (const extra of [{ n: 2 }, { reference_material_ids: ['ref'] }, { size: '1024x1024' }, { output_format: 'svg' }]) {
+      const invalid = await rpc(bridge.base, '/mcp/image', 'tools/call', { ...params, arguments: { ...params.arguments, ...extra } }, 'sk-enabled')
+      assert.equal(invalid.body.result.isError, true)
+    }
+    assert.equal(generated, 1)
+  } finally {
+    await stopBridge(bridge)
+    await stopMock(mock)
+  }
+})
+
 test('MCP image and video profiles expose the compatibility tools', async () => {
   const bridge = await startBridge()
   try {

@@ -1824,6 +1824,9 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if vetoed, reason := openAIImageSizeVetoReason(ctx, account); vetoed {
 		return false, reason
 	}
+	if openAIImageOutputFormatVeto(ctx, account) {
+		return false, "image_output_format_unsupported"
+	}
 	// 分组利润控制：不合格账号在候选过滤与抢槽后终检阶段即被排除，
 	// 排序/评分/粘性/熔断只在合格账号之间工作；named reason 进入 filter stats。
 	if vetoed, reason := openAIProfitControlVetoReason(ctx, account); vetoed {
