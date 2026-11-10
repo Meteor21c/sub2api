@@ -375,6 +375,97 @@ describe('PaymentView subscription plan grid', () => {
   })
 })
 
+describe('PaymentView recharge amount limits', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    createOrder.mockReset()
+    translate.mockClear()
+    window.localStorage.clear()
+  })
+
+  async function mountRecharge(overrides: Partial<CheckoutInfoResponse> = {}) {
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture(overrides))
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          AmountInput: false,
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('hides amounts above the site cap even when the payment method is unlimited', async () => {
+    const wrapper = await mountRecharge({ min_amount: 1, max_amount: 500 })
+    expect(wrapper.findAll('[data-testid^="quick-amount-"]').map(button => button.text())).toEqual([
+      '10', '20', '50', '100', '200', '500',
+    ])
+    const input = wrapper.getComponent(AmountInput).get('input')
+    expect(input.attributes('placeholder')).toBe('1 - 500')
+    await input.setValue('501')
+    expect(wrapper.text()).toContain('payment.amountTooHigh')
+    expect(translate).toHaveBeenCalledWith('payment.amountTooHigh', { max: formatPaymentAmount(500, 'CNY') })
+    expect(wrapper.get('button.btn.w-full').attributes('disabled')).toBeDefined()
+    await wrapper.get('button.btn.w-full').trigger('click')
+    expect(createOrder).not.toHaveBeenCalled()
+    await input.setValue('500')
+    expect(wrapper.get('button.btn.w-full').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('uses the tighter site or method bounds and rejects amounts below the site minimum', async () => {
+    const wrapper = await mountRecharge({
+      min_amount: 20,
+      max_amount: 500,
+      methods: { wxpay: { ...checkoutInfoFixture().data.methods.wxpay, single_min: 10, single_max: 200 } },
+    })
+    expect(wrapper.getComponent(AmountInput).props()).toMatchObject({ min: 20, max: 200 })
+    expect(wrapper.find('[data-testid="quick-amount-10"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="quick-amount-500"]').exists()).toBe(false)
+    await wrapper.getComponent(AmountInput).get('input').setValue('19')
+    expect(wrapper.text()).toContain('payment.amountTooLow')
+    expect(wrapper.get('button.btn.w-full').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it.each([undefined, 0])('preserves unlimited recharge amounts when the site cap is %s', async (max_amount) => {
+    const wrapper = await mountRecharge({ max_amount })
+    expect(wrapper.find('[data-testid="quick-amount-5000"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="quick-amount-5000"]').trigger('click')
+    expect(wrapper.get('button.btn.w-full').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('checks the entered cap before discounts without limiting credited bonus balances', async () => {
+    const wrapper = await mountRecharge({
+      max_amount: 500,
+      recharge_bonus_mode: 'discount',
+      recharge_bonus_tiers: [{ min_amount: 100, bonus_percent: 50 }],
+    })
+    await wrapper.getComponent(AmountInput).get('input').setValue('600')
+    expect(wrapper.text()).toContain(formatPaymentAmount(300, 'CNY'))
+    expect(wrapper.text()).toContain('payment.amountTooHigh')
+    expect(wrapper.get('button.btn.w-full').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+
+    const bonusWrapper = await mountRecharge({
+      max_amount: 500,
+      balance_recharge_multiplier: 2,
+      recharge_bonus_tiers: [{ min_amount: 100, bonus_percent: 20 }],
+    })
+    await bonusWrapper.get('[data-testid="quick-amount-500"]').trigger('click')
+    expect(bonusWrapper.text()).toContain('1200.00')
+    expect(bonusWrapper.get('button.btn.w-full').attributes('disabled')).toBeUndefined()
+    bonusWrapper.unmount()
+  })
+})
+
 describe('PaymentView recharge rate preview', () => {
   it('uses the selected payment method currency in both locale templates', async () => {
     translate.mockClear()
