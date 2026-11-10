@@ -303,7 +303,7 @@ codex
 <p>动图示例参数：</p>
 <pre><code class="language-json">{&quot;model&quot;:&quot;gpt-image-2.6&quot;,&quot;prompt&quot;:&quot;一个蓝色圆球轻轻跳动，循环动画&quot;,&quot;n&quot;:1,&quot;size&quot;:&quot;auto&quot;,&quot;output_format&quot;:&quot;gif&quot;}
 </code></pre>
-<p>预览和下载保留 GIF 原文件。若实际返回普通图片，会显示提示并保留已生成的原文件，请勿因格式不符自动重试。</p>
+<p>预览和下载保留 GIF 原文件。若实际返回普通图片，会显示提示并保留已生成的原文件，结果中的 <code>format_matched</code> 为 <code>false</code>、<code>warnings</code> 说明实际格式。请勿因格式不符自动重试。</p>
 <h3 id="文生图示例">文生图示例</h3>
 <p>以下请求会提交生成并产生费用；先将模型替换为自己 Key 可用的模型。</p>
 <pre><code class="language-json">{

@@ -841,7 +841,7 @@ async function createImage(token, args) {
       result = await upstreamJSON('/v1/images/generations', token, {
         method: 'POST', body: {
           model, prompt, n, response_format: 'b64_json',
-          ...(format === 'gif' ? { output_format: 'gif', size: 'auto' } : {}),
+          ...(format === 'gif' ? { output_format: 'gif', size: 'auto', prompt: `${prompt}\n\nCreate a looping animated GIF with multiple distinct frames showing the requested motion. Return the animated GIF file itself, not a static image or a sprite sheet.` } : {}),
           ...(args.size ? { size: String(args.size) } : {}),
           ...(args.quality ? { quality: String(args.quality) } : {}),
         }, timeoutMs: IMAGE_UPSTREAM_TIMEOUT_MS, maxResponseBytes: MAX_IMAGE_JSON,
@@ -902,10 +902,11 @@ async function createImage(token, args) {
   if (!images.length) return mcpToolError('The image request completed but its output could not be delivered; do not resubmit automatically')
   const structured = {
     status: 'SUCCESS', delivery_status: 'READY', model, count: images.length, images,
+    ...(format === 'gif' ? { requested_format: 'gif', format_matched: warnings.length === 0 } : {}),
     ...(warnings.length ? { warnings } : {}),
     final_response_required: true, final_response_markdown: [...warnings, ...markdown].join('\n\n'),
   }
-  content.push({ type: 'text', text: 'Image generation succeeded. Native image blocks are the authoritative inline preview. A download link may be unavailable when temporary storage is full; do not call create_image again for delivery problems.' })
+  content.push({ type: 'text', text: warnings.length ? warnings.join('\n') : 'Image generation succeeded. Native image blocks are the authoritative inline preview. A download link may be unavailable when temporary storage is full; do not call create_image again for delivery problems.' })
   return mcpToolResult(content, structured)
 }
 

@@ -59,6 +59,40 @@ async function rpc(base, route, method, params, token = 'sk-test') {
   return { response, body: await response.json() }
 }
 
+test('GIF format mismatch preserves PNG and warns without retrying', async () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64')
+  let generated = 0
+  const mock = await startMock(async (req, res) => {
+    const raw = await readBody(req)
+    res.setHeader('Content-Type', 'application/json')
+    if (req.url.startsWith('/v1/images/capabilities?')) return res.end(JSON.stringify({ output_formats: ['gif'] }))
+    const args = JSON.parse(raw)
+    assert.equal(args.output_format, 'gif')
+    assert.equal(args.quality, 'high')
+    assert.match(args.prompt, /^dancing cat\n\nCreate a looping animated GIF/)
+    generated++
+    res.end(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }))
+  })
+  const bridge = await startBridge({ SUB2API_URL: mock.base })
+  try {
+    const { body } = await rpc(bridge.base, '/mcp/image', 'tools/call', { name: 'create_image', arguments: { model: 'gpt-image-2.6-sunburst', prompt: 'dancing cat', quality: 'high', output_format: 'gif' } })
+    const result = body.result
+    assert.equal(result.structuredContent.format_matched, false)
+    assert.equal(result.structuredContent.requested_format, 'gif')
+    assert.match(result.structuredContent.warnings[0], /image\/png/)
+    const image = result.content.find(row => row.type === 'image')
+    assert.equal(image.mimeType, 'image/png')
+    assert.deepEqual(Buffer.from(image.data, 'base64'), png)
+    const output = await fetch(result.structuredContent.images[0].url)
+    assert.match(output.headers.get('content-disposition'), /\.png"/)
+    assert.deepEqual(Buffer.from(await output.arrayBuffer()), png)
+    assert.equal(generated, 1)
+  } finally {
+    await stopBridge(bridge)
+    await stopMock(mock)
+  }
+})
+
 test('GIF format is key scoped and retains original animated bytes and filename', async () => {
   const gif = Buffer.from('R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCgABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7', 'base64')
   let generated = 0
@@ -72,6 +106,7 @@ test('GIF format is key scoped and retains original animated bytes and filename'
     assert.equal(req.url, '/v1/images/generations')
     const args = JSON.parse(body)
     assert.equal(args.output_format, 'gif')
+    assert.match(args.prompt, /looping animated GIF with multiple distinct frames/)
     assert.equal(args.size, 'auto')
     assert.equal(args.n, 1)
     generated++
