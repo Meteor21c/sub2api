@@ -126,7 +126,9 @@ func TestModelTestsOwnerAndKeyRevalidation(t *testing.T) {
 	j := &ModelTestJob{ID: uuid.NewString(), Source: "user", OwnerUserID: &owner, APIKeyID: &keyID, GroupID: 99, TestKind: "pelican"}
 	svc.runUser(context.Background(), j)
 	require.Equal(t, "key_changed", j.ErrorCode)
-	key := svc.keys.(modelTestKeysStub).key
+	keys, ok := svc.keys.(modelTestKeysStub)
+	require.True(t, ok)
+	key := keys.key
 	key.Status = StatusAPIKeyDisabled
 	svc.runUser(context.Background(), j)
 	require.Equal(t, "key_unavailable", j.ErrorCode)
@@ -161,9 +163,9 @@ func TestModelTestsResponseWhitespaceAndIncomplete(t *testing.T) {
 	var stream strings.Builder
 	for _, delta := range []string{"<svg viewBox=\"0", " ", "0", " ", "960", " ", "600\"></svg>"} {
 		data, _ := json.Marshal(map[string]string{"type": "response.output_text.delta", "delta": delta})
-		stream.WriteString("data: " + string(data) + "\n\n")
+		_, _ = stream.WriteString("data: " + string(data) + "\n\n")
 	}
-	stream.WriteString("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
+	_, _ = stream.WriteString("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 	content, _, _, code = parseModelTestResponse([]byte(stream.String()))
 	require.Equal(t, `<svg viewBox="0 0 960 600"></svg>`, content)
 	require.Empty(t, code)

@@ -483,12 +483,12 @@ func modelTestText(root gjson.Result) string {
 	for _, item := range root.Get("output").Array() {
 		for _, part := range item.Get("content").Array() {
 			if part.Get("type").String() == "output_text" || part.Get("type").String() == "text" {
-				content.WriteString(part.Get("text").String())
+				_, _ = content.WriteString(part.Get("text").String())
 			}
 		}
 	}
 	if content.Len() == 0 {
-		content.WriteString(root.Get("choices.0.message.content").String())
+		_, _ = content.WriteString(root.Get("choices.0.message.content").String())
 	}
 	return content.String()
 }
@@ -543,7 +543,7 @@ func parseModelTestResponse(body []byte) (string, int64, int64, string) {
 			event := gjson.Parse(data)
 			switch event.Get("type").String() {
 			case "response.output_text.delta":
-				deltas.WriteString(event.Get("delta").String())
+				_, _ = deltas.WriteString(event.Get("delta").String())
 			case "response.completed", "response.incomplete", "response.failed":
 				terminal = true
 				read(event.Get("response"))
