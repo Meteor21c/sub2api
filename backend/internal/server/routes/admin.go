@@ -33,6 +33,14 @@ func RegisterAdminRoutes(
 	// 受限密钥的账户操作走独立资源校验，普通管理员保持原处理器。
 	admin.Use(h.Admin.Account.ScopedAdminKeyAccounts)
 	{
+		if h.ModelTest != nil {
+			tests := admin.Group("/model-tests")
+			tests.GET("/plans", h.ModelTest.AdminPlans)
+			tests.GET("/groups", h.ModelTest.AdminGroups)
+			tests.POST("/plans", h.ModelTest.SavePlan)
+			tests.PUT("/plans/:id", h.ModelTest.SavePlan)
+			tests.DELETE("/plans/:id", h.ModelTest.DeletePlan)
+		}
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)
 

@@ -277,6 +277,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/model-tests',
+    name: 'ModelTests',
+    component: () => import('@/views/user/ModelTestsView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'Model tests', titleKey: 'modelTests.title', descriptionKey: 'modelTests.description' }
+  },
+  {
+    path: '/admin/model-tests',
+    name: 'AdminModelTests',
+    component: () => import('@/views/user/ModelTestsView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Test schedules', titleKey: 'modelTests.manage', descriptionKey: 'modelTests.description' }
+  },
+  {
     path: '/settings/mcp',
     name: 'MCP',
     component: () => import('@/views/user/MCPView.vue'),

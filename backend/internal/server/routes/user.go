@@ -25,6 +25,15 @@ func RegisterUserRoutes(
 	// 用户管理面变更类操作入审计（含 TOTP 启用/禁用、step-up 验证、密码修改等安全事件）
 	authenticated.Use(gin.HandlerFunc(auditLog))
 	{
+		if h.ModelTest != nil {
+			tests := authenticated.Group("/model-tests")
+			tests.GET("/overview", h.ModelTest.Overview)
+			tests.GET("/keys", h.ModelTest.Keys)
+			tests.GET("/models", h.ModelTest.Models)
+			tests.GET("/jobs", h.ModelTest.List)
+			tests.POST("/jobs", h.ModelTest.Submit)
+			tests.GET("/jobs/:id", h.ModelTest.Detail)
+		}
 		// Owner-only canvas pilot. The second authorization check in every handler
 		// prevents administrator keys and other administrators impersonating the owner.
 		if h.CanvasPilot != nil {

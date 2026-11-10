@@ -7,8 +7,10 @@ import channelMonitorV2 from './channelMonitorV2'
 import batchImage from './batchImage'
 import admin from './admin'
 import misc from './misc'
+import modelTests from './modelTests'
 
 export default {
+  modelTests,
   adminAccessKeys,
   mcp,
   ...landing,
