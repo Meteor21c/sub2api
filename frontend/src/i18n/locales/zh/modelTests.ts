@@ -72,7 +72,7 @@ export default {
   enable: '开启',
   disable: '暂停',
   enabled: '启用自动测试',
-  enableHint: '保存后开始首轮测试，之后每 2 小时运行。',
+  enableHint: '启用后开始首轮测试，之后每 2 小时运行。',
   save: '保存计划',
   saved: '计划已保存',
   remove: '删除',

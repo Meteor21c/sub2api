@@ -27,7 +27,7 @@ export default {
   candyPrompt: 'View candy prompt', pelicanPrompt: 'View pelican prompt',
   configHint: 'Each plan runs every 2 hours, starting when enabled. Automatic tests consume upstream credits for the chosen group.',
   add: 'Add schedule', edit: 'Edit schedule', enable: 'Enable', disable: 'Pause', enabled: 'Enable automatic testing',
-  enableHint: 'The first test starts after saving, then repeats every 2 hours.', save: 'Save schedule', saved: 'Schedule saved',
+  enableHint: 'The first test starts when enabled, then repeats every 2 hours.', save: 'Save schedule', saved: 'Schedule saved',
   remove: 'Delete', removeConfirm: 'Delete this automatic test schedule?', removed: 'Schedule deleted', cancel: 'Cancel', refresh: 'Refresh',
   resultExpired: 'Record not found or expired after 24 hours',
   errors: {
