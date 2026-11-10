@@ -332,8 +332,8 @@ func (s *AvailabilityV2Service) CreateConversation(ctx context.Context, input Av
 	if title == "" {
 		title = "Availability test"
 	}
-	if len(title) > availabilityMaxTitleLength {
-		title = title[:availabilityMaxTitleLength]
+	if titleRunes := []rune(title); len(titleRunes) > availabilityMaxTitleLength {
+		title = string(titleRunes[:availabilityMaxTitleLength])
 	}
 	return s.repo.CreateConversation(ctx, input.OwnerUserID, input.GroupID, input.AccountID, model, title)
 }

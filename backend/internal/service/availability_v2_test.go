@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,6 +19,40 @@ type availabilityV2TestRepo struct {
 	attempts          []*AvailabilityAttempt
 	events            []AvailabilityEvent
 	nextAttemptID     int64
+}
+
+type availabilityTitleGroupRepo struct{ GroupRepository }
+
+func (availabilityTitleGroupRepo) GetByID(_ context.Context, id int64) (*Group, error) {
+	return &Group{ID: id, Platform: PlatformOpenAI}, nil
+}
+
+func TestAvailabilityConversationTitlePreservesUTF8(t *testing.T) {
+	// These are the actual first 80 characters sent by the two quick tests.
+	cases := []struct{ name, title, want string }{
+		{"pelican", "只返回一个完整 SVG：绘制一只鹈鹕骑自行车环游地球的精美 2D 无缝循环动画。使用横向 viewBox，完整显示鹈鹕长嘴、喉囊、身体和整辆车；车架连接清晰，双", ""},
+		{"candy", "黑袋中有三种口味、两种可凭手感区分的形状的糖果，但不能凭手感区分口味。数量如下：圆形：苹果 7、桃子 9、西瓜 8；五角星形：苹果 7、桃子 6、西瓜 4。活动", ""},
+		{"long Chinese", strings.Repeat("鹈", 201), strings.Repeat("鹈", 200)},
+		{"emoji", strings.Repeat("🍬", 201), strings.Repeat("🍬", 200)},
+		{"ASCII", strings.Repeat("a", 201), strings.Repeat("a", 200)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &availabilityV2TestRepo{}
+			svc := &AvailabilityV2Service{repo: repo, groupRepo: availabilityTitleGroupRepo{}}
+			conversation, err := svc.CreateConversation(context.Background(), AvailabilityCreateConversationInput{OwnerUserID: 7, GroupID: 2, Model: "gpt-6-astra", Title: tc.title})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tc.want
+			if want == "" {
+				want = tc.title
+			}
+			if !utf8.ValidString(conversation.Title) || conversation.Title != want {
+				t.Fatalf("conversation title changed or contains invalid UTF-8: got %q want %q", conversation.Title, want)
+			}
+		})
+	}
 }
 
 func (r *availabilityV2TestRepo) CreateConversation(_ context.Context, ownerUserID, groupID int64, accountID *int64, model, title string) (*AvailabilityConversation, error) {
