@@ -17,7 +17,9 @@ import (
 func TestFZYVideoBillingReserveSettleReleaseAndDeduplicate(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
-	repo := NewUsageBillingRepository(client, integrationDB).(*usageBillingRepository)
+	// Exercise the same wrapper injected into the gateways since v0.2.22.
+	repo := service.NewUsageBillingLaneCombiner(NewUsageBillingRepository(client, integrationDB))
+	defer repo.Stop()
 	user := mustCreateUser(t, client, &service.User{
 		Email: fmt.Sprintf("fzy-video-%d@example.com", time.Now().UnixNano()), Balance: 1,
 	})
@@ -72,6 +74,12 @@ func TestFZYVideoBillingReserveSettleReleaseAndDeduplicate(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, settled.Applied)
 	assertFZYVideoBalance(t, ctx, user.ID, 0.67788661, 0)
+	samples, err := repo.ListFZYVideoCostSamples(ctx, user.ID, price.Model, 20)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+	require.Equal(t, int64(40594), samples[0].OutputTokens)
+	require.InDelta(t, actual, decimal.RequireFromString(samples[0].ActualAmount).InexactFloat64(), 1e-8)
+	require.Equal(t, uint64(0), repo.Stats().SingleApplies, "video settlement must not also run general usage billing")
 
 	failed := &service.FZYVideoBillingJob{
 		ID: uuid.NewString(), UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID,

@@ -10,7 +10,7 @@ import (
 )
 
 type openAIFZYMergeBillingRepoStub struct {
-	UsageBillingRepository
+	UsageBillingBatchRepository
 	FZYVideoBillingRepository
 
 	applyCalls     int
@@ -25,6 +25,14 @@ type openAIFZYMergeBillingRepoStub struct {
 func (s *openAIFZYMergeBillingRepoStub) Apply(context.Context, *UsageBillingCommand) (*UsageBillingApplyResult, error) {
 	s.applyCalls++
 	return &UsageBillingApplyResult{Applied: true}, nil
+}
+
+func (s *openAIFZYMergeBillingRepoStub) ApplyBatch(ctx context.Context, cmds []*UsageBillingCommand) ([]UsageBillingBatchOutcome, error) {
+	outcomes := make([]UsageBillingBatchOutcome, len(cmds))
+	for i, cmd := range cmds {
+		outcomes[i].Result, outcomes[i].Err = s.Apply(ctx, cmd)
+	}
+	return outcomes, nil
 }
 
 func (s *openAIFZYMergeBillingRepoStub) SettleFZYVideo(_ context.Context, id string, tokens int, amount float64, cmd *UsageBillingCommand) (*UsageBillingApplyResult, error) {
@@ -77,7 +85,9 @@ func TestOpenAIGatewayServiceRecordUsage_FZYFrozenPriceSurvivesV218Billing(t *te
 			keyQuota := &openAIRecordUsageAPIKeyQuotaStub{}
 			svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 			repo := &openAIFZYMergeBillingRepoStub{settlementDone: true}
-			svc.usageBillingRepo = repo
+			lanes := NewUsageBillingLaneCombiner(repo)
+			defer lanes.Stop()
+			svc.usageBillingRepo = ProvideUsageBillingRepository(lanes)
 			// Settlement still runs its normal post-billing finalization; no
 			// Redis dependency is needed to verify the committed billing command.
 			svc.billingCacheService = nil
@@ -192,7 +202,9 @@ func TestOpenAIRecordUsageFZYScenarioPreservesModeAndVideoUnits(t *testing.T) {
 			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 			svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
 			repo := &openAIFZYMergeBillingRepoStub{settlementDone: true}
-			svc.usageBillingRepo = repo
+			lanes := NewUsageBillingLaneCombiner(repo)
+			defer lanes.Stop()
+			svc.usageBillingRepo = ProvideUsageBillingRepository(lanes)
 			svc.billingCacheService = nil
 			user := &User{ID: 11, Balance: 100}
 			accountRate := 1.7

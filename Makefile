@@ -13,6 +13,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/account/__tests__/AccountUsageCell.spec.ts \
 	src/constants/__tests__/platforms.spec.ts \
 	src/components/account/__tests__/credentialsBuilder.platformCatalog.spec.ts \
+	src/components/account/__tests__/CNProviderQuotaCell.spec.ts \
+	src/components/account/__tests__/BulkEditAccountModal.spec.ts \
 	src/components/account/__tests__/CreateAccountModal.spec.ts \
 	src/components/account/__tests__/EditAccountModal.spec.ts \
 	src/components/account/__tests__/credentialsBuilder.spec.ts \
@@ -26,6 +28,10 @@ FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/intervalPrices.spec.ts \
 	src/utils/__tests__/rechargeBonus.spec.ts \
 	src/views/admin/__tests__/AccountsView.lite.spec.ts \
+	src/views/admin/__tests__/ChannelsView.bedrockCompat.spec.ts \
+	src/views/admin/__tests__/GroupsView.codexManifest.spec.ts \
+	src/views/admin/__tests__/GroupsView.openaiForcedTier.spec.ts \
+	src/views/admin/__tests__/groupsOpenAIFast.spec.ts \
 	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
 	src/views/user/__tests__/KeysView.spec.ts \
 	src/views/user/__tests__/ModelTestsView.spec.ts \

@@ -11,7 +11,7 @@ import (
 )
 
 type fzyCostHistoryStub struct {
-	UsageBillingRepository
+	UsageBillingBatchRepository
 	owner   int64
 	samples []FZYVideoCostSample
 }
@@ -31,7 +31,9 @@ func TestFZYHistoryRepricesUsageAndCapsOnlyHold(t *testing.T) {
 	for _, tokens := range []int64{400000, 500000, 600000} {
 		repo.samples = append(repo.samples, FZYVideoCostSample{Price: p, ActualSeconds: 10, RequestedSeconds: 15, OutputTokens: tokens, ActualAmount: "999"})
 	}
-	s := &OpenAIGatewayService{usageBillingRepo: repo}
+	lanes := NewUsageBillingLaneCombiner(repo)
+	defer lanes.Stop()
+	s := &OpenAIGatewayService{usageBillingRepo: ProvideUsageBillingRepository(lanes)}
 	require.NoError(t, s.applyFZYVideoEstimate(context.Background(), job))
 	require.Equal(t, int64(42), repo.owner)
 	require.Equal(t, "personal", job.Estimate.Source)
