@@ -23,7 +23,7 @@ const job: ModelTestJob = {
   created_at: new Date().toISOString(), started_at: new Date().toISOString(), completed_at: new Date().toISOString(),
   expires_at: new Date(Date.now() + 86400000).toISOString()
 }
-const plan: ModelTestPlan = { id: 12, label: 'Plus', group_id: 12, model: 'test-model', test_kind: 'pelican', enabled: false, next_run_at: null, last_run_at: null }
+const plan: ModelTestPlan = { id: 12, label: 'Plus', group_id: 12, model: 'test-model', test_kind: 'pelican', enabled: false, interval_minutes: 45, next_run_at: null, last_run_at: null }
 const adminJob: AdminModelTestJob = {
   ...job, source: 'scheduled', plan_id: 12, manual: false, retry_of: null,
   upstream_account_id: 42, upstream_account_name: 'Private final channel',
@@ -57,9 +57,10 @@ beforeEach(() => {
 })
 
 describe('ModelTestsView', () => {
-  it('shows the 2h/24h policy without granting normal users schedule management', async () => {
+  it('shows the configured cadence and retention without granting schedule management', async () => {
+    mock.overview.mockResolvedValue({ plans: [{ ...plan, enabled: true }], jobs: [], retention_hours: 24 })
     const wrapper = render(); await flushPromises()
-    expect(wrapper.text()).toContain('每 2 小时自动测试')
+    expect(wrapper.text()).toContain('每 45 分钟测试')
     expect(wrapper.text()).toContain('24 小时')
     expect(wrapper.findAll('[role="tab"]')).toHaveLength(2)
     expect(wrapper.text()).not.toContain('上游额度')
@@ -101,16 +102,35 @@ describe('ModelTestsView', () => {
     wrapper.unmount()
   })
 
-  it('allows administrators to save a paused plan without launching a test', async () => {
+  it('allows administrators to set a custom interval without launching a paused plan', async () => {
     mock.auth.isAdmin = true; mock.route.path = '/admin/model-tests'
     const wrapper = render(); await flushPromises()
     await wrapper.findAll('button').find(b => b.text() === '添加计划')!.trigger('click'); await flushPromises()
     await wrapper.find('input[maxlength="80"]').setValue('Plus')
     await wrapper.findAll('select')[0]!.setValue('12'); await flushPromises()
     await wrapper.find('input[maxlength="200"]').setValue('test-model')
+    const interval = wrapper.get<HTMLInputElement>('input[type="number"]')
+    expect(interval.element.value).toBe('120')
+    await interval.setValue('14')
     await wrapper.find('form').trigger('submit'); await flushPromises()
-    expect(mock.savePlan).toHaveBeenCalledWith(null, { label: 'Plus', group_id: 12, model: 'test-model', test_kind: 'pelican', enabled: false })
+    expect(mock.savePlan).not.toHaveBeenCalled()
+    await interval.setValue('90')
+    await wrapper.find('form').trigger('submit'); await flushPromises()
+    expect(mock.savePlan).toHaveBeenCalledWith(null, { label: 'Plus', group_id: 12, model: 'test-model', test_kind: 'pelican', enabled: false, interval_minutes: 90 })
     expect(mock.submit).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('loads the current interval for editing and retains it when toggling a plan', async () => {
+    mock.auth.isAdmin = true; mock.route.path = '/admin/model-tests'
+    mock.overview.mockResolvedValue({ plans: [plan], jobs: [], retention_hours: 24 })
+    const wrapper = render(); await flushPromises()
+    const click = (label: string) => wrapper.findAll('button').find(button => button.text() === label)!.trigger('click')
+    await click('编辑计划'); await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('input[type="number"]').element.value).toBe('45')
+    await click('取消')
+    await click('开启'); await flushPromises()
+    expect(mock.savePlan).toHaveBeenCalledWith(plan.id, expect.objectContaining({ enabled: true, interval_minutes: 45 }))
     wrapper.unmount()
   })
 

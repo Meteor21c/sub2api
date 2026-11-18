@@ -46,6 +46,7 @@
                 <p class="mt-2 break-all font-mono text-xs text-gray-500">{{ plan.model }}</p>
               </div>
               <div class="text-right text-xs text-gray-500">
+                <p v-if="plan.enabled" class="mb-2">{{ intervalLabel(plan.interval_minutes) }}</p>
                 <p>{{ t('modelTests.next') }} · {{ plan.enabled ? date(plan.next_run_at) : t('modelTests.paused') }}</p>
                 <p class="mt-2">{{ t('modelTests.latest') }} · {{ date(planJobs(plan.id)[0]?.created_at) }}</p>
               </div>
@@ -112,7 +113,14 @@
           <div class="flex flex-wrap items-start justify-between gap-4"><p class="max-w-2xl text-sm leading-7 text-gray-500">{{ t('modelTests.configHint') }}</p><button class="btn btn-primary" @click="editPlan(null)"><Icon name="plus" size="sm" />{{ t('modelTests.add') }}</button></div>
           <div v-if="!overview.plans.length" class="card p-10 text-center text-sm text-gray-500">{{ t('modelTests.noPlans') }}</div>
           <div v-for="plan in overview.plans" :key="plan.id" class="card flex flex-wrap items-center justify-between gap-4 p-5">
-            <div><h2 class="font-medium">{{ plan.label }} <span class="ml-2 text-xs text-gray-400">{{ kindLabel(plan.test_kind) }}</span></h2><p class="mt-2 break-all text-xs text-gray-500">{{ plan.model }}</p><p class="mt-2 text-xs text-gray-400">{{ t('modelTests.next') }} · {{ plan.enabled ? date(plan.next_run_at) : t('modelTests.paused') }}</p></div>
+            <div>
+              <h2 class="font-medium">{{ plan.label }} <span class="ml-2 text-xs text-gray-400">{{ kindLabel(plan.test_kind) }}</span></h2>
+              <p class="mt-2 break-all text-xs text-gray-500">{{ plan.model }}</p>
+              <p class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+                <span>{{ intervalLabel(plan.interval_minutes) }}</span>
+                <span>{{ plan.enabled ? `${t('modelTests.next')} · ${date(plan.next_run_at)}` : t('modelTests.paused') }}</span>
+              </p>
+            </div>
             <div class="flex flex-wrap gap-2"><button class="btn btn-primary btn-sm" :disabled="planBusy || actionBusy || planHasActiveJob(plan.id)" :data-testid="`run-plan-${plan.id}`" @click="runTarget = { type: 'plan', plan }">{{ t('modelTests.runNow') }}</button><button class="btn btn-secondary btn-sm" :disabled="planBusy" @click="togglePlan(plan)">{{ plan.enabled ? t('modelTests.disable') : t('modelTests.enable') }}</button><button class="btn btn-secondary btn-sm" :disabled="planBusy" @click="editPlan(plan)">{{ t('modelTests.edit') }}</button><button class="btn btn-secondary btn-sm text-red-600" :disabled="planBusy" @click="deleteTarget = plan">{{ t('modelTests.remove') }}</button></div>
           </div>
           <section class="space-y-4" data-testid="admin-test-records">
@@ -157,9 +165,14 @@
         <label class="block space-y-2 text-sm font-medium"><span>{{ t('modelTests.label') }}</span><input v-model="planForm.label" class="input" maxlength="80" required :disabled="planBusy" /></label>
         <div class="grid gap-4 sm:grid-cols-2"><label class="space-y-2 text-sm font-medium"><span>{{ t('modelTests.group') }}</span><select v-model="planForm.group_id" class="input" required :disabled="planBusy"><option :value="0" disabled>{{ t('modelTests.group') }}</option><option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }}</option></select></label><label class="space-y-2 text-sm font-medium"><span>{{ t('modelTests.kind') }}</span><select v-model="planForm.test_kind" class="input" :disabled="planBusy"><option value="pelican">{{ t('modelTests.pelican') }}</option><option value="candy">{{ t('modelTests.candy') }}</option></select></label></div>
         <label class="block space-y-2 text-sm font-medium"><span>{{ t('modelTests.model') }}</span><input v-model="planForm.model" list="model-test-plan-models" class="input" maxlength="200" required :disabled="planBusy" /><datalist id="model-test-plan-models"><option v-for="name in planModels" :key="name" :value="name" /></datalist></label>
+        <label class="block space-y-2 text-sm font-medium">
+          <span>{{ t('modelTests.interval') }}</span>
+          <input v-model.number="planForm.interval_minutes" type="number" class="input" :min="minPlanInterval" :max="maxPlanInterval" step="1" required :disabled="planBusy" />
+          <span class="block text-xs font-normal text-gray-500">{{ t('modelTests.intervalHint') }}</span>
+        </label>
         <label class="flex items-center gap-3 rounded-xl bg-gray-50 p-4 text-sm dark:bg-dark-800"><input v-model="planForm.enabled" type="checkbox" class="h-4 w-4 rounded" :disabled="planBusy" /><span>{{ t('modelTests.enabled') }}</span></label>
         <p class="text-xs leading-6 text-gray-500">{{ t('modelTests.enableHint') }}</p>
-        <div class="flex justify-end gap-3"><button type="button" class="btn btn-secondary" @click="planOpen = false">{{ t('modelTests.cancel') }}</button><button type="submit" class="btn btn-primary" :disabled="planBusy || !planForm.group_id || !planForm.model.trim() || !planForm.label.trim()">{{ t('modelTests.save') }}</button></div>
+        <div class="flex justify-end gap-3"><button type="button" class="btn btn-secondary" @click="planOpen = false">{{ t('modelTests.cancel') }}</button><button type="submit" class="btn btn-primary" :disabled="planBusy || !validPlanInterval || !planForm.group_id || !planForm.model.trim() || !planForm.label.trim()">{{ t('modelTests.save') }}</button></div>
       </form>
     </BaseDialog>
     <BaseDialog :show="Boolean(deleteTarget)" :title="t('modelTests.remove')" width="narrow" @close="deleteTarget = null"><p class="text-sm">{{ t('modelTests.removeConfirm') }}</p><template #footer><button class="btn btn-secondary" @click="deleteTarget = null">{{ t('modelTests.cancel') }}</button><button class="btn btn-danger" :disabled="planBusy" @click="removePlan">{{ t('modelTests.remove') }}</button></template></BaseDialog>
@@ -190,7 +203,7 @@ const router = useRouter()
 type Tab = 'automatic' | 'mine' | 'manage'
 const tab = ref<Tab>(route.path.startsWith('/admin/') ? 'manage' : route.query.tab === 'mine' ? 'mine' : 'automatic')
 const tabs = computed(() => [{ id: 'automatic' as Tab, label: t('modelTests.automatic') }, { id: 'mine' as Tab, label: t('modelTests.mine') }, ...(auth.isAdmin ? [{ id: 'manage' as Tab, label: t('modelTests.manage') }] : [])])
-const overview = ref<ModelTestOverview>({ plans: [], jobs: [], interval_hours: 2, retention_hours: 24 })
+const overview = ref<ModelTestOverview>({ plans: [], jobs: [], retention_hours: 24 })
 const mine = ref<ModelTestJob[]>([])
 const adminJobs = ref<AdminModelTestJob[]>([])
 const keys = ref<ModelTestKey[]>([])
@@ -211,7 +224,12 @@ const previewFailed = ref(false)
 const now = ref(new Date().toISOString())
 const planOpen = ref(false)
 const editingId = ref<number | null>(null)
-const planForm = reactive<ModelTestPlanInput>({ label: '', group_id: 0, model: '', test_kind: 'pelican', enabled: false })
+const minPlanInterval = 15
+const maxPlanInterval = 1440
+const defaultPlanForm: ModelTestPlanInput = { label: '', group_id: 0, model: '', test_kind: 'pelican', enabled: false, interval_minutes: 120 }
+const planForm = reactive<ModelTestPlanInput>({ ...defaultPlanForm })
+const validPlanInterval = computed(() => Number.isInteger(planForm.interval_minutes) &&
+  planForm.interval_minutes >= minPlanInterval && planForm.interval_minutes <= maxPlanInterval)
 const planModels = ref<string[]>([])
 const planBusy = ref(false)
 const deleteTarget = ref<ModelTestPlan | null>(null)
@@ -230,6 +248,11 @@ let submission: { signature: string; id: string } | null = null
 const pendingCount = computed(() => mine.value.filter(j => j.status === 'queued' || j.status === 'running').length)
 const svgPreview = computed(() => selected.value?.test_kind === 'pelican' && selected.value.content ? prepareSvgPreview(selected.value.content) : null)
 const planJobs = (id: number) => overview.value.jobs.filter(job => job.plan_id === id)
+function intervalLabel(minutes = defaultPlanForm.interval_minutes) {
+  return minutes % 60 === 0
+    ? t('modelTests.everyHours', { count: minutes / 60 })
+    : t('modelTests.everyMinutes', { count: minutes })
+}
 const isActiveJob = (job: ModelTestJob) => job.status === 'queued' || job.status === 'running'
 const planHasActiveJob = (id: number) => adminJobs.value.some(job => job.plan_id === id && isActiveJob(job))
 function upstreamLabel(job: AdminModelTestJob) { return job.upstream_account_name || (job.upstream_account_id ? `#${job.upstream_account_id}` : t(isActiveJob(job) ? 'modelTests.upstreamWaiting' : 'modelTests.upstreamMissing')) }
@@ -339,7 +362,10 @@ async function showResult(job: ModelTestJob, silent = false, admin = false) {
 function closeResult() { detailVersion++; resultOpen.value = false; selected.value = null; selectedAdmin.value = null; resultAdmin.value = false }
 async function editPlan(plan: ModelTestPlan | null) {
   editingId.value = plan?.id ?? null
-  Object.assign(planForm, plan ? { label: plan.label, group_id: plan.group_id, model: plan.model, test_kind: plan.test_kind, enabled: plan.enabled } : { label: '', group_id: 0, model: '', test_kind: 'pelican', enabled: false })
+  Object.assign(planForm, plan ? {
+    label: plan.label, group_id: plan.group_id, model: plan.model, test_kind: plan.test_kind,
+    enabled: plan.enabled, interval_minutes: plan.interval_minutes ?? defaultPlanForm.interval_minutes
+  } : defaultPlanForm)
   planOpen.value = true
   try { groups.value = await modelTestsAPI.groups() } catch (error) { notifyError(error) }
 }
@@ -353,7 +379,7 @@ watch(() => planForm.group_id, async id => {
   } catch (error) { if (version === planModelVersion && !disposed) notifyError(error) }
 })
 async function savePlan() {
-  if (planBusy.value) return
+  if (planBusy.value || !validPlanInterval.value) return
   planBusy.value = true
   try { await modelTestsAPI.savePlan(editingId.value, { ...planForm }); planOpen.value = false; app.showSuccess(t('modelTests.saved')); await load(true) }
   catch (error) { notifyError(error) }
@@ -361,7 +387,13 @@ async function savePlan() {
 }
 async function togglePlan(plan: ModelTestPlan) {
   planBusy.value = true
-  try { await modelTestsAPI.savePlan(plan.id, { label: plan.label, group_id: plan.group_id, model: plan.model, test_kind: plan.test_kind, enabled: !plan.enabled }); await load(true) }
+  try {
+    await modelTestsAPI.savePlan(plan.id, {
+      label: plan.label, group_id: plan.group_id, model: plan.model, test_kind: plan.test_kind,
+      enabled: !plan.enabled, interval_minutes: plan.interval_minutes
+    })
+    await load(true)
+  }
   catch (error) { notifyError(error) }
   finally { planBusy.value = false }
 }

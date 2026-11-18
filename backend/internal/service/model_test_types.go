@@ -8,17 +8,20 @@ import (
 )
 
 const (
-	ModelTestInterval      = 2 * time.Hour
-	ModelTestRetention     = 24 * time.Hour
-	modelTestTimeout       = 10 * time.Minute
-	modelTestMaxBody       = 1024 * 1024
-	ModelTestPelicanPrompt = "只返回一个完整 SVG：绘制一只鹈鹕骑自行车环游地球的精美 2D 无缝循环动画。使用横向 viewBox，完整显示鹈鹕长嘴、喉囊、身体和整辆车；车架连接清晰，双脚踩踏板、车轮转动，分层景物移动形成骑行感。画面明亮，主体突出。可用内联 CSS 或 SMIL；不要 Markdown、HTML、JavaScript、外部图片、字体或其他外部资源。"
-	ModelTestCandyPrompt   = "黑袋中有三种口味、两种可凭手感区分的形状的糖果，但不能凭手感区分口味。数量如下：圆形：苹果 7、桃子 9、西瓜 8；五角星形：苹果 7、桃子 6、西瓜 4。活动前可以预定各取多少颗圆形和五角星形。最少共取多少颗，才能保证同时拥有“圆形苹果 + 五角星桃子”或“圆形桃子 + 五角星苹果”？给出简短解法，并在最后单独一行输出 FINAL_ANSWER: 整数。"
+	ModelTestDefaultIntervalMinutes = 120
+	modelTestMinIntervalMinutes     = 15
+	modelTestMaxIntervalMinutes     = 24 * 60
+	ModelTestRetention              = 24 * time.Hour
+	modelTestTimeout                = 10 * time.Minute
+	modelTestMaxBody                = 1024 * 1024
+	ModelTestPelicanPrompt          = "只返回一个完整 SVG：绘制一只鹈鹕骑自行车环游地球的精美 2D 无缝循环动画。使用横向 viewBox，完整显示鹈鹕长嘴、喉囊、身体和整辆车；车架连接清晰，双脚踩踏板、车轮转动，分层景物移动形成骑行感。画面明亮，主体突出。可用内联 CSS 或 SMIL；不要 Markdown、HTML、JavaScript、外部图片、字体或其他外部资源。"
+	ModelTestCandyPrompt            = "黑袋中有三种口味、两种可凭手感区分的形状的糖果，但不能凭手感区分口味。数量如下：圆形：苹果 7、桃子 9、西瓜 8；五角星形：苹果 7、桃子 6、西瓜 4。活动前可以预定各取多少颗圆形和五角星形。最少共取多少颗，才能保证同时拥有“圆形苹果 + 五角星桃子”或“圆形桃子 + 五角星苹果”？给出简短解法，并在最后单独一行输出 FINAL_ANSWER: 整数。"
 )
 
 var (
 	ErrModelTestNotFound    = infraerrors.NotFound("MODEL_TEST_NOT_FOUND", "测试记录不存在或已过期")
 	ErrModelTestInvalid     = infraerrors.BadRequest("MODEL_TEST_INVALID", "请选择有效的分组、模型和测试题目")
+	ErrModelTestInterval    = infraerrors.BadRequest("MODEL_TEST_INTERVAL_INVALID", "测试间隔须为 15 至 1440 分钟的整数")
 	ErrModelTestKey         = infraerrors.Forbidden("MODEL_TEST_KEY_UNAVAILABLE", "请选择本人有效且已绑定分组的 API Key")
 	ErrModelTestLimit       = infraerrors.New(429, "MODEL_TEST_LIMIT", "测试任务较多，请稍后再试（每人最多同时 2 项、每小时 20 项）")
 	ErrModelTestConflict    = infraerrors.New(409, "MODEL_TEST_CONFLICT", "本次提交已用于另一项测试，请重新提交")
@@ -27,14 +30,15 @@ var (
 )
 
 type ModelTestPlan struct {
-	ID        int64      `json:"id"`
-	Label     string     `json:"label"`
-	GroupID   int64      `json:"group_id"`
-	Model     string     `json:"model"`
-	TestKind  string     `json:"test_kind"`
-	Enabled   bool       `json:"enabled"`
-	NextRunAt *time.Time `json:"next_run_at"`
-	LastRunAt *time.Time `json:"last_run_at"`
+	ID              int64      `json:"id"`
+	Label           string     `json:"label"`
+	GroupID         int64      `json:"group_id"`
+	Model           string     `json:"model"`
+	TestKind        string     `json:"test_kind"`
+	Enabled         bool       `json:"enabled"`
+	IntervalMinutes int        `json:"interval_minutes"`
+	NextRunAt       *time.Time `json:"next_run_at"`
+	LastRunAt       *time.Time `json:"last_run_at"`
 }
 
 type ModelTestPlanInput struct {
@@ -43,6 +47,8 @@ type ModelTestPlanInput struct {
 	Model    string `json:"model"`
 	TestKind string `json:"test_kind"`
 	Enabled  bool   `json:"enabled"`
+	// Omission uses the default on creation and preserves the current interval on update.
+	IntervalMinutes *int `json:"interval_minutes"`
 }
 
 type ModelTestJob struct {

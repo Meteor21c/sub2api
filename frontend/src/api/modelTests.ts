@@ -9,10 +9,11 @@ export interface ModelTestPlan {
   model: string
   test_kind: ModelTestKind
   enabled: boolean
+  interval_minutes: number
   next_run_at: string | null
   last_run_at: string | null
 }
-export type ModelTestPlanInput = Pick<ModelTestPlan, 'label' | 'group_id' | 'model' | 'test_kind' | 'enabled'>
+export type ModelTestPlanInput = Pick<ModelTestPlan, 'label' | 'group_id' | 'model' | 'test_kind' | 'enabled' | 'interval_minutes'>
 export interface ModelTestJob {
   id: string
   source: ModelTestSource
@@ -37,7 +38,6 @@ export interface ModelTestJob {
 export interface ModelTestOverview {
   plans: ModelTestPlan[]
   jobs: ModelTestJob[]
-  interval_hours: number
   retention_hours: number
 }
 export interface ModelTestUpstreamAttempt {

@@ -49,7 +49,8 @@ func (h *ModelTestHandler) Overview(c *gin.Context) {
 		modelTestReply(c, nil, err)
 		return
 	}
-	response.Success(c, gin.H{"plans": plans, "jobs": jobs, "interval_hours": 2, "retention_hours": 24})
+	// Keep interval_hours as the legacy default. Actual intervals are per plan.
+	response.Success(c, gin.H{"plans": plans, "jobs": jobs, "interval_hours": service.ModelTestDefaultIntervalMinutes / 60, "retention_hours": 24})
 }
 
 func (h *ModelTestHandler) Keys(c *gin.Context) {

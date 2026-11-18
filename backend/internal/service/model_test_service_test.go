@@ -202,8 +202,17 @@ func TestModelTestsBoundedCaptureAndSafeModels(t *testing.T) {
 		require.False(t, validModelTestModel(model), model)
 	}
 	require.True(t, validModelTestModel("gpt-6.1"))
-	require.Equal(t, 2*time.Hour, ModelTestInterval)
 	require.Equal(t, 24*time.Hour, ModelTestRetention)
+}
+
+func TestModelTestPlanRejectsUnsafeIntervals(t *testing.T) {
+	svc := &ModelTestService{}
+	for _, minutes := range []int{-1, 0, 14, 1441} {
+		_, err := svc.SavePlan(context.Background(), 1, 0, ModelTestPlanInput{
+			Label: "Pro", GroupID: 1, Model: "gpt-6.1", TestKind: "candy", IntervalMinutes: &minutes,
+		})
+		require.ErrorIs(t, err, ErrModelTestInterval)
+	}
 }
 
 func TestModelTestsRoutingSnapshotIsAdministratorOnly(t *testing.T) {

@@ -206,6 +206,9 @@ func (s *ModelTestService) ListPlans(ctx context.Context) ([]ModelTestPlan, erro
 	return s.repo.ListPlans(ctx)
 }
 func (s *ModelTestService) SavePlan(ctx context.Context, actor, id int64, in ModelTestPlanInput) (*ModelTestPlan, error) {
+	if in.IntervalMinutes != nil && (*in.IntervalMinutes < modelTestMinIntervalMinutes || *in.IntervalMinutes > modelTestMaxIntervalMinutes) {
+		return nil, ErrModelTestInterval
+	}
 	in.Label = strings.TrimSpace(in.Label)
 	in.Model = strings.TrimSpace(in.Model)
 	if id < 0 || actor <= 0 || in.GroupID <= 0 || in.Label == "" || len([]rune(in.Label)) > 80 || !validModelTestModel(in.Model) || modelTestPrompt(in.TestKind) == "" {

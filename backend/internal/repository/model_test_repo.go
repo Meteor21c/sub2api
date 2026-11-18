@@ -18,7 +18,7 @@ func NewModelTestRepository(db *sql.DB) service.ModelTestRepository {
 	return &modelTestRepository{db: db}
 }
 
-const modelTestPlanColumns = `id, label, group_id, model, test_kind, enabled, next_run_at, last_run_at`
+const modelTestPlanColumns = `id, label, group_id, model, test_kind, enabled, interval_minutes, next_run_at, last_run_at`
 const modelTestJobColumns = `id, source, owner_user_id, api_key_id, plan_id, group_id, label, model, test_kind,
  status, verdict, answer, content, error_code, total_ms, input_tokens, output_tokens,
  COALESCE(client_request_id::text, ''), client_ip, created_at, started_at, completed_at, expires_at,
@@ -26,7 +26,7 @@ const modelTestJobColumns = `id, source, owner_user_id, api_key_id, plan_id, gro
 
 func scanModelTestPlan(s availabilityScanner) (*service.ModelTestPlan, error) {
 	p := &service.ModelTestPlan{}
-	err := s.Scan(&p.ID, &p.Label, &p.GroupID, &p.Model, &p.TestKind, &p.Enabled, &p.NextRunAt, &p.LastRunAt)
+	err := s.Scan(&p.ID, &p.Label, &p.GroupID, &p.Model, &p.TestKind, &p.Enabled, &p.IntervalMinutes, &p.NextRunAt, &p.LastRunAt)
 	return p, err
 }
 
@@ -76,7 +76,7 @@ func (r *modelTestRepository) SavePlan(ctx context.Context, id, actor int64, in 
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(725201)`); err != nil {
 		return nil, err
 	}
-	var p *service.ModelTestPlan
+	var p, previous *service.ModelTestPlan
 	if id == 0 {
 		var count int
 		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM model_test_plans WHERE deleted_at IS NULL`).Scan(&count); err != nil {
@@ -86,15 +86,29 @@ func (r *modelTestRepository) SavePlan(ctx context.Context, id, actor int64, in 
 			return nil, service.ErrModelTestLimit
 		}
 		p, err = scanModelTestPlan(tx.QueryRowContext(ctx, `INSERT INTO model_test_plans
-		 (label, group_id, model, test_kind, enabled, next_run_at, created_by)
-		 VALUES ($1,$2,$3,$4,$5,CASE WHEN $5 THEN NOW() ELSE NULL END,$6) RETURNING `+modelTestPlanColumns,
-			in.Label, in.GroupID, in.Model, in.TestKind, in.Enabled, actor))
+		 (label, group_id, model, test_kind, enabled, next_run_at, created_by, interval_minutes)
+		 VALUES ($1,$2,$3,$4,$5,CASE WHEN $5 THEN NOW() ELSE NULL END,$6,COALESCE($7::integer,$8)) RETURNING `+modelTestPlanColumns,
+			in.Label, in.GroupID, in.Model, in.TestKind, in.Enabled, actor, in.IntervalMinutes, service.ModelTestDefaultIntervalMinutes))
 	} else {
+		previous, err = scanModelTestPlan(tx.QueryRowContext(ctx, `SELECT `+modelTestPlanColumns+
+			` FROM model_test_plans WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrModelTestNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
 		p, err = scanModelTestPlan(tx.QueryRowContext(ctx, `UPDATE model_test_plans SET
 		 label=$2, group_id=$3, model=$4, test_kind=$5, enabled=$6,
-		 next_run_at=CASE WHEN NOT $6 THEN NULL WHEN NOT enabled THEN NOW() ELSE COALESCE(next_run_at,NOW()) END,
+		 interval_minutes=COALESCE($7,interval_minutes),
+		 next_run_at=CASE
+		   WHEN NOT $6 THEN NULL
+		   WHEN NOT enabled THEN NOW()
+		   WHEN $7 <> interval_minutes AND last_run_at IS NOT NULL THEN NOW() + $7 * INTERVAL '1 minute'
+		   ELSE COALESCE(next_run_at,NOW())
+		 END,
 		 updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL RETURNING `+modelTestPlanColumns,
-			id, in.Label, in.GroupID, in.Model, in.TestKind, in.Enabled))
+			id, in.Label, in.GroupID, in.Model, in.TestKind, in.Enabled, in.IntervalMinutes))
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, service.ErrModelTestNotFound
@@ -102,8 +116,10 @@ func (r *modelTestRepository) SavePlan(ctx context.Context, id, actor int64, in 
 	if err != nil {
 		return nil, err
 	}
-	// Disabling or changing a plan must not launch a queued probe of its old configuration.
-	if id != 0 {
+	// Cadence-only edits affect future probes. Disable or update of the probe
+	// itself still cancels queued jobs so they cannot run with stale settings.
+	if previous != nil && (!p.Enabled || p.Label != previous.Label || p.GroupID != previous.GroupID ||
+		p.Model != previous.Model || p.TestKind != previous.TestKind) {
 		_, err = tx.ExecContext(ctx, `UPDATE model_test_jobs SET status='interrupted', error_code='plan_changed', completed_at=NOW()
 		 WHERE plan_id=$1 AND status='queued' AND deleted_at IS NULL`, id)
 		if err != nil {
@@ -188,7 +204,8 @@ func (r *modelTestRepository) EnqueueDue(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE model_test_plans SET last_run_at=NOW(),next_run_at=NOW()+INTERVAL '2 hours' WHERE id=$1`, p.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE model_test_plans
+		 SET last_run_at=NOW(),next_run_at=NOW()+interval_minutes * INTERVAL '1 minute' WHERE id=$1`, p.ID)
 		if err != nil {
 			return err
 		}

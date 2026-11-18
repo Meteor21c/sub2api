@@ -137,6 +137,7 @@ func TestModelTestsRepositoryDurabilityAndPrivacy(t *testing.T) {
 	// Parallel scheduler ticks create one occurrence and advance by two hours.
 	plan, err := repo.SavePlan(ctx, 0, owner.ID, service.ModelTestPlanInput{Label: "Plus", GroupID: group.ID, Model: "test-model", TestKind: "pelican", Enabled: true})
 	require.NoError(t, err)
+	require.Equal(t, 120, plan.IntervalMinutes)
 	errs = make(chan error, 6)
 	for i := 0; i < 6; i++ {
 		wg.Add(1)
@@ -157,8 +158,30 @@ func TestModelTestsRepositoryDurabilityAndPrivacy(t *testing.T) {
 			require.WithinDuration(t, time.Now().Add(2*time.Hour), *p.NextRunAt, 10*time.Second)
 		}
 	}
+	customMinutes := 45
+	input := service.ModelTestPlanInput{Label: plan.Label, GroupID: group.ID, Model: plan.Model, TestKind: plan.TestKind, Enabled: true, IntervalMinutes: &customMinutes}
+	edited, err := repo.SavePlan(ctx, plan.ID, owner.ID, input)
+	require.NoError(t, err)
+	require.Equal(t, 45, edited.IntervalMinutes)
+	require.WithinDuration(t, time.Now().Add(45*time.Minute), *edited.NextRunAt, 10*time.Second)
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM model_test_jobs WHERE plan_id=$1 AND status='queued'`, plan.ID).Scan(&n))
+	require.Equal(t, 1, n, "cadence changes must not cancel an existing queued probe")
+	// A due occurrence advances by the stored cadence, including after an old
+	// client saves the plan without sending the new field.
+	input.IntervalMinutes = nil
+	preserved, err := repo.SavePlan(ctx, plan.ID, owner.ID, input)
+	require.NoError(t, err)
+	require.Equal(t, 45, preserved.IntervalMinutes)
+	require.True(t, edited.NextRunAt.Equal(*preserved.NextRunAt))
+	_, err = integrationDB.ExecContext(ctx, `UPDATE model_test_plans SET next_run_at=NOW()-INTERVAL '1 minute' WHERE id=$1`, plan.ID)
+	require.NoError(t, err)
+	require.NoError(t, repo.EnqueueDue(ctx))
+	var intervalSeconds float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT EXTRACT(EPOCH FROM (next_run_at-last_run_at)) FROM model_test_plans WHERE id=$1`, plan.ID).Scan(&intervalSeconds))
+	require.Equal(t, float64(45*60), intervalSeconds)
 	paused, err := repo.SavePlan(ctx, plan.ID, owner.ID, service.ModelTestPlanInput{Label: plan.Label, GroupID: group.ID, Model: plan.Model, TestKind: plan.TestKind, Enabled: false})
 	require.NoError(t, err)
+	require.Equal(t, 45, paused.IntervalMinutes)
 	require.Nil(t, paused.NextRunAt)
 	visible, err := repo.ListJobs(ctx, other.ID, "scheduled")
 	require.NoError(t, err)
