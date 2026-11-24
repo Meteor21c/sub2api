@@ -220,6 +220,18 @@ export default {
 
   // Auth
   auth: {
+    magent: {
+      title: '连接 MeteorAgent',
+      account: '当前账户 {email}',
+      compareCode: '请确认此代码和你刚刚打开的 Magent 登录窗口一致。',
+      access: '确认后，此 Magent 将登录你的流星 API 账户并同步 API Key。',
+      approve: '确认登录',
+      cancel: '取消',
+      approved: '已确认登录，可以关闭此页面并返回 Magent。',
+      denied: '已取消登录，可以关闭此页面。',
+      expired: '此登录请求已失效，请返回 Magent 重新发起。',
+      failed: '暂时无法确认，请稍后重试。'
+    },
     welcomeBack: '欢迎回来',
     signInToAccount: '登录您的账户以继续',
     signIn: '登录',

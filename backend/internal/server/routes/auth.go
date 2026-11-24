@@ -24,6 +24,7 @@ func RegisterAuthRoutes(
 ) {
 	// 创建速率限制器
 	rateLimiter := middleware.NewRateLimiter(redisClient)
+	magentLogin := handler.NewMagentLoginHandler(h.Auth, redisClient)
 
 	// 公开接口
 	auth := v1.Group("/auth")
@@ -41,6 +42,11 @@ func RegisterAuthRoutes(
 		auth.POST("/login/2fa", rateLimiter.LimitWithOptions("auth-login-2fa", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Auth.Login2FA)
+		if redisClient != nil {
+			magentLimit := middleware.RateLimitOptions{FailureMode: middleware.RateLimitFailClose}
+			auth.POST("/magent/start", rateLimiter.LimitWithOptions("magent-login-start", 20, time.Minute, magentLimit), magentLogin.Start)
+			auth.POST("/magent/token", rateLimiter.LimitWithOptions("magent-login-token", 120, time.Minute, magentLimit), magentLogin.Token)
+		}
 		auth.POST("/passkey/login/begin", rateLimiter.LimitWithOptions("passkey-login-begin", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Passkey.BeginLogin)
@@ -258,5 +264,8 @@ func RegisterAuthRoutes(
 		// 撤销所有会话（需要认证）
 		authenticated.POST("/auth/revoke-all-sessions", h.Auth.RevokeAllSessions)
 		authenticated.POST("/auth/oauth/bind-token", h.Auth.PrepareOAuthBindAccessTokenCookie)
+		if redisClient != nil {
+			authenticated.POST("/auth/magent/decision", gin.HandlerFunc(auditLog), magentLogin.Decide)
+		}
 	}
 }

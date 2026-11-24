@@ -220,6 +220,18 @@ export default {
 
   // Auth
   auth: {
+    magent: {
+      title: 'Connect MeteorAgent',
+      account: 'Signed in as {email}',
+      compareCode: 'Check that this code matches the one in the Magent window you just opened.',
+      access: 'Confirm to sign in to your Meteor API account and sync your API keys in Magent.',
+      approve: 'Confirm sign-in',
+      cancel: 'Cancel',
+      approved: 'Sign-in confirmed. Close this page and return to Magent.',
+      denied: 'Sign-in cancelled. You can close this page.',
+      expired: 'This sign-in request has expired. Start again in Magent.',
+      failed: 'Could not confirm sign-in. Try again in a moment.'
+    },
     welcomeBack: 'Welcome Back',
     signInToAccount: 'Sign in to your account to continue',
     signIn: 'Sign In',

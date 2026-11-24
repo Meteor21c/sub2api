@@ -312,6 +312,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/oauth/magent/authorize',
+    name: 'MagentAuthorize',
+    component: () => import('@/views/auth/MagentAuthorizeView.vue'),
+    meta: {
+      requiresAuth: true,
+      title: 'Connect MeteorAgent',
+      titleKey: 'auth.magent.title'
+    }
+  },
+  {
     path: '/profile',
     name: 'Profile',
     component: () => import('@/views/user/ProfileView.vue'),

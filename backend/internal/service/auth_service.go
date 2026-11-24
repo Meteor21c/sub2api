@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -55,6 +56,7 @@ const maxTokenLength = 8192
 
 // refreshTokenPrefix is the prefix for refresh tokens to distinguish them from access tokens.
 const refreshTokenPrefix = "rt_"
+const magentRefreshTokenPrefix = "mrt_"
 
 // JWTClaims JWT载荷数据
 type JWTClaims struct {
@@ -1414,8 +1416,25 @@ func buildEmailSuffixNotAllowedError(whitelist []string) error {
 	})
 }
 
-// ValidateToken 验证JWT token并返回用户声明
+const magentSessionPrefix = "magent:"
+
+// ValidateToken verifies a regular web session. Desktop sessions are accepted
+// only by ValidatePanelToken on the account data routes they need.
 func (s *AuthService) ValidateToken(tokenString string) (*JWTClaims, error) {
+	return s.validateToken(tokenString, false)
+}
+
+func (s *AuthService) ValidatePanelToken(tokenString, method, route string) (*JWTClaims, error) {
+	if method == "GET" {
+		switch route {
+		case "/api/v1/auth/me", "/api/v1/keys", "/api/v1/usage", "/api/v1/usage/dashboard/stats", "/api/v1/model-plaza":
+			return s.validateToken(tokenString, true)
+		}
+	}
+	return s.ValidateToken(tokenString)
+}
+
+func (s *AuthService) validateToken(tokenString string, allowMagent bool) (*JWTClaims, error) {
 	// 先做长度校验，尽早拒绝异常超长 token，降低 DoS 风险。
 	if len(tokenString) > maxTokenLength {
 		return nil, ErrTokenTooLarge
@@ -1434,7 +1453,11 @@ func (s *AuthService) ValidateToken(tokenString string) (*JWTClaims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(s.cfg.JWT.Secret), nil
+		claims := token.Claims.(*JWTClaims)
+		if strings.HasPrefix(claims.SessionID, magentSessionPrefix) && !allowMagent {
+			return nil, ErrInvalidToken
+		}
+		return s.sessionSigningKey(claims.SessionID), nil
 	})
 
 	if err != nil {
@@ -1454,6 +1477,17 @@ func (s *AuthService) ValidateToken(tokenString string) (*JWTClaims, error) {
 	}
 
 	return nil, ErrInvalidToken
+}
+
+func (s *AuthService) sessionSigningKey(sessionID string) []byte {
+	key := []byte(s.cfg.JWT.Secret)
+	if !strings.HasPrefix(sessionID, magentSessionPrefix) {
+		return key
+	}
+	// Older servers must reject restricted sessions if an update is rolled back.
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("sub2api.magent.session.v1"))
+	return mac.Sum(nil)
 }
 
 func randomHexString(byteLength int) (string, error) {
@@ -1512,7 +1546,7 @@ func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash str
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(s.cfg.JWT.Secret))
+	tokenString, err := token.SignedString(s.sessionSigningKey(sessionID))
 	if err != nil {
 		return "", fmt.Errorf("sign token: %w", err)
 	}
@@ -1754,6 +1788,15 @@ type TokenPairWithUser struct {
 	UserRole string
 }
 
+func (s *AuthService) GenerateMagentTokenPair(ctx context.Context, user *User) (*TokenPair, error) {
+	id, err := randomHexString(16)
+	if err != nil {
+		return nil, err
+	}
+	// RefreshTokenPair reuses the family ID, so rotation retains this scope.
+	return s.GenerateTokenPair(ctx, user, magentSessionPrefix+id)
+}
+
 // GenerateTokenPair 生成Access Token和Refresh Token对
 // familyID: 可选的Token家族ID，用于Token轮转时保持家族关系
 func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyID string) (*TokenPair, error) {
@@ -1798,11 +1841,6 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", fmt.Errorf("generate random bytes: %w", err)
 	}
-	rawToken := refreshTokenPrefix + hex.EncodeToString(tokenBytes)
-
-	// 计算Token哈希（存储哈希而非原始Token）
-	tokenHash := hashToken(rawToken)
-
 	// 如果没有提供familyID，生成新的
 	if familyID == "" {
 		familyBytes := make([]byte, 16)
@@ -1811,6 +1849,13 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 		}
 		familyID = hex.EncodeToString(familyBytes)
 	}
+	prefix := refreshTokenPrefix
+	if strings.HasPrefix(familyID, magentSessionPrefix) {
+		prefix = magentRefreshTokenPrefix
+	}
+	rawToken := prefix + hex.EncodeToString(tokenBytes)
+	// 计算Token哈希（存储哈希而非原始Token）
+	tokenHash := hashToken(rawToken)
 
 	now := time.Now()
 	ttl := time.Duration(s.cfg.JWT.RefreshTokenExpireDays) * 24 * time.Hour
@@ -1853,7 +1898,8 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	}
 
 	// 验证Token格式
-	if !strings.HasPrefix(refreshToken, refreshTokenPrefix) {
+	isMagent := strings.HasPrefix(refreshToken, magentRefreshTokenPrefix)
+	if !isMagent && !strings.HasPrefix(refreshToken, refreshTokenPrefix) {
 		return nil, ErrRefreshTokenInvalid
 	}
 
@@ -1869,6 +1915,9 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		}
 		logger.LegacyPrintf("service.auth", "[Auth] Error getting refresh token: %v", err)
 		return nil, ErrServiceUnavailable
+	}
+	if isMagent != strings.HasPrefix(data.FamilyID, magentSessionPrefix) {
+		return nil, ErrRefreshTokenInvalid
 	}
 
 	// 检查Token是否过期
@@ -1941,7 +1990,7 @@ func (s *AuthService) RevokeRefreshToken(ctx context.Context, refreshToken strin
 	if s.refreshTokenCache == nil {
 		return nil // No-op if cache not configured
 	}
-	if !strings.HasPrefix(refreshToken, refreshTokenPrefix) {
+	if !strings.HasPrefix(refreshToken, refreshTokenPrefix) && !strings.HasPrefix(refreshToken, magentRefreshTokenPrefix) {
 		return ErrRefreshTokenInvalid
 	}
 

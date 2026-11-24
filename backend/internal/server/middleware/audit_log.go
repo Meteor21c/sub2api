@@ -149,6 +149,7 @@ var auditActionOverrides = map[string]string{
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
 // 这类 body 的凭证内嵌在普通字符串值里，键级脱敏无法覆盖，整体不入库。
 var auditBodyOmittedRoutes = map[string]struct{}{
+	"POST /api/v1/auth/magent/token":                            {},
 	"POST /api/v1/auth/passkey/login/finish":                    {},
 	"POST /api/v1/user/passkeys/register/finish":                {},
 	"POST /api/v1/admin/accounts/import/codex-session":          {},
@@ -218,8 +219,8 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 		}
 
 		status := c.Writer.Status()
-		// token 刷新成功属于高频常规操作，只记录失败（潜在攻击信号）。
-		if routeKey == "POST /api/v1/auth/refresh" && status < 400 {
+		// Refresh and desktop authorization polling can be frequent.
+		if (routeKey == "POST /api/v1/auth/refresh" || routeKey == "POST /api/v1/auth/magent/token") && status < 400 {
 			return
 		}
 

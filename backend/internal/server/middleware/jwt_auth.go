@@ -58,7 +58,7 @@ func jwtAuth(
 		}
 
 		// 验证token
-		claims, err := authService.ValidateToken(tokenString)
+		claims, err := authService.ValidatePanelToken(tokenString, c.Request.Method, c.FullPath())
 		if err != nil {
 			if errors.Is(err, service.ErrTokenExpired) {
 				AbortWithError(c, 401, "TOKEN_EXPIRED", "Token has expired")
