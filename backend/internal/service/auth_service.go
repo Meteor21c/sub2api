@@ -1453,8 +1453,8 @@ func (s *AuthService) validateToken(tokenString string, allowMagent bool) (*JWTC
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		claims := token.Claims.(*JWTClaims)
-		if strings.HasPrefix(claims.SessionID, magentSessionPrefix) && !allowMagent {
+		claims, ok := token.Claims.(*JWTClaims)
+		if !ok || (strings.HasPrefix(claims.SessionID, magentSessionPrefix) && !allowMagent) {
 			return nil, ErrInvalidToken
 		}
 		return s.sessionSigningKey(claims.SessionID), nil

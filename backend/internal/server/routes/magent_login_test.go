@@ -1,6 +1,6 @@
 //go:build unit
 
-package handler
+package routes
 
 import (
 	"bytes"
@@ -10,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -22,12 +24,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type magentUserRepo struct {
+	service.UserRepository
+	user *service.User
+}
+
+func (r *magentUserRepo) GetByID(context.Context, int64) (*service.User, error) {
+	user := *r.user
+	return &user, nil
+}
+
+func (r *magentUserRepo) GetUserAvatar(context.Context, int64) (*service.UserAvatar, error) {
+	return nil, nil
+}
+
+func (r *magentUserRepo) UpdateUserLastActiveAt(context.Context, int64, time.Time) error {
+	return nil
+}
+
 func TestMagentBrowserSignIn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	redisServer := miniredis.RunT(t)
 	cache := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { require.NoError(t, cache.Close()) })
-	repo := &userHandlerRepoStub{user: &service.User{
+	repo := &magentUserRepo{user: &service.User{
 		ID: 81, Email: "magent-qa@example.test", Role: service.RoleAdmin,
 		Status: service.StatusActive, PasswordHash: "test-hash",
 	}}
@@ -37,14 +57,16 @@ func TestMagentBrowserSignIn(t *testing.T) {
 	users := service.NewUserService(repo, nil, nil, nil)
 	auth := service.NewAuthService(nil, repo, nil, repository.NewRefreshTokenCache(cache),
 		cfg, nil, nil, nil, nil, nil, nil, nil, nil)
-	h := NewMagentLoginHandler(&AuthHandler{authService: auth, userService: users}, cache)
 	router := gin.New()
-	jwtAuth := gin.HandlerFunc(middleware.NewJWTAuthMiddleware(auth, users, nil, nil))
-	router.POST("/api/v1/auth/magent/start", h.Start)
-	router.POST("/api/v1/auth/magent/token", h.Token)
-	router.POST("/api/v1/auth/magent/decision", jwtAuth, h.Decide)
-	router.GET("/api/v1/keys", jwtAuth, func(c *gin.Context) { c.Status(http.StatusOK) })
-	router.POST("/api/v1/keys", jwtAuth, func(c *gin.Context) { c.Status(http.StatusOK) })
+	jwtAuth := middleware.NewJWTAuthMiddleware(auth, users, nil, nil)
+	handlers := &handler.Handlers{
+		Auth:    handler.NewAuthHandler(cfg, auth, users, nil, nil, nil, nil, nil),
+		Setting: &handler.SettingHandler{},
+	}
+	RegisterAuthRoutes(router.Group("/api/v1"), handlers, jwtAuth,
+		middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }), cache, nil, nil)
+	router.GET("/api/v1/keys", gin.HandlerFunc(jwtAuth), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.POST("/api/v1/keys", gin.HandlerFunc(jwtAuth), func(c *gin.Context) { c.Status(http.StatusOK) })
 	webToken, err := auth.GenerateToken(context.Background(), repo.user)
 	require.NoError(t, err)
 
@@ -116,7 +138,7 @@ func TestMagentBrowserSignIn(t *testing.T) {
 		decide(t, webToken, request["request_id"], false, http.StatusOK)
 		require.Equal(t, map[string]any{"status": "denied"}, poll(t, request))
 		request = start(t)
-		redisServer.FastForward(magentLoginTTL)
+		redisServer.FastForward(5 * time.Minute)
 		decide(t, webToken, request["request_id"], true, http.StatusNotFound)
 		require.Equal(t, map[string]any{"status": "expired"}, poll(t, request))
 	})

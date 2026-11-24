@@ -1,20 +1,19 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
 	"regexp"
-	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 )
 
 const magentLoginTTL = 5 * time.Minute
@@ -23,33 +22,19 @@ const magentLoginInterval = 5
 var magentRequestID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 var magentDeviceCode = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 
-var decideMagentLogin = redis.NewScript(`
-if redis.call("HGET", KEYS[1], "status") ~= "pending" then return 0 end
-redis.call("HSET", KEYS[1], "status", ARGV[1], "user_id", ARGV[2], "token_version", ARGV[3])
-return 1
-`)
-
-var redeemMagentLogin = redis.NewScript(`
-if redis.call("HGET", KEYS[1], "proof") ~= ARGV[1] then return {"expired"} end
-local status = redis.call("HGET", KEYS[1], "status")
-if status ~= "approved" then return {status} end
-local user = redis.call("HGET", KEYS[1], "user_id")
-local version = redis.call("HGET", KEYS[1], "token_version")
-redis.call("DEL", KEYS[1])
-return {status, user, version}
-`)
+type MagentLoginStore interface {
+	Create(ctx context.Context, requestID, proof string, ttl time.Duration) error
+	Decide(ctx context.Context, requestID, status string, userID, tokenVersion int64) (bool, error)
+	Redeem(ctx context.Context, requestID, proof string) (status string, userID, tokenVersion int64, err error)
+}
 
 type MagentLoginHandler struct {
 	auth  *AuthHandler
-	cache *redis.Client
+	store MagentLoginStore
 }
 
-func NewMagentLoginHandler(auth *AuthHandler, cache *redis.Client) *MagentLoginHandler {
-	return &MagentLoginHandler{auth: auth, cache: cache}
-}
-
-func magentLoginKey(requestID string) string {
-	return "magent:device-login:" + requestID
+func NewMagentLoginHandler(auth *AuthHandler, store MagentLoginStore) *MagentLoginHandler {
+	return &MagentLoginHandler{auth: auth, store: store}
 }
 
 func magentLoginProof(deviceCode string) string {
@@ -61,17 +46,18 @@ func (h *MagentLoginHandler) Start(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	var id [16]byte
 	var secret [32]byte
-	rand.Read(id[:])
-	rand.Read(secret[:])
+	if _, err := rand.Read(id[:]); err != nil {
+		response.InternalError(c, "Could not create a MeteorAgent sign-in request")
+		return
+	}
+	if _, err := rand.Read(secret[:]); err != nil {
+		response.InternalError(c, "Could not create a MeteorAgent sign-in request")
+		return
+	}
 	requestID := hex.EncodeToString(id[:])
 	deviceCode := base64.RawURLEncoding.EncodeToString(secret[:])
-	key := magentLoginKey(requestID)
 	ctx := c.Request.Context()
-	if _, err := h.cache.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HSet(ctx, key, "status", "pending", "proof", magentLoginProof(deviceCode))
-		pipe.Expire(ctx, key, magentLoginTTL)
-		return nil
-	}); err != nil {
+	if err := h.store.Create(ctx, requestID, magentLoginProof(deviceCode), magentLoginTTL); err != nil {
 		response.Error(c, http.StatusServiceUnavailable, "MeteorAgent sign-in is temporarily unavailable")
 		return
 	}
@@ -119,13 +105,12 @@ func (h *MagentLoginHandler) Decide(c *gin.Context) {
 	if *input.Approved {
 		status = "approved"
 	}
-	applied, err := decideMagentLogin.Run(ctx, h.cache, []string{magentLoginKey(input.RequestID)},
-		status, strconv.FormatInt(user.ID, 10), strconv.FormatInt(user.TokenVersion, 10)).Int()
+	applied, err := h.store.Decide(ctx, input.RequestID, status, user.ID, user.TokenVersion)
 	if err != nil {
 		response.Error(c, http.StatusServiceUnavailable, "MeteorAgent sign-in is temporarily unavailable")
 		return
 	}
-	if applied != 1 {
+	if !applied {
 		response.NotFound(c, "MeteorAgent sign-in request expired or was already answered")
 		return
 	}
@@ -146,22 +131,13 @@ func (h *MagentLoginHandler) Token(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	result, err := redeemMagentLogin.Run(ctx, h.cache, []string{magentLoginKey(input.RequestID)}, magentLoginProof(input.DeviceCode)).StringSlice()
-	if err != nil || len(result) == 0 {
+	status, userID, tokenVersion, err := h.store.Redeem(ctx, input.RequestID, magentLoginProof(input.DeviceCode))
+	if err != nil {
 		response.Error(c, http.StatusServiceUnavailable, "MeteorAgent sign-in is temporarily unavailable")
 		return
 	}
-	if result[0] != "approved" {
-		response.Success(c, gin.H{"status": result[0]})
-		return
-	}
-	if len(result) != 3 {
-		response.InternalError(c, "Invalid MeteorAgent sign-in state")
-		return
-	}
-	userID, err := strconv.ParseInt(result[1], 10, 64)
-	if err != nil || userID <= 0 {
-		response.InternalError(c, "Invalid MeteorAgent sign-in state")
+	if status != "approved" {
+		response.Success(c, gin.H{"status": status})
 		return
 	}
 	user, err := h.auth.userService.GetByID(ctx, userID)
@@ -173,7 +149,7 @@ func (h *MagentLoginHandler) Token(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if strconv.FormatInt(user.TokenVersion, 10) != result[2] {
+	if user.TokenVersion != tokenVersion {
 		response.Success(c, gin.H{"status": "expired"})
 		return
 	}
