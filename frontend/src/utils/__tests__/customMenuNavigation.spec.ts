@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isLegacyBalanceMonitorMenu } from '../customMenuNavigation'
+import { isLegacyBalanceMonitorMenu, isLegacyVideoGenerationMenu } from '../customMenuNavigation'
 
 describe('legacy balance monitor navigation', () => {
   it.each([
@@ -21,5 +21,23 @@ describe('legacy balance monitor navigation', () => {
     { id: 'meteor-monitor', url: '' },
   ])('keeps unrelated menu destinations intact: $url', (item) => {
     expect(isLegacyBalanceMonitorMenu(item)).toBe(false)
+  })
+})
+
+describe('legacy video generation navigation', () => {
+  it.each([
+    { id: 'meteor-video', url: 'md:meteor-video' },
+    { id: 'meteor-video', page_slug: 'meteor-video' },
+  ])('hides the legacy configured video entry: %j', (item) => {
+    expect(isLegacyVideoGenerationMenu(item)).toBe(true)
+  })
+
+  it.each([
+    { id: 'meteor-image', url: 'md:meteor-image' },
+    { id: 'meteor-studio', url: 'https://api.meteor21c.fun/studio' },
+    { id: 'meteor-video', url: 'md:guide' },
+    { id: 'video-docs', url: 'md:meteor-video' },
+  ])('keeps other configured entries visible: %j', (item) => {
+    expect(isLegacyVideoGenerationMenu(item)).toBe(false)
   })
 })

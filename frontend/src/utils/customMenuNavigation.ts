@@ -15,3 +15,9 @@ export function isLegacyBalanceMonitorMenu(item: { id: string; url?: string }): 
     return false
   }
 }
+
+/** Keep the old media page addressable without advertising it in navigation. */
+export function isLegacyVideoGenerationMenu(item: { id: string; url?: string; page_slug?: string }): boolean {
+  return item.id === 'meteor-video' &&
+    (item.url === 'md:meteor-video' || item.page_slug === 'meteor-video')
+}

@@ -217,7 +217,7 @@ import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { useSidebarAccess } from '@/composables/useSidebarAccess'
-import { isLegacyBalanceMonitorMenu } from '@/utils/customMenuNavigation'
+import { isLegacyBalanceMonitorMenu, isLegacyVideoGenerationMenu } from '@/utils/customMenuNavigation'
 
 interface NavItem {
   path: string
@@ -806,13 +806,13 @@ const personalNavItems = computed((): NavItem[] => finalizeNav(buildSelfNavItems
 const customMenuItemsForUser = computed(() => {
   const items = appStore.cachedPublicSettings?.custom_menu_items ?? []
   return items
-    .filter((item) => item.visibility === 'user')
+    .filter((item) => item.visibility === 'user' && !isLegacyVideoGenerationMenu(item))
     .sort((a, b) => a.sort_order - b.sort_order)
 })
 
 const customMenuItemsForAdmin = computed(() => {
   return adminSettingsStore.customMenuItems
-    .filter((item) => item.visibility === 'admin' && !isLegacyBalanceMonitorMenu(item))
+    .filter((item) => item.visibility === 'admin' && !isLegacyBalanceMonitorMenu(item) && !isLegacyVideoGenerationMenu(item))
     .sort((a, b) => a.sort_order - b.sort_order)
 })
 

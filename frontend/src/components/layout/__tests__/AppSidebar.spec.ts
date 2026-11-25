@@ -98,3 +98,11 @@ describe('AppSidebar MCP entry', () => {
     expect(componentSource).not.toMatch(/path: '\/settings\/mcp'[^\n]*PluginIcon/)
   })
 })
+
+describe('AppSidebar retired media entry', () => {
+  it('filters the old video menu from both navigation areas and keeps the Studio entry', () => {
+    expect(componentSource).toMatch(/visibility === 'user'[^\n]+!isLegacyVideoGenerationMenu\(item\)/)
+    expect(componentSource).toMatch(/visibility === 'admin'[^\n]+!isLegacyVideoGenerationMenu\(item\)/)
+    expect(componentSource).toMatch(/path: '\/studio'[^\n]+流星创作台/)
+  })
+})
