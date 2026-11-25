@@ -439,6 +439,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					reqLog.Error("fzy_video.release_after_create_failure_failed", zap.String("reservation_id", fzyReservation.ID), zap.Error(releaseErr))
 				}
 			}
+			var validationErr *service.GrokMediaInputValidationError
+			if errors.As(err, &validationErr) {
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", validationErr.Error())
+				return
+			}
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if failoverClientGone(c) {

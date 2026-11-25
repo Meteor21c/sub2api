@@ -33,8 +33,16 @@ const (
 	GrokMediaEndpointVideoContent      GrokMediaEndpoint = "video_content"
 
 	// Official xAI Imagine image-edit limit.
-	grokMediaMaxEditSourceImages = 3
+	grokMediaMaxEditSourceImages = 5
 )
+
+type GrokMediaInputValidationError struct {
+	Reason string
+}
+
+func (e *GrokMediaInputValidationError) Error() string {
+	return e.Reason
+}
 
 func (e GrokMediaEndpoint) RequiresRequestBody() bool {
 	return !e.IsVideoLookupRequest()
@@ -748,7 +756,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		upstreamReq.Header.Set("Content-Type", contentType)
 	}
 	// 账号级覆写优先于内置默认头；内部素材归属随后按可信身份绑定。
-	account.ApplyHeaderOverrides(upstreamReq.Header)
+	account.ApplyHeaderOverrides(upstreamReq.Context(), upstreamReq.Header)
 	applyFZYAssetContextHeaders(upstreamReq.Header, c, account)
 
 	proxyURL := ""
@@ -858,7 +866,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	if account.IsGrokOAuth() && isGrokCLIProxyTarget(statusURL) {
 		applyGrokCLIHeaders(statusReq.Header)
 	}
-	account.ApplyHeaderOverrides(statusReq.Header)
+	account.ApplyHeaderOverrides(statusReq.Context(), statusReq.Header)
 	applyFZYAssetContextHeaders(statusReq.Header, c, account)
 
 	proxyURL := ""
@@ -928,7 +936,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		if account.IsGrokOAuth() && isGrokCLIProxyTarget(contentURL) {
 			applyGrokCLIHeaders(contentReq.Header)
 		}
-		account.ApplyHeaderOverrides(contentReq.Header)
+		account.ApplyHeaderOverrides(contentReq.Context(), contentReq.Header)
 		applyFZYAssetContextHeaders(contentReq.Header, c, account)
 	}
 
@@ -1050,7 +1058,7 @@ func prepareGrokMediaForwardBody(endpoint GrokMediaEndpoint, body []byte, conten
 		images = append(images, grokMediaImageObject(dataURL))
 	}
 	if len(images) > grokMediaMaxEditSourceImages {
-		return nil, "", fmt.Errorf("a maximum of %d source images is supported for image edits", grokMediaMaxEditSourceImages)
+		return nil, "", &GrokMediaInputValidationError{Reason: fmt.Sprintf("a maximum of %d source images is supported for image edits", grokMediaMaxEditSourceImages)}
 	}
 	if len(images) > 0 {
 		payload["image"] = images[0]
@@ -1081,7 +1089,7 @@ func prepareGrokMediaForwardBody(endpoint GrokMediaEndpoint, body []byte, conten
 func normalizeGrokMediaJSONImageRefs(body []byte) ([]byte, error) {
 	info := ParseGrokMediaRequest("application/json", body)
 	if len(info.InputImageURLs) > grokMediaMaxEditSourceImages {
-		return nil, fmt.Errorf("a maximum of %d source images is supported for image edits", grokMediaMaxEditSourceImages)
+		return nil, &GrokMediaInputValidationError{Reason: fmt.Sprintf("a maximum of %d source images is supported for image edits", grokMediaMaxEditSourceImages)}
 	}
 	out := body
 	var err error
