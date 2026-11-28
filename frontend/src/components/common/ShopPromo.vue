@@ -67,7 +67,7 @@ const props = withDefaults(
 )
 
 const { t } = useI18n()
-const shopUrl = 'https://www.16688.com.cn/shop/S256888'
+const shopUrl = 'https://www.16688.store/shop/S256888'
 const labelText = computed(() =>
   props.variant === 'hero' ? t('home.shop.title') : t('home.shop.short'),
 )
